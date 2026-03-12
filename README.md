@@ -1,6 +1,6 @@
 # Kalshi Soccer 70'+ 2-Goal Lead Bot (Node)
 
-Automated Kalshi trading bot for soccer game winner markets.
+Kalshi soccer trading bot + live dashboard for in-play match-winner markets. The agent monitors selected leagues, detects score/time triggers (70'+ 2-goal lead and 80'+ 1-goal rule), executes risk-capped orders, enforces daily stop-loss, and logs every action.
 
 ## Prerequisites
 
