@@ -1,0 +1,364 @@
+<main class="terminal" [class.theme-dark]="theme() === 'dark'" [class.theme-light]="theme() === 'light'">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <h1>OpenClaw Soccer Terminal</h1>
+      <p>Kalshi in-play trading agent monitor</p>
+    </div>
+    <div class="header-controls">
+      <span class="chip">Updated {{ now() | date:'mediumTime' }}</span>
+      <span class="chip" [ngClass]="statusClass(data()?.bot?.status)">Agent {{ data()?.bot?.status || 'UNKNOWN' }}</span>
+      <span class="chip" [class.warn]="data()?.bot?.riskHaltedToday">Stop-Loss {{ data()?.bot?.riskHaltedToday ? 'ON' : 'OFF' }}</span>
+      <button class="theme-toggle" type="button" (click)="toggleTheme()">
+        {{ theme() === 'dark' ? 'Light' : 'Dark' }} mode
+      </button>
+    </div>
+  </header>
+
+  @if (loading()) {
+    <section class="panel loading">Loading terminal data...</section>
+  }
+
+  @if (error()) {
+    <section class="panel error">{{ error() }}</section>
+  }
+
+  @if (data(); as d) {
+    <section class="hero panel">
+      <div class="hero-head">
+        <div>
+          <p class="eyebrow">All-Time Strategy PnL</p>
+          <h2>{{ chartModel().currentValue | currency:'USD':'symbol':'1.2-2' }}</h2>
+          <p class="delta" [class.pos]="chartModel().delta >= 0" [class.neg]="chartModel().delta < 0">
+            {{ chartModel().delta >= 0 ? '+' : '' }}{{ chartModel().delta | currency:'USD':'symbol':'1.2-2' }}
+            @if (chartModel().deltaPct !== null) {
+              ({{ chartModel().deltaPct | percent:'1.1-2' }})
+            }
+            in {{ chartRange() }}
+            @if (hoveredPoint()) {
+              <span class="hover-readout">
+              {{ hoveredPoint()!.pnl | currency:'USD':'symbol':'1.2-2' }} at {{ hoveredPoint()!.ts | date:'MMM d, h:mm a' }}
+              </span>
+            }
+          </p>
+        </div>
+        <div class="hero-side">
+          <span class="chip live">{{ d.config.dryRun ? 'DRY RUN' : 'LIVE TRADING' }}</span>
+          <span class="chip">Buying Power {{ d.account.balanceUsd | currency:'USD':'symbol':'1.2-2' }}</span>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <svg
+          #chartSvg
+          [attr.viewBox]="'0 0 ' + chartModel().width + ' ' + chartModel().height"
+          preserveAspectRatio="none"
+          (mousemove)="onChartMove($event, chartSvg)"
+          (mouseleave)="onChartLeave()"
+        >
+          @if (chartModel().showZero) {
+            <line
+              class="zero-line"
+              [attr.x1]="0"
+              [attr.x2]="chartModel().width"
+              [attr.y1]="chartModel().zeroY"
+              [attr.y2]="chartModel().zeroY"
+            />
+          }
+          <path class="line" [attr.stroke]="chartModel().stroke" [attr.d]="chartModel().path"></path>
+          @if (hoveredPoint()) {
+            <line class="crosshair" [attr.x1]="hoveredPoint()!.x" [attr.x2]="hoveredPoint()!.x" [attr.y1]="16" [attr.y2]="chartModel().height - 16"></line>
+            <circle class="cross-dot" [attr.cx]="hoveredPoint()!.x" [attr.cy]="hoveredPoint()!.y" r="5"></circle>
+          }
+        </svg>
+      </div>
+
+      <div class="axis">
+        <span>{{ chartModel().maxY | currency:'USD':'symbol':'1.0-0' }}</span>
+        <span>{{ chartModel().minY | currency:'USD':'symbol':'1.0-0' }}</span>
+      </div>
+
+      <div class="x-axis">
+        @for (tick of chartModel().xTicks; track tick.x) {
+          <span [style.left.px]="tick.x">{{ tick.label }}</span>
+        }
+      </div>
+
+      <div class="ranges">
+        @for (r of chartRanges; track r) {
+          <button type="button" class="range" [class.active]="chartRange() === r" (click)="setChartRange(r)">
+            {{ r }}
+          </button>
+        }
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      @for (card of kpi(); track card.label) {
+        <article class="panel kpi-card">
+          <h3>{{ card.label }}</h3>
+          @if (card.format === 'usd') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+          }
+          @if (card.format === 'pct') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+          }
+          @if (card.format === 'num') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+          }
+        </article>
+      }
+    </section>
+
+    <section class="kpi-grid compact">
+      @for (card of summaryCards(); track card.label) {
+        <article class="panel kpi-card">
+          <h3>{{ card.label }}</h3>
+          @if (card.format === 'usd') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+          }
+          @if (card.format === 'pct') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+          }
+          @if (card.format === 'num') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+          }
+        </article>
+      }
+    </section>
+
+    <section class="layout-grid">
+      <article class="panel">
+        <div class="panel-title-row">
+          <h2>Bot Health</h2>
+        </div>
+        <ul class="facts">
+          <li><span>Last Cycle</span><strong>{{ d.bot.lastCycleAt ? (d.bot.lastCycleAt | date:'medium') : 'Never' }}</strong></li>
+          <li><span>Status</span><strong>{{ d.bot.status }}</strong></li>
+          <li><span>Reason</span><strong>{{ d.bot.statusReason }}</strong></li>
+          <li><span>Last Error</span><strong>{{ d.bot.lastError || 'None' }}</strong></li>
+          <li><span>Tracked Events</span><strong>{{ d.bot.tradedEventsCount }}</strong></li>
+          <li><span>Cycles</span><strong>{{ d.metrics.totalCycles }}</strong></li>
+          <li><span>Order Not Filled</span><strong>{{ d.metrics.totalNotFilled }}</strong></li>
+          <li><span>Total Errors</span><strong>{{ d.metrics.totalErrors }}</strong></li>
+        </ul>
+      </article>
+
+      <article class="panel">
+        <div class="panel-title-row">
+          <h2>Strategy Guardrails</h2>
+        </div>
+        <ul class="facts">
+          <li><span>Stake</span><strong>{{ d.config.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
+          <li><span>Max YES Price</span><strong>{{ d.config.maxYesPrice | percent:'1.0-0' }}</strong></li>
+          <li><span>Trigger</span><strong>{{ d.config.minTriggerMinute }}'+ and {{ d.config.minGoalLead }}+ lead</strong></li>
+          <li><span>Retry Until</span><strong>{{ d.config.retryUntilMinute }}'</strong></li>
+          <li><span>Daily Stop Loss</span><strong>{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
+          <li><span>Leagues</span><strong>{{ d.config.leagues.length }}</strong></li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Live Games Monitored</h2>
+        <span class="chip">Total {{ d.monitoredGamesSummary.total }} | Eligible {{ d.monitoredGamesSummary.eligibleNow }} | Already Bet {{ d.monitoredGamesSummary.alreadyBet }}</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Minute</th>
+              <th>Competition</th>
+              <th>Game</th>
+              <th>Score</th>
+              <th>Leader</th>
+              <th>Diff</th>
+              <th>Status</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!d.monitoredGames.length) {
+              <tr><td colspan="8" class="muted">No live tracked games right now</td></tr>
+            }
+            @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
+              <tr>
+                <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
+                <td>{{ g.competition }}</td>
+                <td>{{ g.title }}</td>
+                <td>{{ g.score }}</td>
+                <td>{{ g.leadingTeam }}</td>
+                <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
+                <td><span class="chip">{{ g.status }}</span></td>
+                <td>{{ g.reason }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Open Trades</h2>
+        <span class="chip">{{ d.openTrades.length }} positions</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Game</th>
+              <th>Bet</th>
+              <th>Qty</th>
+              <th>Cost</th>
+              <th>Mark</th>
+              <th>PnL</th>
+              <th>ROI</th>
+              <th>Condition</th>
+              <th>Update</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!d.openTrades.length) {
+              <tr><td colspan="10" class="muted">No open positions</td></tr>
+            }
+            @for (t of d.openTrades; track trackByTicker($index, t)) {
+              <tr>
+                <td>{{ t.ticker }}</td>
+                <td>{{ t.event_title || t.event_ticker || '-' }}</td>
+                <td>{{ t.selection_label || t.market_title || '-' }}</td>
+                <td>{{ t.quantity ?? '-' }}</td>
+                <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
+                <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
+                  {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd === undefined ? '-' : (t.unrealized_pnl_usd | currency:'USD':'symbol':'1.2-2') }}
+                </td>
+                <td [class.pos]="(t.unrealized_roi_pct ?? 0) >= 0" [class.neg]="(t.unrealized_roi_pct ?? 0) < 0">
+                  {{ t.unrealized_roi_pct === null || t.unrealized_roi_pct === undefined ? '-' : (t.unrealized_roi_pct | percent:'1.1-2') }}
+                </td>
+                <td>
+                  @if (!t.placed_context) { - }
+                  @if (t.placed_context) {
+                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                  }
+                </td>
+                <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>League Leaderboard</h2>
+        <span class="chip">{{ d.leagueLeaderboard.length }} leagues</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>League</th>
+              <th>Trades</th>
+              <th>Wins</th>
+              <th>Losses</th>
+              <th>Win Rate</th>
+              <th>Avg ROI</th>
+              <th>Total PnL</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!d.leagueLeaderboard.length) {
+              <tr><td colspan="7" class="muted">No settled league stats yet</td></tr>
+            }
+            @for (r of d.leagueLeaderboard; track r.league) {
+              <tr>
+                <td>{{ r.league }}</td>
+                <td>{{ r.trades }}</td>
+                <td>{{ r.wins }}</td>
+                <td>{{ r.losses }}</td>
+                <td>{{ r.winRate === null ? '-' : (r.winRate | percent:'1.1-2') }}</td>
+                <td [class.pos]="(r.avgRoiPct ?? 0) >= 0" [class.neg]="(r.avgRoiPct ?? 0) < 0">
+                  {{ r.avgRoiPct === null ? '-' : (r.avgRoiPct | percent:'1.1-2') }}
+                </td>
+                <td [class.pos]="r.totalPnlUsd >= 0" [class.neg]="r.totalPnlUsd < 0">{{ r.totalPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Closed Trades</h2>
+        <span class="chip">Recent settlements</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Settled</th>
+              <th>Ticker</th>
+              <th>Event</th>
+              <th>Result</th>
+              <th>PnL</th>
+              <th>ROI</th>
+              <th>Recovery Wins</th>
+              <th>Placed Condition</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!d.closedTrades.length) {
+              <tr><td colspan="8" class="muted">No settled trades yet</td></tr>
+            }
+            @for (t of d.closedTrades.slice(0, 80); track t.ticker + t.settled_time) {
+              <tr>
+                <td>{{ t.settled_time | date:'short' }}</td>
+                <td>{{ t.ticker }}</td>
+                <td>{{ t.event_ticker || '-' }}</td>
+                <td>{{ t.market_result }}</td>
+                <td [class.pos]="t.pnl_usd >= 0" [class.neg]="t.pnl_usd < 0">{{ t.pnl_usd | currency:'USD':'symbol':'1.2-2' }}</td>
+                <td [class.pos]="(t.roi_pct ?? 0) >= 0" [class.neg]="(t.roi_pct ?? 0) < 0">
+                  {{ t.roi_pct === null || t.roi_pct === undefined ? '-' : (t.roi_pct | percent:'1.1-2') }}
+                </td>
+                <td>{{ t.wins_to_recover_at_avg_win ?? '-' }}</td>
+                <td>
+                  @if (!t.placed_context) { - }
+                  @if (t.placed_context) {
+                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Important Action Log</h2>
+        <span class="chip">{{ d.recentLogs.length }} records</span>
+      </div>
+      <div class="log-list">
+        @for (item of d.recentLogs.slice(0, 120); track item.ts + item.action) {
+          <div class="log-row">
+            <span class="log-ts">{{ item.ts | date:'shortTime' }}</span>
+            <span class="log-action">{{ item.action }}</span>
+            <span class="log-meta">
+              @for (entry of item | keyvalue; track entry.key) {
+                @if (entry.key !== 'ts' && entry.key !== 'action') {
+                  <code>{{ entry.key }}={{ asString(entry.value) }}</code>
+                }
+              }
+            </span>
+          </div>
+        }
+      </div>
+    </section>
+  }
+</main>
