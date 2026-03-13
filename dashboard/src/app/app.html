@@ -1,9 +1,14 @@
 <main class="terminal" [class.theme-dark]="theme() === 'dark'" [class.theme-light]="theme() === 'light'">
   <header class="topbar">
     <div class="brand">
-      <span class="brand-dot"></span>
-      <h1>OpenClaw Soccer Terminal</h1>
-      <p>Kalshi in-play trading agent monitor</p>
+      <div class="brand-mark" aria-hidden="true">
+        <span class="brand-mark__bar"></span>
+      </div>
+      <div class="brand-copy">
+        <p class="brand-kicker">Kalshi Soccer Trading Bot</p>
+        <h1>Soccer Trading Terminal</h1>
+        <p>Live monitoring, execution state, and strategy performance for in-play Kalshi soccer markets.</p>
+      </div>
     </div>
     <div class="header-controls">
       <span class="chip">Updated {{ now() | date:'mediumTime' }}</span>

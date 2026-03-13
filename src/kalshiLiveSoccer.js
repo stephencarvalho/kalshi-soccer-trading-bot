@@ -79,6 +79,20 @@ function parseNullableInt(value) {
   return Math.trunc(n);
 }
 
+function countSignificantEvents(events, eventType) {
+  if (!Array.isArray(events)) return null;
+  let count = 0;
+  let seenAny = false;
+  for (const event of events) {
+    if (!event || typeof event !== 'object') continue;
+    const type = String(event.event_type || event.type || '').toLowerCase();
+    if (!type) continue;
+    seenAny = true;
+    if (type === eventType) count += 1;
+  }
+  return seenAny ? count : null;
+}
+
 function parseTeams(title) {
   const t = String(title || '');
   const m = t.match(/^(.+?)\s+vs\s+(.+)$/i) || t.match(/^(.+?)\s+at\s+(.+)$/i);
@@ -168,11 +182,13 @@ async function getLiveSoccerEventData(client, competitions) {
     const homeRedCards =
       parseNullableInt(details.home_red_cards) ??
       parseNullableInt(details.home_red_card_count) ??
-      parseNullableInt(details.home_cards_red);
+      parseNullableInt(details.home_cards_red) ??
+      countSignificantEvents(details.home_significant_events, 'red_card');
     const awayRedCards =
       parseNullableInt(details.away_red_cards) ??
       parseNullableInt(details.away_red_card_count) ??
-      parseNullableInt(details.away_cards_red);
+      parseNullableInt(details.away_cards_red) ??
+      countSignificantEvents(details.away_significant_events, 'red_card');
     const tickers = [...(m.primary_event_tickers || []), ...(m.related_event_tickers || [])].filter((t) => String(t).includes('GAME'));
 
     for (const ticker of tickers) {

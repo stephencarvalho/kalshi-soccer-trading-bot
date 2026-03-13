@@ -225,7 +225,7 @@ interface MonitoredGameRecord {
 }
 
 type ThemeMode = 'light' | 'dark';
-type ChartRange = 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
+type ChartRange = '1H' | '3H' | '6H' | '12H' | 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
 
 interface PnlPoint {
   ts: number;
@@ -242,7 +242,14 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 })
 export class App implements OnDestroy {
   private readonly http = inject(HttpClient);
-  @ViewChild('pnlChart') private chartCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('pnlChart')
+  set chartCanvasRef(value: ElementRef<HTMLCanvasElement> | undefined) {
+    this.chartCanvas = value;
+    if (value) {
+      queueMicrotask(() => this.renderChart());
+    }
+  }
+  private chartCanvas?: ElementRef<HTMLCanvasElement>;
   private chartInstance: Chart<'line'> | null = null;
   private chartPoints: PnlPoint[] = [];
   private readonly chartViewReady = signal(false);
@@ -254,7 +261,7 @@ export class App implements OnDestroy {
   readonly now = signal(new Date());
   readonly theme = signal<ThemeMode>(this.loadTheme());
   readonly chartRange = signal<ChartRange>('ALL');
-  readonly chartRanges: ChartRange[] = ['LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
+  readonly chartRanges: ChartRange[] = ['1H', '3H', '6H', '12H', 'LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
 
   readonly kpi = computed(() => {
@@ -335,6 +342,10 @@ export class App implements OnDestroy {
     const nowTs = this.now().getTime();
     let fromTs = 0;
 
+    if (range === '1H') fromTs = nowTs - 1 * 60 * 60 * 1000;
+    if (range === '3H') fromTs = nowTs - 3 * 60 * 60 * 1000;
+    if (range === '6H') fromTs = nowTs - 6 * 60 * 60 * 1000;
+    if (range === '12H') fromTs = nowTs - 12 * 60 * 60 * 1000;
     if (range === 'LIVE') fromTs = nowTs - 6 * 60 * 60 * 1000;
     if (range === '1D') fromTs = nowTs - 24 * 60 * 60 * 1000;
     if (range === '1W') fromTs = nowTs - 7 * 24 * 60 * 60 * 1000;
@@ -451,7 +462,9 @@ export class App implements OnDestroy {
 
   private formatChartTs(ts: number, range: ChartRange): string {
     const d = new Date(ts);
-    if (range === 'LIVE') return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (range === '1H' || range === '3H' || range === '6H' || range === '12H' || range === 'LIVE') {
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
     if (range === '1D') return d.toLocaleTimeString([], { hour: 'numeric' });
     if (range === '1W' || range === '1M') return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
@@ -461,7 +474,7 @@ export class App implements OnDestroy {
     this.http.get<DashboardPayload>('/api/dashboard').subscribe({
       next: (payload) => {
         this.data.set(payload);
-        this.renderChart();
+        queueMicrotask(() => this.renderChart());
         this.loading.set(false);
         this.error.set(null);
       },
