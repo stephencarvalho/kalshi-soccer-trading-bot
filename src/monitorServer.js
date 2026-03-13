@@ -51,7 +51,7 @@ function isIgnoredSettlement(settlement, ignoredTickers = []) {
   return ignored.has(ticker) || ignored.has(eventTicker);
 }
 
-function readActionLogs(limit = 5000) {
+function readActionLogs(limit = null) {
   try {
     const stat = fs.statSync(logsPath);
     const changed = stat.mtimeMs !== logCache.mtimeMs || stat.size !== logCache.size;
@@ -76,7 +76,9 @@ function readActionLogs(limit = 5000) {
       };
     }
 
-    return logCache.parsed.slice(-limit).map((line) => {
+    const records = Number.isFinite(Number(limit)) ? logCache.parsed.slice(-Number(limit)) : logCache.parsed;
+
+    return records.map((line) => {
       try {
         return typeof line === 'string' ? JSON.parse(line) : line;
       } catch {
@@ -602,7 +604,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.get('/api/dashboard', async (_req, res) => {
   const runtime = getRuntimeConfig(config);
-  const actionLogs = readActionLogs(500);
+  const actionLogs = readActionLogs();
   const { important: importantLogs, verbose: verboseLogs } = splitLogs(actionLogs);
   const placementContextByEvent = buildPlacementContextByEvent(actionLogs, runtime);
   const state = safeReadJson(statePath, {});
@@ -889,8 +891,8 @@ app.get('/api/dashboard', async (_req, res) => {
       noLiveData: monitoredGames.filter((g) => g.status === 'NO_LIVE_DATA').length,
     },
     monitoredGames: monitoredGames.slice(0, 300),
-    recentLogs: importantLogs.slice(-150).reverse(),
-    recentCycleLogs: verboseLogs.slice(-150).reverse(),
+    recentLogs: [...importantLogs].reverse(),
+    recentCycleLogs: verboseLogs.slice(-100).reverse(),
     openTrades,
     closedTrades: closedTradesWithRecovery.slice(0, 200),
   });

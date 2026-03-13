@@ -225,11 +225,32 @@ interface MonitoredGameRecord {
 }
 
 type ThemeMode = 'light' | 'dark';
-type ChartRange = 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
+type ChartRange = '1H' | '3H' | '6H' | '12H' | 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
+type LogViewMode = 'important' | 'verbose';
+type LogTimeRange = 'TODAY' | '24H' | '7D' | 'ALL';
 
 interface PnlPoint {
   ts: number;
   pnl: number;
+}
+
+interface MetricCard {
+  label: string;
+  value: number | null;
+  format: 'usd' | 'pct' | 'num';
+}
+
+interface MetricSection {
+  title: string;
+  subtitle: string;
+  columns?: 'three' | 'four';
+  cards: MetricCard[];
+}
+
+interface LogField {
+  key: string;
+  label: string;
+  value: string;
 }
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
@@ -242,7 +263,14 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 })
 export class App implements OnDestroy {
   private readonly http = inject(HttpClient);
-  @ViewChild('pnlChart') private chartCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('pnlChart')
+  set chartCanvasRef(value: ElementRef<HTMLCanvasElement> | undefined) {
+    this.chartCanvas = value;
+    if (value) {
+      queueMicrotask(() => this.renderChart());
+    }
+  }
+  private chartCanvas?: ElementRef<HTMLCanvasElement>;
   private chartInstance: Chart<'line'> | null = null;
   private chartPoints: PnlPoint[] = [];
   private readonly chartViewReady = signal(false);
@@ -254,49 +282,87 @@ export class App implements OnDestroy {
   readonly now = signal(new Date());
   readonly theme = signal<ThemeMode>(this.loadTheme());
   readonly chartRange = signal<ChartRange>('ALL');
-  readonly chartRanges: ChartRange[] = ['LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
+  readonly logViewMode = signal<LogViewMode>('important');
+  readonly logTimeRange = signal<LogTimeRange>('TODAY');
+  readonly chartRanges: ChartRange[] = ['1H', '3H', '6H', '12H', 'LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
+  readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
-
-  readonly kpi = computed(() => {
+  readonly visibleLogs = computed(() => {
     const d = this.data();
-    if (!d) return null;
+    if (!d) return [] as LogRecord[];
+    const selected = this.logViewMode() === 'important' ? d.recentLogs : d.recentCycleLogs;
+    const nowTs = this.now().getTime();
+    const range = this.logTimeRange();
+    let fromTs = Number.NEGATIVE_INFINITY;
 
+    if (range === 'TODAY') {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      fromTs = start.getTime();
+    } else if (range === '24H') {
+      fromTs = nowTs - 24 * 60 * 60 * 1000;
+    } else if (range === '7D') {
+      fromTs = nowTs - 7 * 24 * 60 * 60 * 1000;
+    }
+
+    return selected.filter((item) => {
+      const ts = new Date(String(item.ts || '')).getTime();
+      return Number.isFinite(ts) ? ts >= fromTs : false;
+    });
+  });
+
+  readonly liveDeskMetrics = computed<MetricCard[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return [
+      { label: 'Live Games', value: d.monitoredGamesSummary.total, format: 'num' },
+      { label: 'Eligible Now', value: d.monitoredGamesSummary.eligibleNow, format: 'num' },
+      { label: 'Already Bet', value: d.monitoredGamesSummary.alreadyBet, format: 'num' },
+      { label: 'Open Positions', value: d.account.openPositionsCount, format: 'num' },
+      { label: 'Orders Filled', value: d.metrics.totalFilled, format: 'num' },
+      { label: 'Fill Rate', value: d.metrics.fillRate, format: 'pct' },
+    ];
+  });
+
+  readonly botPerformanceMetrics = computed<MetricCard[]>(() => {
+    const d = this.data();
+    if (!d) return [];
     return [
       { label: 'Available Balance', value: d.account.balanceUsd, format: 'usd' },
       { label: 'Portfolio Value', value: d.account.portfolioValueUsd, format: 'usd' },
-      { label: 'Open Positions', value: d.account.openPositionsCount, format: 'num' },
       { label: 'Today PnL', value: d.account.pnlTodayUsd, format: 'usd' },
       { label: 'Realized PnL', value: d.account.pnl14dUsd, format: 'usd' },
       { label: 'Open ROI PnL', value: d.account.openUnrealizedPnlUsd, format: 'usd' },
       { label: 'Open ROI %', value: d.account.openRoiPct, format: 'pct' },
-      { label: 'Fill Rate', value: d.metrics.fillRate, format: 'pct' },
-      { label: 'Orders Submitted', value: d.metrics.totalOrderSubmit, format: 'num' },
-      { label: 'Orders Filled', value: d.metrics.totalFilled, format: 'num' },
-      { label: 'Eligible Games', value: d.monitoredGamesSummary.eligibleNow, format: 'num' },
-      { label: 'Settled Trades', value: d.analytics.settledTrades, format: 'num' },
-      { label: 'Next Stake', value: d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? null, format: 'usd' },
-      { label: 'Loss Streak', value: d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0, format: 'num' },
-      { label: 'Recovery Loss $', value: d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0, format: 'usd' },
     ];
   });
 
-  readonly analyticsCards = computed(() => {
+  readonly tradePerformanceMetrics = computed<MetricCard[]>(() => {
     const d = this.data();
-    if (!d) return null;
-
+    if (!d) return [];
     return [
-      { label: 'Settled Trades', value: d.analytics.settledTrades, format: 'num' },
       { label: 'Win Rate', value: d.analytics.winRate, format: 'pct' },
       { label: 'Avg Winner ROI', value: d.analytics.avgWinnerRoiPct, format: 'pct' },
+      { label: 'Avg $ ROI / Win', value: d.analytics.avgWinRoiUsd, format: 'usd' },
+      { label: 'Avg PnL Per Trade', value: d.analytics.expectancyPerTradeUsd, format: 'usd' },
       { label: 'Avg Loss (Abs)', value: d.analytics.avgLossAbsUsd, format: 'usd' },
-      { label: 'Expectancy / Trade', value: d.analytics.expectancyPerTradeUsd, format: 'usd' },
-      { label: 'Recover Avg Loss', value: d.analytics.betsNeededToRecoverAvgLoss, format: 'num' },
       { label: 'Breakeven Win Rate', value: d.analytics.breakevenWinRate, format: 'pct' },
-      { label: 'Profit Factor', value: d.analytics.profitFactor, format: 'num2' },
-      { label: 'Payoff Ratio', value: d.analytics.payoffRatio, format: 'num2' },
       { label: 'Max Drawdown', value: d.analytics.maxDrawdownUsd, format: 'usd' },
       { label: 'Longest Win Streak', value: d.analytics.longestWinStreak, format: 'num' },
       { label: 'Longest Loss Streak', value: d.analytics.longestLossStreak, format: 'num' },
+    ];
+  });
+
+  readonly recoveryMetrics = computed<MetricCard[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return [
+      { label: 'Next Stake', value: d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? null, format: 'usd' },
+      { label: 'Loss Streak', value: d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0, format: 'num' },
+      { label: 'Recovery Loss $', value: d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0, format: 'usd' },
+      { label: 'Wins / Single Loss', value: d.analytics.winsRequiredToRecoverSingleLoss, format: 'num' },
+      { label: 'Wins To Breakeven', value: d.analytics.winsRequiredToBreakeven, format: 'num' },
+      { label: 'Settled Trades', value: d.analytics.settledTrades, format: 'num' },
     ];
   });
 
@@ -335,6 +401,10 @@ export class App implements OnDestroy {
     const nowTs = this.now().getTime();
     let fromTs = 0;
 
+    if (range === '1H') fromTs = nowTs - 1 * 60 * 60 * 1000;
+    if (range === '3H') fromTs = nowTs - 3 * 60 * 60 * 1000;
+    if (range === '6H') fromTs = nowTs - 6 * 60 * 60 * 1000;
+    if (range === '12H') fromTs = nowTs - 12 * 60 * 60 * 1000;
     if (range === 'LIVE') fromTs = nowTs - 6 * 60 * 60 * 1000;
     if (range === '1D') fromTs = nowTs - 24 * 60 * 60 * 1000;
     if (range === '1W') fromTs = nowTs - 7 * 24 * 60 * 60 * 1000;
@@ -382,19 +452,6 @@ export class App implements OnDestroy {
     };
   });
 
-  readonly summaryCards = computed(() => {
-    const d = this.data();
-    if (!d) return [];
-    return [
-      { label: 'Win Rate', value: d.analytics.winRate, format: 'pct' },
-      { label: 'Avg Winner ROI', value: d.analytics.avgWinnerRoiPct, format: 'pct' },
-      { label: 'Avg $ ROI / Win', value: d.analytics.avgWinRoiUsd, format: 'usd' },
-      { label: 'Expectancy / Trade', value: d.analytics.expectancyPerTradeUsd, format: 'usd' },
-      { label: 'Wins / Single Loss', value: d.analytics.winsRequiredToRecoverSingleLoss, format: 'num' },
-      { label: 'Wins To Breakeven', value: d.analytics.winsRequiredToBreakeven, format: 'num' },
-    ];
-  });
-
   constructor() {
     effect(() => {
       if (!this.chartViewReady()) return;
@@ -402,6 +459,12 @@ export class App implements OnDestroy {
       this.chartRange();
       this.rangeFilteredSeries();
       queueMicrotask(() => this.renderChart());
+    });
+
+    effect(() => {
+      const theme = this.theme();
+      document.documentElement.setAttribute('data-theme', theme);
+      document.body.setAttribute('data-theme', theme);
     });
 
     this.fetchDashboard();
@@ -449,9 +512,19 @@ export class App implements OnDestroy {
     this.hoveredPoint.set(null);
   }
 
+  setLogViewMode(mode: LogViewMode): void {
+    this.logViewMode.set(mode);
+  }
+
+  setLogTimeRange(range: LogTimeRange): void {
+    this.logTimeRange.set(range);
+  }
+
   private formatChartTs(ts: number, range: ChartRange): string {
     const d = new Date(ts);
-    if (range === 'LIVE') return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (range === '1H' || range === '3H' || range === '6H' || range === '12H' || range === 'LIVE') {
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
     if (range === '1D') return d.toLocaleTimeString([], { hour: 'numeric' });
     if (range === '1W' || range === '1M') return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
@@ -461,7 +534,7 @@ export class App implements OnDestroy {
     this.http.get<DashboardPayload>('/api/dashboard').subscribe({
       next: (payload) => {
         this.data.set(payload);
-        this.renderChart();
+        queueMicrotask(() => this.renderChart());
         this.loading.set(false);
         this.error.set(null);
       },
@@ -487,6 +560,81 @@ export class App implements OnDestroy {
     if (typeof value === 'number') return String(value);
     if (typeof value === 'boolean') return value ? 'true' : 'false';
     return JSON.stringify(value);
+  }
+
+  prettyKey(key: string): string {
+    return key
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  logActionLabel(action: string | undefined): string {
+    return String(action || 'unknown').replace(/_/g, ' ').toUpperCase();
+  }
+
+  logActionTone(action: string | undefined): string {
+    const value = String(action || '');
+    if (value.includes('error') || value.includes('halt') || value.includes('fatal')) return 'log-action--bad';
+    if (value.includes('filled')) return 'log-action--good';
+    if (value.includes('submit')) return 'log-action--info';
+    if (value.includes('not_filled')) return 'log-action--warn';
+    return 'log-action--neutral';
+  }
+
+  logHeadline(item: LogRecord): string {
+    const message = item['message'];
+    if (typeof message === 'string' && message.trim()) return message;
+
+    const eventTitle = item['eventTitle'];
+    if (typeof eventTitle === 'string' && eventTitle.trim()) {
+      const minute = item['minute'];
+      const score = item['score'];
+      const bits = [
+        eventTitle.trim(),
+        minute !== undefined && minute !== null ? `${minute}'` : null,
+        typeof score === 'string' && score ? score : null,
+      ].filter(Boolean);
+      return bits.join(' • ');
+    }
+
+    const competition = item['competition'];
+    if (typeof competition === 'string' && competition.trim()) return competition.trim();
+    return this.logActionLabel(item.action);
+  }
+
+  logFields(item: LogRecord): LogField[] {
+    return Object.entries(item)
+      .filter(([key]) => key !== 'ts' && key !== 'action' && key !== 'message')
+      .map(([key, value]) => ({
+        key,
+        label: this.prettyKey(key),
+        value: this.asString(value),
+      }));
+  }
+
+  logPrimaryFields(item: LogRecord): LogField[] {
+    const priority = [
+      'eventTitle',
+      'competition',
+      'leadingTeam',
+      'score',
+      'minute',
+      'stakeUsd',
+      'fillCount',
+      'count',
+      'cards',
+      'leaderVsTrailingCards',
+    ];
+    const fields = this.logFields(item);
+    return priority
+      .map((key) => fields.find((field) => field.key === key))
+      .filter((field): field is LogField => Boolean(field));
+  }
+
+  logSecondaryFields(item: LogRecord): LogField[] {
+    const primaryKeys = new Set(this.logPrimaryFields(item).map((field) => field.key));
+    return this.logFields(item).filter((field) => !primaryKeys.has(field.key));
   }
 
   statusClass(status: string | undefined): string {
