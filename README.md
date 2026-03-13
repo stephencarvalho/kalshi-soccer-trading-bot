@@ -291,6 +291,11 @@ UI:
 - `STATE_FILE`
 - `RUNTIME_OVERRIDES_FILE`
 
+### Netlify / deployed dashboard
+
+- `DASHBOARD_API_BASE_URL` should be set to the public monitor API base URL for Netlify deploys and deploy previews.
+- If this is left blank, the dashboard only works in local development where `/api/*` is proxied to `http://localhost:8787`.
+
 ## Logs and Data Persistence
 
 - `logs/trading-actions.ndjson`: append-only event/action log.
