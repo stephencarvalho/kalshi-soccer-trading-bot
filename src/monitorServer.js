@@ -36,6 +36,26 @@ let logCache = {
   parsed: [],
 };
 
+function extractBearerToken(req) {
+  const auth = String(req.headers.authorization || '');
+  if (auth.startsWith('Bearer ')) return auth.slice('Bearer '.length).trim();
+  const headerToken = String(req.headers['x-monitor-token'] || '').trim();
+  return headerToken || '';
+}
+
+function requireMonitorAuth(req, res, next) {
+  if (!config.monitorApiToken) return next();
+
+  const token = extractBearerToken(req);
+  if (token && token === config.monitorApiToken) return next();
+
+  return res.status(401).json({
+    ok: false,
+    error: 'unauthorized',
+    message: 'Valid monitor API token required',
+  });
+}
+
 function safeReadJson(filePath, fallback) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -602,7 +622,7 @@ app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-app.get('/api/dashboard', async (_req, res) => {
+app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const runtime = getRuntimeConfig(config);
   const actionLogs = readActionLogs();
   const { important: importantLogs, verbose: verboseLogs } = splitLogs(actionLogs);

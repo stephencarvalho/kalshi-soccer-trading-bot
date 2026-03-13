@@ -2,9 +2,12 @@
   "name": "dashboard",
   "version": "0.0.0",
   "scripts": {
+    "prestart": "node scripts/write-runtime-config.cjs",
     "ng": "ng",
+    "prebuild": "node scripts/write-runtime-config.cjs",
     "start": "ng serve",
     "build": "ng build",
+    "prewatch": "node scripts/write-runtime-config.cjs",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },

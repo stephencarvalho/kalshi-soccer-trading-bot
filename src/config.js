@@ -69,6 +69,7 @@ const config = {
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || '',
   twilioFromWhatsApp: process.env.TWILIO_WHATSAPP_FROM || '',
   twilioToWhatsApp: process.env.TWILIO_WHATSAPP_TO || '',
+  monitorApiToken: process.env.MONITOR_API_TOKEN || '',
 };
 
 config.maxYesPrice = config.explicitMaxYesPrice ?? Math.max(0.01, Math.min(0.99, config.estimatedWinProbability - config.feeBuffer));

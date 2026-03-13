@@ -13,6 +13,7 @@ import {
   Tooltip,
   type ChartConfiguration,
 } from 'chart.js';
+import { buildApiUrl, getDashboardRuntimeConfig } from './runtime-config';
 
 interface DashboardPayload {
   generatedAt: string;
@@ -329,7 +330,15 @@ export class App implements OnDestroy {
     if (!d) return [];
     return [
       { label: 'Available Balance', value: d.account.balanceUsd, format: 'usd' },
-      { label: 'Portfolio Value', value: d.account.portfolioValueUsd, format: 'usd' },
+      { label: 'Open Position Value', value: d.account.portfolioValueUsd, format: 'usd' },
+      {
+        label: 'Net Account Value',
+        value:
+          d.account.balanceUsd === null && d.account.portfolioValueUsd === null
+            ? null
+            : Number(((d.account.balanceUsd ?? 0) + (d.account.portfolioValueUsd ?? 0)).toFixed(2)),
+        format: 'usd',
+      },
       { label: 'Today PnL', value: d.account.pnlTodayUsd, format: 'usd' },
       { label: 'Realized PnL', value: d.account.pnl14dUsd, format: 'usd' },
       { label: 'Open ROI PnL', value: d.account.openUnrealizedPnlUsd, format: 'usd' },
@@ -531,7 +540,10 @@ export class App implements OnDestroy {
   }
 
   fetchDashboard(): void {
-    this.http.get<DashboardPayload>('/api/dashboard').subscribe({
+    const runtime = getDashboardRuntimeConfig();
+    const headers = runtime.apiToken ? { Authorization: `Bearer ${runtime.apiToken}` } : undefined;
+
+    this.http.get<DashboardPayload>(buildApiUrl('/api/dashboard'), { headers }).subscribe({
       next: (payload) => {
         this.data.set(payload);
         queueMicrotask(() => this.renderChart());
