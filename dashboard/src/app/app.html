@@ -1,4 +1,5 @@
 <main class="terminal" [class.theme-dark]="theme() === 'dark'" [class.theme-light]="theme() === 'light'">
+  <div class="page-shell">
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark" aria-hidden="true">
@@ -66,44 +67,287 @@
       </div>
     </section>
 
-    <section class="kpi-grid">
-      @for (card of kpi(); track card.label) {
-        <article class="panel kpi-card">
-          <h3>{{ card.label }}</h3>
-          @if (card.format === 'usd') {
-            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+    <section class="desk-layout">
+      <article class="panel desk-main">
+        <div class="panel-title-row">
+          <div>
+            <h2>Live Trading Desk</h2>
+            <p class="panel-subtitle">Live match state and open exposure are grouped together so eligibility, fills, and risk can be checked in one scan.</p>
+          </div>
+          <span class="chip">Total {{ d.monitoredGamesSummary.total }} | Eligible {{ d.monitoredGamesSummary.eligibleNow }} | Already Bet {{ d.monitoredGamesSummary.alreadyBet }}</span>
+        </div>
+        <div class="signal-grid signal-grid--six">
+          @for (card of liveDeskMetrics(); track card.label) {
+            <article class="signal-card">
+              <h3>{{ card.label }}</h3>
+              @if (card.format === 'usd') {
+                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+              }
+              @if (card.format === 'pct') {
+                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+              }
+              @if (card.format === 'num') {
+                <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+              }
+            </article>
           }
-          @if (card.format === 'pct') {
-            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-          }
-          @if (card.format === 'num') {
-            <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
-          }
-        </article>
-      }
+        </div>
+        <div class="desk-split">
+          <section class="desk-panel">
+            <div class="panel-title-row">
+              <h2>Live Games Monitored</h2>
+            </div>
+            <div class="table-wrap terminal-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Minute</th>
+                    <th>Competition</th>
+                    <th>Game</th>
+                    <th>Score</th>
+                    <th>Red (H-A)</th>
+                    <th>Red (L-T)</th>
+                    <th>Leader</th>
+                    <th>Diff</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @if (!d.monitoredGames.length) {
+                    <tr><td colspan="10" class="muted">No live tracked games right now</td></tr>
+                  }
+                  @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
+                    <tr>
+                      <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
+                      <td>{{ g.competition }}</td>
+                      <td>{{ g.title }}</td>
+                      <td>{{ g.score }}</td>
+                      <td>{{ g.redCards || '-' }}</td>
+                      <td>{{ g.leadingVsTrailingRedCards || '-' }}</td>
+                      <td>{{ g.leadingTeam }}</td>
+                      <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
+                      <td><span class="chip">{{ g.status }}</span></td>
+                      <td>{{ g.reason }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section class="desk-panel">
+            <div class="panel-title-row">
+              <h2>Open Trades</h2>
+              <span class="chip">{{ d.openTrades.length }} positions</span>
+            </div>
+            <div class="table-wrap terminal-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Game</th>
+                    <th>Bet</th>
+                    <th>Mkt</th>
+                    <th>Qty</th>
+                    <th>Amt Bet</th>
+                    <th>Total Return</th>
+                    <th>Cost</th>
+                    <th>Mark</th>
+                    <th>PnL</th>
+                    <th>ROI</th>
+                    <th>Condition</th>
+                    <th>Cards</th>
+                    <th>Update</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @if (!d.openTrades.length) {
+                    <tr><td colspan="14" class="muted">No open positions</td></tr>
+                  }
+                  @for (t of d.openTrades; track trackByTicker($index, t)) {
+                    <tr>
+                      <td>{{ t.ticker }}</td>
+                      <td>{{ t.event_title || t.event_ticker || '-' }}</td>
+                      <td>{{ t.selection_label || t.market_title || '-' }}</td>
+                      <td>{{ t.market_status || '-' }}</td>
+                      <td>{{ t.quantity ?? '-' }}</td>
+                      <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                      <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                      <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                      <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
+                      <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
+                        {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd === undefined ? '-' : (t.unrealized_pnl_usd | currency:'USD':'symbol':'1.2-2') }}
+                      </td>
+                      <td [class.pos]="(t.unrealized_roi_pct ?? 0) >= 0" [class.neg]="(t.unrealized_roi_pct ?? 0) < 0">
+                        {{ t.unrealized_roi_pct === null || t.unrealized_roi_pct === undefined ? '-' : (t.unrealized_roi_pct | percent:'1.1-2') }}
+                      </td>
+                      <td>
+                        @if (!t.placed_context) { - }
+                        @if (t.placed_context) {
+                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                        }
+                      </td>
+                      <td>
+                        @if (!t.placed_context) { - }
+                        @if (t.placed_context) {
+                          {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                        }
+                      </td>
+                      <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </article>
+
     </section>
 
-    <section class="kpi-grid compact">
-      @for (card of summaryCards(); track card.label) {
-        <article class="panel kpi-card">
-          <h3>{{ card.label }}</h3>
-          @if (card.format === 'usd') {
-            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
-          }
-          @if (card.format === 'pct') {
-            <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-          }
-          @if (card.format === 'num') {
-            <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
-          }
+    <section class="panel performance-shell">
+      <div class="panel-title-row">
+        <div>
+          <h2>Performance</h2>
+          <p class="panel-subtitle">Capital state and strategy outcome metrics are grouped together because both inform whether the bot should keep trading and at what risk level.</p>
+        </div>
+      </div>
+      <div class="performance-grid">
+        <article class="desk-panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Bot Performance</h2>
+              <p class="panel-subtitle">Capital and PnL metrics define current trading capacity and realized account state.</p>
+            </div>
+          </div>
+          <div class="signal-grid signal-grid--bot">
+            @for (card of botPerformanceMetrics(); track card.label) {
+              <article class="signal-card">
+                <h3>{{ card.label }}</h3>
+                @if (card.format === 'usd') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                }
+                @if (card.format === 'pct') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+                }
+                @if (card.format === 'num') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+                }
+              </article>
+            }
+          </div>
         </article>
-      }
+
+        <article class="desk-panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Trade Performance</h2>
+              <p class="panel-subtitle">Outcome quality and expectancy indicate whether the strategy itself is producing enough edge.</p>
+            </div>
+          </div>
+          <div class="signal-grid signal-grid--trade">
+            @for (card of tradePerformanceMetrics(); track card.label) {
+              <article class="signal-card">
+                <h3>{{ card.label }}</h3>
+                @if (card.format === 'usd') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                }
+                @if (card.format === 'pct') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+                }
+                @if (card.format === 'num') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+                }
+              </article>
+            }
+          </div>
+        </article>
+      </div>
     </section>
 
-    <section class="layout-grid">
+    <section class="panel recovery-shell">
+      <div class="panel-title-row">
+        <div>
+          <h2>Recovery Overview</h2>
+          <p class="panel-subtitle">Stake escalation metrics stay above the ladder so next action and recovery context are visible in one place.</p>
+        </div>
+      </div>
+      <article class="recovery-overview">
+        <div class="signal-grid signal-grid--six">
+          @for (card of recoveryMetrics(); track card.label) {
+            <article class="signal-card">
+              <h3>{{ card.label }}</h3>
+              @if (card.format === 'usd') {
+                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+              }
+              @if (card.format === 'pct') {
+                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+              }
+              @if (card.format === 'num') {
+                <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+              }
+            </article>
+          }
+        </div>
+      </article>
+
+      <section class="desk-panel recovery-ladder-block">
+        <div class="panel-title-row">
+          <h2>Recovery Ladder</h2>
+          <span class="chip">
+            {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} |
+            Next {{ (d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? 0) | currency:'USD':'symbol':'1.0-0' }} |
+            Streak {{ d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
+            Loss {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
+          </span>
+        </div>
+        <div class="table-wrap terminal-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Stake</th>
+                <th>Trades</th>
+                <th>Wins</th>
+                <th>Losses</th>
+                <th>Loss $</th>
+                <th>Win $</th>
+                <th>Net PnL</th>
+                <th>Prev Stake Loss $</th>
+                <th>Remaining Loss $</th>
+                <th>Wins Needed To Offset Prev Loss</th>
+              </tr>
+            </thead>
+            <tbody>
+              @if (!(d.recovery?.ladder?.length)) {
+                <tr><td colspan="10" class="muted">No recovery stats yet</td></tr>
+              }
+              @for (r of (d.recovery?.ladder || []); track r.stakeUsd) {
+                <tr>
+                  <td>{{ r.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</td>
+                  <td>{{ r.trades }}</td>
+                  <td>{{ r.wins }}</td>
+                  <td>{{ r.losses }}</td>
+                  <td class="neg">{{ r.lossUsdAbs | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td class="pos">{{ r.winUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td [class.pos]="r.netPnlUsd >= 0" [class.neg]="r.netPnlUsd < 0">{{ r.netPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td>{{ r.prevTierStakeUsd === null ? '-' : (r.prevTierLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
+                  <td [class.neg]="(r.remainingLossUsd || 0) > 0">{{ r.remainingLossUsd === undefined ? '-' : (r.remainingLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
+                  <td>{{ r.prevTierStakeUsd === null ? '-' : (r.winsNeededToOffsetPrevTierLosses ?? '-') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="context-grid">
       <article class="panel">
         <div class="panel-title-row">
-          <h2>Bot Health</h2>
+          <div>
+            <h2>Bot Health</h2>
+            <p class="panel-subtitle">System status, failure visibility, and recency of execution support trust and fast diagnosis.</p>
+          </div>
         </div>
         <ul class="facts">
           <li><span>Last Cycle</span><strong>{{ d.bot.lastCycleAt ? (d.bot.lastCycleAt | date:'medium') : 'Never' }}</strong></li>
@@ -119,7 +363,10 @@
 
       <article class="panel">
         <div class="panel-title-row">
-          <h2>Strategy Guardrails</h2>
+          <div>
+            <h2>Strategy Guardrails</h2>
+            <p class="panel-subtitle">Constraints are grouped here because they define what the bot is allowed to do before any order is considered.</p>
+          </div>
         </div>
         <ul class="facts">
           <li><span>Stake</span><strong>{{ d.config.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
@@ -133,171 +380,13 @@
       </article>
     </section>
 
-    <section class="panel">
-      <div class="panel-title-row">
-        <h2>Recovery Ladder</h2>
-        <span class="chip">
-          {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} |
-          Next {{ (d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? 0) | currency:'USD':'symbol':'1.0-0' }} |
-          Streak {{ d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
-          Loss {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
-        </span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Stake</th>
-              <th>Trades</th>
-              <th>Wins</th>
-              <th>Losses</th>
-              <th>Loss $</th>
-              <th>Win $</th>
-              <th>Net PnL</th>
-              <th>Prev Stake Loss $</th>
-              <th>Remaining Loss $</th>
-              <th>Wins Needed To Offset Prev Loss</th>
-            </tr>
-          </thead>
-          <tbody>
-            @if (!(d.recovery?.ladder?.length)) {
-              <tr><td colspan="10" class="muted">No recovery stats yet</td></tr>
-            }
-            @for (r of (d.recovery?.ladder || []); track r.stakeUsd) {
-              <tr>
-                <td>{{ r.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</td>
-                <td>{{ r.trades }}</td>
-                <td>{{ r.wins }}</td>
-                <td>{{ r.losses }}</td>
-                <td class="neg">{{ r.lossUsdAbs | currency:'USD':'symbol':'1.2-2' }}</td>
-                <td class="pos">{{ r.winUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                <td [class.pos]="r.netPnlUsd >= 0" [class.neg]="r.netPnlUsd < 0">{{ r.netPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                <td>{{ r.prevTierStakeUsd === null ? '-' : (r.prevTierLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
-                <td [class.neg]="(r.remainingLossUsd || 0) > 0">{{ r.remainingLossUsd === undefined ? '-' : (r.remainingLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
-                <td>{{ r.prevTierStakeUsd === null ? '-' : (r.winsNeededToOffsetPrevTierLosses ?? '-') }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title-row">
-        <h2>Live Games Monitored</h2>
-        <span class="chip">Total {{ d.monitoredGamesSummary.total }} | Eligible {{ d.monitoredGamesSummary.eligibleNow }} | Already Bet {{ d.monitoredGamesSummary.alreadyBet }}</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Minute</th>
-              <th>Competition</th>
-              <th>Game</th>
-              <th>Score</th>
-              <th>Red (H-A)</th>
-              <th>Red (L-T)</th>
-              <th>Leader</th>
-              <th>Diff</th>
-              <th>Status</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            @if (!d.monitoredGames.length) {
-              <tr><td colspan="10" class="muted">No live tracked games right now</td></tr>
-            }
-            @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
-              <tr>
-                <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
-                <td>{{ g.competition }}</td>
-                <td>{{ g.title }}</td>
-                <td>{{ g.score }}</td>
-                <td>{{ g.redCards || '-' }}</td>
-                <td>{{ g.leadingVsTrailingRedCards || '-' }}</td>
-                <td>{{ g.leadingTeam }}</td>
-                <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
-                <td><span class="chip">{{ g.status }}</span></td>
-                <td>{{ g.reason }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-title-row">
-        <h2>Open Trades</h2>
-        <span class="chip">{{ d.openTrades.length }} positions</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Ticker</th>
-              <th>Game</th>
-              <th>Bet</th>
-              <th>Mkt</th>
-              <th>Qty</th>
-              <th>Amt Bet</th>
-              <th>Total Return</th>
-              <th>Cost</th>
-              <th>Mark</th>
-              <th>PnL</th>
-              <th>ROI</th>
-              <th>Condition</th>
-              <th>Cards</th>
-              <th>Update</th>
-            </tr>
-          </thead>
-          <tbody>
-            @if (!d.openTrades.length) {
-              <tr><td colspan="14" class="muted">No open positions</td></tr>
-            }
-            @for (t of d.openTrades; track trackByTicker($index, t)) {
-              <tr>
-                <td>{{ t.ticker }}</td>
-                <td>{{ t.event_title || t.event_ticker || '-' }}</td>
-                <td>{{ t.selection_label || t.market_title || '-' }}</td>
-                <td>{{ t.market_status || '-' }}</td>
-                <td>{{ t.quantity ?? '-' }}</td>
-                <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
-                <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
-                  {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd === undefined ? '-' : (t.unrealized_pnl_usd | currency:'USD':'symbol':'1.2-2') }}
-                </td>
-                <td [class.pos]="(t.unrealized_roi_pct ?? 0) >= 0" [class.neg]="(t.unrealized_roi_pct ?? 0) < 0">
-                  {{ t.unrealized_roi_pct === null || t.unrealized_roi_pct === undefined ? '-' : (t.unrealized_roi_pct | percent:'1.1-2') }}
-                </td>
-                <td>
-                  @if (!t.placed_context) { - }
-                  @if (t.placed_context) {
-                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
-                  }
-                </td>
-                <td>
-                  @if (!t.placed_context) { - }
-                  @if (t.placed_context) {
-                    {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
-                  }
-                </td>
-                <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="panel">
+    <section class="analytics-layout">
+      <section class="panel">
       <div class="panel-title-row">
         <h2>League Leaderboard</h2>
         <span class="chip">{{ d.leagueLeaderboard.length }} leagues</span>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap terminal-table">
         <table>
           <thead>
             <tr>
@@ -330,6 +419,72 @@
           </tbody>
         </table>
       </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title-row">
+          <h2>Action Logs</h2>
+          <div class="log-toolbar">
+            <div class="segmented-control">
+              <button type="button" class="segmented-control__button" [class.active]="logViewMode() === 'important'" (click)="setLogViewMode('important')">
+                Important
+              </button>
+              <button type="button" class="segmented-control__button" [class.active]="logViewMode() === 'verbose'" (click)="setLogViewMode('verbose')">
+                Verbose
+              </button>
+            </div>
+            <div class="segmented-control">
+              @for (range of logTimeRanges; track range) {
+                <button
+                  type="button"
+                  class="segmented-control__button"
+                  [class.active]="logTimeRange() === range"
+                  (click)="setLogTimeRange(range)">
+                  {{ range }}
+                </button>
+              }
+            </div>
+            <span class="chip">{{ visibleLogs().length }} records</span>
+          </div>
+        </div>
+        <div class="log-list">
+          @if (!visibleLogs().length) {
+            <div class="muted">No logs in this view for {{ logTimeRange() }}</div>
+          }
+          @for (item of visibleLogs().slice(0, 120); track item.ts + item.action) {
+            <div class="log-row">
+              <div class="log-rail">
+                <span class="log-ts">{{ item.ts | date:'shortTime' }}</span>
+                <span class="log-date">{{ item.ts | date:'MMM d' }}</span>
+                <span class="log-action" [ngClass]="logActionTone(item.action)">{{ logActionLabel(item.action) }}</span>
+              </div>
+              <div class="log-body">
+                <div class="log-headline">{{ logHeadline(item) }}</div>
+                @if (logPrimaryFields(item).length) {
+                  <div class="log-meta log-meta--primary">
+                    @for (field of logPrimaryFields(item); track field.key) {
+                      <span class="log-chip">
+                        <strong>{{ field.label }}</strong>
+                        <span>{{ field.value }}</span>
+                      </span>
+                    }
+                  </div>
+                }
+                @if (logSecondaryFields(item).length) {
+                  <div class="log-meta log-meta--secondary">
+                    @for (field of logSecondaryFields(item); track field.key) {
+                      <span class="log-chip log-chip--secondary">
+                        <strong>{{ field.label }}</strong>
+                        <span>{{ field.value }}</span>
+                      </span>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </section>
     </section>
 
     <section class="panel">
@@ -337,7 +492,7 @@
         <h2>Closed Trades</h2>
         <span class="chip">Recent settlements</span>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap terminal-table">
         <table>
           <thead>
             <tr>
@@ -391,27 +546,6 @@
         </table>
       </div>
     </section>
-
-    <section class="panel">
-      <div class="panel-title-row">
-        <h2>Important Action Log</h2>
-        <span class="chip">{{ d.recentLogs.length }} records</span>
-      </div>
-      <div class="log-list">
-        @for (item of d.recentLogs.slice(0, 120); track item.ts + item.action) {
-          <div class="log-row">
-            <span class="log-ts">{{ item.ts | date:'shortTime' }}</span>
-            <span class="log-action">{{ item.action }}</span>
-            <span class="log-meta">
-              @for (entry of item | keyvalue; track entry.key) {
-                @if (entry.key !== 'ts' && entry.key !== 'action') {
-                  <code>{{ entry.key }}={{ asString(entry.value) }}</code>
-                }
-              }
-            </span>
-          </div>
-        }
-      </div>
-    </section>
   }
+  </div>
 </main>

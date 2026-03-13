@@ -37,9 +37,13 @@
   --bg: #f9fbfd;
 }
 
-.topbar {
+.page-shell {
   max-width: 1500px;
-  margin: 0 auto 1rem auto;
+  margin: 0 auto;
+}
+
+.topbar {
+  margin: 0 0 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -151,8 +155,7 @@
 
 .loading,
 .error {
-  max-width: 1500px;
-  margin: 0 auto 0.75rem auto;
+  margin: 0 0 0.75rem;
 }
 
 .error {
@@ -160,8 +163,7 @@
 }
 
 .hero {
-  max-width: 1500px;
-  margin: 0 auto 1.2rem auto;
+  margin: 0 0 1.2rem;
   overflow: hidden;
 }
 
@@ -246,54 +248,124 @@
   }
 }
 
-.kpi-grid {
-  max-width: 1500px;
-  margin: 0 auto 0.2rem auto;
+.panel-subtitle {
+  margin: 0.24rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.desk-layout {
+  margin: 0.75rem 0 0;
   display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.desk-main {
+  padding: 0.95rem;
+}
+
+.desk-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.desk-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--panel) 92%, var(--chip));
+  padding: 0.85rem;
+  min-width: 0;
+}
+
+.signal-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.signal-grid--six {
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 0.65rem;
 }
 
-.kpi-grid.compact {
-  margin-top: 0.65rem;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.signal-grid--bot {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
-.kpi-card {
+.signal-grid--trade {
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+}
+
+.signal-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.signal-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--panel) 88%, var(--chip));
+  padding: 0.75rem 0.85rem;
+  min-width: 0;
+
   h3 {
     margin: 0;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     color: var(--muted);
   }
 
   p {
-    margin: 0.38rem 0 0;
-    font-size: 1.2rem;
+    margin: 0.28rem 0 0;
+    font-size: 1.05rem;
     font-weight: 800;
     letter-spacing: -0.02em;
   }
 }
 
-.layout-grid {
-  max-width: 1500px;
-  margin: 0.9rem auto 0 auto;
+.context-grid,
+.analytics-layout {
+  margin: 0.9rem 0 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
 }
 
+.recovery-shell {
+  margin: 0.9rem 0 0;
+}
+
+.performance-shell {
+  margin: 0.9rem 0 0;
+}
+
+.performance-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+.recovery-overview {
+  margin-top: 0.2rem;
+}
+
+.recovery-ladder-block {
+  margin-top: 0.9rem;
+}
+
 .panel-title-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 
   h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.98rem;
     letter-spacing: -0.01em;
   }
 }
@@ -325,12 +397,15 @@
 }
 
 section.panel:not(.hero) {
-  max-width: 1500px;
-  margin: 0.9rem auto 0 auto;
+  margin: 0.9rem 0 0;
 }
 
 .table-wrap {
   overflow: auto;
+}
+
+.terminal-table {
+  max-height: 520px;
 }
 
 table {
@@ -380,43 +455,165 @@ table {
   gap: 0.45rem;
 }
 
-.log-row {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.45rem 0.55rem;
-  display: grid;
-  grid-template-columns: 80px 150px 1fr;
-  gap: 0.45rem;
+.log-toolbar {
+  display: flex;
   align-items: center;
-  background: color-mix(in oklab, var(--panel) 88%, var(--chip));
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
 
-  .log-ts {
-    color: var(--muted);
-    font-size: 0.75rem;
-  }
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip);
+}
 
-  .log-action {
-    font-size: 0.76rem;
-    font-weight: 800;
+.segmented-control__button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  cursor: pointer;
+
+  &.active {
+    background: color-mix(in oklab, var(--accent) 16%, transparent);
     color: var(--accent);
   }
+}
 
-  .log-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
+.log-row {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: start;
+  background: color-mix(in oklab, var(--panel) 88%, var(--chip));
+}
 
-    code {
-      font-size: 0.7rem;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 0.11rem 0.44rem;
-      max-width: 260px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+.log-rail {
+  display: grid;
+  gap: 0.25rem;
+  align-content: start;
+
+  .log-ts {
+    color: var(--ink);
+    font-size: 1rem;
+    font-weight: 800;
   }
+
+  .log-date {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+}
+
+.log-action {
+  width: fit-content;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--chip);
+}
+
+.log-action--good {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--line));
+  background: color-mix(in oklab, var(--accent) 14%, var(--chip));
+}
+
+.log-action--bad {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 30%, var(--line));
+  background: color-mix(in oklab, var(--danger) 14%, var(--chip));
+}
+
+.log-action--warn {
+  color: #ffbe4d;
+  border-color: color-mix(in oklab, #ffbe4d 35%, var(--line));
+  background: color-mix(in oklab, #ffbe4d 12%, var(--chip));
+}
+
+.log-action--info {
+  color: #3aa0ff;
+  border-color: color-mix(in oklab, #3aa0ff 35%, var(--line));
+  background: color-mix(in oklab, #3aa0ff 12%, var(--chip));
+}
+
+.log-action--neutral {
+  color: var(--muted);
+}
+
+.log-body {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.log-headline {
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.log-meta--secondary {
+  padding-top: 0.15rem;
+  border-top: 1px dashed color-mix(in oklab, var(--line) 92%, transparent);
+}
+
+.log-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  max-width: min(100%, 340px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--chip) 90%, var(--panel));
+  font-size: 0.76rem;
+
+  strong {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex: 0 0 auto;
+  }
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+}
+
+.log-chip--secondary {
+  font-size: 0.72rem;
+  opacity: 0.92;
 }
 
 .status-good {
@@ -441,12 +638,20 @@ table {
 }
 
 @media (max-width: 1200px) {
-  .kpi-grid {
+  .signal-grid--six {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .kpi-grid.compact {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .signal-grid--bot {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .signal-grid--trade {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .signal-grid--two {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -478,7 +683,14 @@ table {
     grid-template-columns: 1fr;
   }
 
-  .kpi-grid {
+  .desk-split,
+  .performance-grid,
+  .context-grid,
+  .analytics-layout,
+  .signal-grid--six,
+  .signal-grid--bot,
+  .signal-grid--trade,
+  .signal-grid--two {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -488,12 +700,24 @@ table {
     padding: 0.8rem;
   }
 
-  .kpi-grid,
-  .kpi-grid.compact {
+  .desk-split,
+  .performance-grid,
+  .context-grid,
+  .analytics-layout,
+  .signal-grid--six,
+  .signal-grid--bot,
+  .signal-grid--trade,
+  .signal-grid--two {
     grid-template-columns: 1fr;
   }
 
   .log-row {
     grid-template-columns: 1fr;
+  }
+
+  .log-rail {
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: 0.45rem;
   }
 }
