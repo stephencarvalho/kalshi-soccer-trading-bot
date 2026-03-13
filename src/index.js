@@ -9,7 +9,11 @@ const { eligibleTradeCandidate, computeDailyLossUsd } = require('./strategy');
 const { Notifier } = require('./notifier');
 const { appendAction, LOG_PATH } = require('./actionLog');
 const { getRuntimeConfig } = require('./runtimeConfig');
-const { getLiveSoccerEventData, attachLiveDataToEvents } = require('./kalshiLiveSoccer');
+const {
+  getLiveSoccerEventData,
+  attachLiveDataToEvents,
+  resolveSoccerCompetitionScope,
+} = require('./kalshiLiveSoccer');
 
 const logger = createLogger(config.logLevel);
 const notifier = new Notifier(config, logger);
@@ -228,12 +232,13 @@ async function runCycle(client) {
     return;
   }
 
-  const [{ balance }, openPositions, events, liveSoccerMap] = await Promise.all([
+  const [{ balance }, openPositions, events] = await Promise.all([
     client.getBalance(),
     client.getOpenPositions(),
     client.getOpenEventsWithMarkets(),
-    getLiveSoccerEventData(client, runtime.leagues || []),
   ]);
+  const liveCompetitionScope = await resolveSoccerCompetitionScope(client, events, runtime.leagues || [], logger);
+  const liveSoccerMap = await getLiveSoccerEventData(client, liveCompetitionScope);
   const enrichedEvents = attachLiveDataToEvents(events, liveSoccerMap);
   const openMarketTickers = (openPositions || []).map((p) => p.ticker).filter(Boolean);
   const openMarkets = openMarketTickers.length ? await client.getMarketsByTickers(openMarketTickers) : [];

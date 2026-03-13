@@ -12,7 +12,11 @@ const { KalshiClient, parseFp } = require('./kalshiClient');
 const { toISODateInTz } = require('./stateStore');
 const { getRuntimeConfig, readOverrides, OVERRIDES_PATH } = require('./runtimeConfig');
 const { eligibleTradeCandidate, extractGameState, isLeagueAllowed } = require('./strategy');
-const { getLiveSoccerEventData, attachLiveDataToEvents } = require('./kalshiLiveSoccer');
+const {
+  getLiveSoccerEventData,
+  attachLiveDataToEvents,
+  resolveSoccerCompetitionScope,
+} = require('./kalshiLiveSoccer');
 
 const app = express();
 app.use(cors());
@@ -653,7 +657,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       openPositions = positionsResp || [];
       settlements = settlementsResp || [];
       events = await client.getOpenEventsWithMarkets();
-      liveSoccerMap = await getLiveSoccerEventData(client, runtime.leagues || []);
+      const liveCompetitionScope = await resolveSoccerCompetitionScope(client, events, runtime.leagues || [], logger);
+      liveSoccerMap = await getLiveSoccerEventData(client, liveCompetitionScope);
       events = attachLiveDataToEvents(events, liveSoccerMap);
     } catch (error) {
       logger.warn({ err: error.message }, 'Dashboard API failed to fetch account data');
