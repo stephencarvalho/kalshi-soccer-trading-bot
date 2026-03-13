@@ -1,5 +1,5 @@
 import { CommonModule, CurrencyPipe, DatePipe, PercentPipe } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, effect, ElementRef, inject, OnDestroy, signal, ViewChild } from '@angular/core';
 import {
   CategoryScale,
@@ -529,6 +529,27 @@ export class App implements OnDestroy {
     this.logTimeRange.set(range);
   }
 
+  private canUseRelativeApiUrl(): boolean {
+    const host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1';
+  }
+
+  private formatDashboardLoadError(err: unknown, runtimeApiBaseUrl: string): string {
+    if (!runtimeApiBaseUrl && !this.canUseRelativeApiUrl()) {
+      return 'Dashboard API is not configured for this deployment. Set DASHBOARD_API_BASE_URL to your monitor API base URL.';
+    }
+
+    if (err instanceof HttpErrorResponse) {
+      if (typeof err.error === 'string' && err.error.includes('<!doctype html')) {
+        return 'Dashboard API returned HTML instead of JSON. Verify DASHBOARD_API_BASE_URL or your Netlify /api routing.';
+      }
+      if (typeof err.message === 'string' && err.message.trim()) return err.message;
+    }
+
+    const fallback = (err as { message?: string } | null | undefined)?.message;
+    return fallback || 'Failed to load dashboard data';
+  }
+
   private formatChartTs(ts: number, range: ChartRange): string {
     const d = new Date(ts);
     if (range === '1H' || range === '3H' || range === '6H' || range === '12H' || range === 'LIVE') {
@@ -542,8 +563,15 @@ export class App implements OnDestroy {
   fetchDashboard(): void {
     const runtime = getDashboardRuntimeConfig();
     const headers = runtime.apiToken ? { Authorization: `Bearer ${runtime.apiToken}` } : undefined;
+    const apiUrl = buildApiUrl('/api/dashboard');
 
-    this.http.get<DashboardPayload>(buildApiUrl('/api/dashboard'), { headers }).subscribe({
+    if (!runtime.apiBaseUrl && !this.canUseRelativeApiUrl()) {
+      this.loading.set(false);
+      this.error.set(this.formatDashboardLoadError(null, runtime.apiBaseUrl));
+      return;
+    }
+
+    this.http.get<DashboardPayload>(apiUrl, { headers }).subscribe({
       next: (payload) => {
         this.data.set(payload);
         queueMicrotask(() => this.renderChart());
@@ -552,7 +580,7 @@ export class App implements OnDestroy {
       },
       error: (err) => {
         this.loading.set(false);
-        this.error.set(err?.message || 'Failed to load dashboard data');
+        this.error.set(this.formatDashboardLoadError(err, runtime.apiBaseUrl));
       },
     });
   }
