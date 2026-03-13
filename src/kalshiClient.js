@@ -24,6 +24,24 @@ class KalshiClient {
       baseURL: this.origin,
       timeout: 15000,
     });
+    this.timeOffsetMs = 0;
+  }
+
+  currentTimestampMs() {
+    return Math.round(Date.now() + this.timeOffsetMs).toString();
+  }
+
+  syncTimeOffset(dateHeader, { log = false } = {}) {
+    const serverMs = Date.parse(String(dateHeader || ''));
+    if (!Number.isFinite(serverMs)) return false;
+    this.timeOffsetMs = serverMs - Date.now();
+    if (log) {
+      this.logger.warn(
+        { timeOffsetMs: this.timeOffsetMs, serverDate: new Date(serverMs).toISOString() },
+        'Adjusted Kalshi client clock offset from server Date header',
+      );
+    }
+    return true;
   }
 
   async request(method, path, { params, data } = {}) {
@@ -37,29 +55,30 @@ class KalshiClient {
       });
     }
 
-    const ts = Date.now().toString();
     const pathWithQuery = toPathWithQuery(urlObj);
     const signPath = urlObj.pathname;
-    const signature = signRequest({
-      method,
-      path: signPath,
-      timestampMs: ts,
-      privateKey: this.privateKey,
-    });
-
-    const headers = {
-      'KALSHI-ACCESS-KEY': this.keyId,
-      'KALSHI-ACCESS-TIMESTAMP': ts,
-      'KALSHI-ACCESS-SIGNATURE': signature,
-    };
 
     const methodUpper = String(method || '').toUpperCase();
     const isRead = methodUpper === 'GET';
-    const maxAttempts = isRead ? 3 : 1;
+    const maxAttempts = isRead ? 3 : 2;
     let attempt = 0;
 
     while (attempt < maxAttempts) {
       attempt += 1;
+      const ts = this.currentTimestampMs();
+      const signature = signRequest({
+        method,
+        path: signPath,
+        timestampMs: ts,
+        privateKey: this.privateKey,
+      });
+
+      const headers = {
+        'KALSHI-ACCESS-KEY': this.keyId,
+        'KALSHI-ACCESS-TIMESTAMP': ts,
+        'KALSHI-ACCESS-SIGNATURE': signature,
+      };
+
       try {
         const response = await this.http.request({
           method,
@@ -67,15 +86,23 @@ class KalshiClient {
           data,
           headers,
         });
+        this.syncTimeOffset(response.headers?.date);
         return response.data;
       } catch (error) {
         const status = error.response?.status;
         const details = error.response?.data || error.message;
-        const retriable = isRead && (status === 429 || (status >= 500 && status < 600));
+        const errorCode = error.response?.data?.error?.code;
+        const timestampExpired = status === 401 && errorCode === 'header_timestamp_expired';
+        const adjustedClock = timestampExpired
+          ? this.syncTimeOffset(error.response?.headers?.date, { log: true })
+          : false;
+        const retriable =
+          (isRead && (status === 429 || (status >= 500 && status < 600))) ||
+          (timestampExpired && adjustedClock);
         const canRetry = retriable && attempt < maxAttempts;
 
         this.logger.error(
-          { method, path: pathWithQuery, status, details, attempt, maxAttempts },
+          { method, path: pathWithQuery, status, details, attempt, maxAttempts, timeOffsetMs: this.timeOffsetMs },
           canRetry ? 'Kalshi API request failed, retrying' : 'Kalshi API request failed',
         );
 

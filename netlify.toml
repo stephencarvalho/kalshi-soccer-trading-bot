@@ -1,0 +1,9 @@
+[build]
+  base = "dashboard"
+  command = "npm run build"
+  publish = "dist/dashboard/browser"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

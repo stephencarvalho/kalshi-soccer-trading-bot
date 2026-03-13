@@ -9,3 +9,5 @@ dashboard/node_modules/
 dashboard/dist/
 dashboard/.angular/
 .openclaw/
+
+dashboard/public/runtime-config.js
