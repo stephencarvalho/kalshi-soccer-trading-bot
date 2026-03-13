@@ -8,6 +8,77 @@ function parseMinute(text) {
   return base + extra;
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSoccerCompetitionName(name) {
+  const v = normalizeText(name);
+  if (!v) return false;
+
+  const negative = [
+    'basketball',
+    'wnba',
+    'nba',
+    'nfl',
+    'baseball',
+    'mlb',
+    'hockey',
+    'nhl',
+    'cricket',
+    'golf',
+    'ufc',
+    'mma',
+    'boxing',
+    'tennis',
+    'esports',
+    'video game',
+    'college football',
+    'pro football',
+  ];
+  if (negative.some((k) => v.includes(k))) return false;
+
+  const positive = [
+    'soccer',
+    'champions league',
+    'europa league',
+    'conference league',
+    'world cup',
+    'fa cup',
+    'copa',
+    'coppa',
+    'cup',
+    'premier league',
+    'saudi pro league',
+    'mls',
+    'serie a',
+    'bundesliga',
+    'la liga',
+    'ligue 1',
+    'eredivisie',
+    'primeira',
+    'superliga',
+    'hnl',
+    'liga',
+    'concacaf',
+    'conmebol',
+    'afc champions',
+    'uefa',
+    'division',
+  ];
+  return positive.some((k) => v.includes(k));
+}
+
+function parseNullableInt(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
 function parseTeams(title) {
   const t = String(title || '');
   const m = t.match(/^(.+?)\s+vs\s+(.+)$/i) || t.match(/^(.+?)\s+at\s+(.+)$/i);
@@ -29,8 +100,9 @@ async function getLiveSoccerEventData(client, competitions) {
   const nowMs = Date.now();
   const minimumStartDate = new Date(nowMs - 6 * 3600 * 1000).toISOString();
   const milestones = [];
+  const hasAllLeagues = (competitions || []).some((x) => ['all', '*'].includes(String(x).trim().toLowerCase()));
 
-  for (const competition of competitions) {
+  if (hasAllLeagues) {
     let cursor = '';
     let page = 0;
     do {
@@ -38,14 +110,31 @@ async function getLiveSoccerEventData(client, competitions) {
         params: {
           limit: 500,
           minimum_start_date: minimumStartDate,
-          competition,
           cursor,
         },
       });
       milestones.push(...(res.milestones || []));
       cursor = res.cursor || '';
       page += 1;
-    } while (cursor && page < 5);
+    } while (cursor && page < 20);
+  } else {
+    for (const competition of competitions) {
+      let cursor = '';
+      let page = 0;
+      do {
+        const res = await client.request('GET', '/milestones', {
+          params: {
+            limit: 500,
+            minimum_start_date: minimumStartDate,
+            competition,
+            cursor,
+          },
+        });
+        milestones.push(...(res.milestones || []));
+        cursor = res.cursor || '';
+        page += 1;
+      } while (cursor && page < 5);
+    }
   }
 
   const uniqueById = new Map();
@@ -54,29 +143,48 @@ async function getLiveSoccerEventData(client, competitions) {
   if (!uniqueMilestones.length) return new Map();
 
   const ids = uniqueMilestones.map((m) => m.id);
-  const query = ids.map((id) => `milestone_ids=${encodeURIComponent(id)}`).join('&');
-  const liveBatch = await client.request('GET', `/live_data/batch?${query}`);
-  const liveDatas = liveBatch.live_datas || [];
+  const liveDatas = [];
+  const chunkSize = 100;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const query = chunk.map((id) => `milestone_ids=${encodeURIComponent(id)}`).join('&');
+    const liveBatch = await client.request('GET', `/live_data/batch?${query}`);
+    liveDatas.push(...(liveBatch.live_datas || []));
+  }
 
   const byMilestoneId = new Map(liveDatas.map((x) => [x.milestone_id, x.details || {}]));
   const byEventTicker = new Map();
 
   for (const m of uniqueMilestones) {
     const details = byMilestoneId.get(m.id) || {};
+    const competitionName = m.details?.league || m.details?.competition || null;
+    if (hasAllLeagues && !isSoccerCompetitionName(competitionName)) {
+      continue;
+    }
     const isLive = milestoneIsLive(details);
     const minute = parseMinute(details.time || details.last_play?.description || '');
     const homeScore = Number.isFinite(Number(details.home_same_game_score)) ? Number(details.home_same_game_score) : null;
     const awayScore = Number.isFinite(Number(details.away_same_game_score)) ? Number(details.away_same_game_score) : null;
+    const homeRedCards =
+      parseNullableInt(details.home_red_cards) ??
+      parseNullableInt(details.home_red_card_count) ??
+      parseNullableInt(details.home_cards_red);
+    const awayRedCards =
+      parseNullableInt(details.away_red_cards) ??
+      parseNullableInt(details.away_red_card_count) ??
+      parseNullableInt(details.away_cards_red);
     const tickers = [...(m.primary_event_tickers || []), ...(m.related_event_tickers || [])].filter((t) => String(t).includes('GAME'));
 
     for (const ticker of tickers) {
       byEventTicker.set(ticker, {
         milestoneId: m.id,
-        competition: m.details?.league || m.details?.competition || null,
+        competition: competitionName,
         isLive,
         minute,
         homeScore,
         awayScore,
+        homeRedCards,
+        awayRedCards,
         half: details.half || null,
         status: details.status || null,
         statusText: details.status_text || null,
@@ -100,6 +208,8 @@ function attachLiveDataToEvents(events, liveMap) {
         minute: live.minute,
         homeScore: live.homeScore,
         awayScore: live.awayScore,
+        homeRedCards: live.homeRedCards,
+        awayRedCards: live.awayRedCards,
         homeTeam,
         awayTeam,
         isLive: live.isLive,
@@ -114,4 +224,5 @@ function attachLiveDataToEvents(events, liveMap) {
 module.exports = {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
+  isSoccerCompetitionName,
 };

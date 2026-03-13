@@ -46,6 +46,15 @@ class StateStore {
     return Boolean(this.state.tradedEvents[eventTicker]);
   }
 
+  getTradeMeta(eventTicker) {
+    return this.state.tradedEvents[eventTicker] || null;
+  }
+
+  findTradeMetaByMarketTicker(marketTicker) {
+    const entries = Object.values(this.state.tradedEvents || {});
+    return entries.find((x) => x && x.marketTicker === marketTicker) || null;
+  }
+
   markEventTraded(eventTicker, tradeMeta) {
     this.state.tradedEvents[eventTicker] = {
       ...tradeMeta,

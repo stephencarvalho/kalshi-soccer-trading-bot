@@ -15,6 +15,9 @@ const ALLOWED_KEYS = new Set([
   'retryUntilMinute',
   'maxOpenPositions',
   'maxDailyLossUsd',
+  'recoveryModeEnabled',
+  'recoveryStakeUsd',
+  'recoveryMaxStakeUsd',
   'post80StartMinute',
   'post80MinGoalLead',
   'post80MaxYesPrice',
@@ -43,7 +46,7 @@ function sanitizeValue(key, value) {
       .filter(Boolean);
   }
 
-  if (key === 'tradingEnabled' || key === 'dryRun') {
+  if (key === 'tradingEnabled' || key === 'dryRun' || key === 'recoveryModeEnabled') {
     if (typeof value === 'boolean') return value;
     return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
   }

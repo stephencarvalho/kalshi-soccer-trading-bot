@@ -28,16 +28,16 @@
       <div class="hero-head">
         <div>
           <p class="eyebrow">All-Time Strategy PnL</p>
-          <h2>{{ chartModel().currentValue | currency:'USD':'symbol':'1.2-2' }}</h2>
-          <p class="delta" [class.pos]="chartModel().delta >= 0" [class.neg]="chartModel().delta < 0">
-            {{ chartModel().delta >= 0 ? '+' : '' }}{{ chartModel().delta | currency:'USD':'symbol':'1.2-2' }}
-            @if (chartModel().deltaPct !== null) {
-              ({{ chartModel().deltaPct | percent:'1.1-2' }})
+          <h2>{{ chartStats().currentValue | currency:'USD':'symbol':'1.2-2' }}</h2>
+          <p class="delta" [class.pos]="chartStats().delta >= 0" [class.neg]="chartStats().delta < 0">
+            {{ chartStats().delta >= 0 ? '+' : '' }}{{ chartStats().delta | currency:'USD':'symbol':'1.2-2' }}
+            @if (chartStats().deltaPct !== null) {
+              ({{ chartStats().deltaPct | percent:'1.1-2' }})
             }
             in {{ chartRange() }}
-            @if (hoveredPoint()) {
+            @if (chartStats().currentTs) {
               <span class="hover-readout">
-              {{ hoveredPoint()!.pnl | currency:'USD':'symbol':'1.2-2' }} at {{ hoveredPoint()!.ts | date:'MMM d, h:mm a' }}
+                {{ chartStats().currentTs | date:'MMM d, h:mm a' }}
               </span>
             }
           </p>
@@ -49,39 +49,7 @@
       </div>
 
       <div class="chart-wrap">
-        <svg
-          #chartSvg
-          [attr.viewBox]="'0 0 ' + chartModel().width + ' ' + chartModel().height"
-          preserveAspectRatio="none"
-          (mousemove)="onChartMove($event, chartSvg)"
-          (mouseleave)="onChartLeave()"
-        >
-          @if (chartModel().showZero) {
-            <line
-              class="zero-line"
-              [attr.x1]="0"
-              [attr.x2]="chartModel().width"
-              [attr.y1]="chartModel().zeroY"
-              [attr.y2]="chartModel().zeroY"
-            />
-          }
-          <path class="line" [attr.stroke]="chartModel().stroke" [attr.d]="chartModel().path"></path>
-          @if (hoveredPoint()) {
-            <line class="crosshair" [attr.x1]="hoveredPoint()!.x" [attr.x2]="hoveredPoint()!.x" [attr.y1]="16" [attr.y2]="chartModel().height - 16"></line>
-            <circle class="cross-dot" [attr.cx]="hoveredPoint()!.x" [attr.cy]="hoveredPoint()!.y" r="5"></circle>
-          }
-        </svg>
-      </div>
-
-      <div class="axis">
-        <span>{{ chartModel().maxY | currency:'USD':'symbol':'1.0-0' }}</span>
-        <span>{{ chartModel().minY | currency:'USD':'symbol':'1.0-0' }}</span>
-      </div>
-
-      <div class="x-axis">
-        @for (tick of chartModel().xTicks; track tick.x) {
-          <span [style.left.px]="tick.x">{{ tick.label }}</span>
-        }
+        <canvas #pnlChart></canvas>
       </div>
 
       <div class="ranges">
@@ -154,9 +122,59 @@
           <li><span>Trigger</span><strong>{{ d.config.minTriggerMinute }}'+ and {{ d.config.minGoalLead }}+ lead</strong></li>
           <li><span>Retry Until</span><strong>{{ d.config.retryUntilMinute }}'</strong></li>
           <li><span>Daily Stop Loss</span><strong>{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
+          <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? ('ON ($' + d.config.recoveryStakeUsd + ' -> max $' + (d.config.recoveryMaxStakeUsd || 16) + ')') : 'OFF' }}</strong></li>
           <li><span>Leagues</span><strong>{{ d.config.leagues.length }}</strong></li>
         </ul>
       </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Recovery Ladder</h2>
+        <span class="chip">
+          {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} |
+          Next {{ (d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? 0) | currency:'USD':'symbol':'1.0-0' }} |
+          Streak {{ d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
+          Loss {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
+        </span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Stake</th>
+              <th>Trades</th>
+              <th>Wins</th>
+              <th>Losses</th>
+              <th>Loss $</th>
+              <th>Win $</th>
+              <th>Net PnL</th>
+              <th>Prev Stake Loss $</th>
+              <th>Remaining Loss $</th>
+              <th>Wins Needed To Offset Prev Loss</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!(d.recovery?.ladder?.length)) {
+              <tr><td colspan="10" class="muted">No recovery stats yet</td></tr>
+            }
+            @for (r of (d.recovery?.ladder || []); track r.stakeUsd) {
+              <tr>
+                <td>{{ r.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</td>
+                <td>{{ r.trades }}</td>
+                <td>{{ r.wins }}</td>
+                <td>{{ r.losses }}</td>
+                <td class="neg">{{ r.lossUsdAbs | currency:'USD':'symbol':'1.2-2' }}</td>
+                <td class="pos">{{ r.winUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                <td [class.pos]="r.netPnlUsd >= 0" [class.neg]="r.netPnlUsd < 0">{{ r.netPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                <td>{{ r.prevTierStakeUsd === null ? '-' : (r.prevTierLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
+                <td [class.neg]="(r.remainingLossUsd || 0) > 0">{{ r.remainingLossUsd === undefined ? '-' : (r.remainingLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
+                <td>{{ r.prevTierStakeUsd === null ? '-' : (r.winsNeededToOffsetPrevTierLosses ?? '-') }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section class="panel">
@@ -172,6 +190,8 @@
               <th>Competition</th>
               <th>Game</th>
               <th>Score</th>
+              <th>Red (H-A)</th>
+              <th>Red (L-T)</th>
               <th>Leader</th>
               <th>Diff</th>
               <th>Status</th>
@@ -180,7 +200,7 @@
           </thead>
           <tbody>
             @if (!d.monitoredGames.length) {
-              <tr><td colspan="8" class="muted">No live tracked games right now</td></tr>
+              <tr><td colspan="10" class="muted">No live tracked games right now</td></tr>
             }
             @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
               <tr>
@@ -188,6 +208,8 @@
                 <td>{{ g.competition }}</td>
                 <td>{{ g.title }}</td>
                 <td>{{ g.score }}</td>
+                <td>{{ g.redCards || '-' }}</td>
+                <td>{{ g.leadingVsTrailingRedCards || '-' }}</td>
                 <td>{{ g.leadingTeam }}</td>
                 <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
                 <td><span class="chip">{{ g.status }}</span></td>
@@ -211,25 +233,32 @@
               <th>Ticker</th>
               <th>Game</th>
               <th>Bet</th>
+              <th>Mkt</th>
               <th>Qty</th>
+              <th>Amt Bet</th>
+              <th>Total Return</th>
               <th>Cost</th>
               <th>Mark</th>
               <th>PnL</th>
               <th>ROI</th>
               <th>Condition</th>
+              <th>Cards</th>
               <th>Update</th>
             </tr>
           </thead>
           <tbody>
             @if (!d.openTrades.length) {
-              <tr><td colspan="10" class="muted">No open positions</td></tr>
+              <tr><td colspan="14" class="muted">No open positions</td></tr>
             }
             @for (t of d.openTrades; track trackByTicker($index, t)) {
               <tr>
                 <td>{{ t.ticker }}</td>
                 <td>{{ t.event_title || t.event_ticker || '-' }}</td>
                 <td>{{ t.selection_label || t.market_title || '-' }}</td>
+                <td>{{ t.market_status || '-' }}</td>
                 <td>{{ t.quantity ?? '-' }}</td>
+                <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
                 <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
                 <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
                 <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
@@ -242,6 +271,12 @@
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
                     {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                  }
+                </td>
+                <td>
+                  @if (!t.placed_context) { - }
+                  @if (t.placed_context) {
+                    {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
                   }
                 </td>
                 <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
@@ -305,22 +340,29 @@
               <th>Ticker</th>
               <th>Event</th>
               <th>Result</th>
+              <th>Amt Bet</th>
+              <th>Total Return</th>
               <th>PnL</th>
               <th>ROI</th>
               <th>Recovery Wins</th>
               <th>Placed Condition</th>
+              <th>Cards</th>
             </tr>
           </thead>
           <tbody>
             @if (!d.closedTrades.length) {
-              <tr><td colspan="8" class="muted">No settled trades yet</td></tr>
+              <tr><td colspan="11" class="muted">No settled trades yet</td></tr>
             }
             @for (t of d.closedTrades.slice(0, 80); track t.ticker + t.settled_time) {
               <tr>
                 <td>{{ t.settled_time | date:'short' }}</td>
                 <td>{{ t.ticker }}</td>
-                <td>{{ t.event_ticker || '-' }}</td>
+                <td>{{ t.placed_context?.eventTitle || t.event_ticker || '-' }}</td>
                 <td>{{ t.market_result }}</td>
+                <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                <td [class.pos]="(t.total_return_usd ?? 0) >= (t.amount_bet_usd ?? 0)" [class.neg]="(t.total_return_usd ?? 0) < (t.amount_bet_usd ?? 0)">
+                  {{ t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}
+                </td>
                 <td [class.pos]="t.pnl_usd >= 0" [class.neg]="t.pnl_usd < 0">{{ t.pnl_usd | currency:'USD':'symbol':'1.2-2' }}</td>
                 <td [class.pos]="(t.roi_pct ?? 0) >= 0" [class.neg]="(t.roi_pct ?? 0) < 0">
                   {{ t.roi_pct === null || t.roi_pct === undefined ? '-' : (t.roi_pct | percent:'1.1-2') }}
@@ -330,6 +372,12 @@
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
                     {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                  }
+                </td>
+                <td>
+                  @if (!t.placed_context) { - }
+                  @if (t.placed_context) {
+                    {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
                   }
                 </td>
               </tr>

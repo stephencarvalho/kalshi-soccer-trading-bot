@@ -14,6 +14,10 @@ function parseNumber(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function clamp(n, min, max) {
+  return Math.min(max, Math.max(min, n));
+}
+
 const defaultCompetitions = [
   'EPL',
   'FA Cup',
@@ -23,10 +27,14 @@ const defaultCompetitions = [
   'Conference League',
   'Saudi Pro League',
   'Serie A',
+  'Brasileiro Serie A',
+  'Argentina Primera Division',
   'La Liga',
   'Bundesliga',
   'Copa del Rey',
 ];
+
+const defaultIgnoredSettlementTickers = ['KXRECNCBILL-25-JUL05', 'KXRECNCBILL-25'];
 
 const config = {
   baseUrl: process.env.KALSHI_API_BASE_URL || 'https://api.elections.kalshi.com/trade-api/v2',
@@ -46,10 +54,14 @@ const config = {
   minLiquidityDollars: parseNumber(process.env.MIN_LIQUIDITY_DOLLARS, 250),
   maxOpenPositions: parseNumber(process.env.MAX_OPEN_POSITIONS, 20),
   maxDailyLossUsd: parseNumber(process.env.MAX_DAILY_LOSS_USD, 50),
+  recoveryModeEnabled: String(process.env.RECOVERY_MODE_ENABLED || 'false').toLowerCase() === 'true',
+  recoveryStakeUsd: parseNumber(process.env.RECOVERY_STAKE_USD, 2),
+  recoveryMaxStakeUsd: parseNumber(process.env.RECOVERY_MAX_STAKE_USD, 16),
   estimatedWinProbability: parseNumber(process.env.ESTIMATED_WIN_PROBABILITY, 0.92),
   feeBuffer: parseNumber(process.env.FEE_BUFFER, 0.02),
   explicitMaxYesPrice: parseNumber(process.env.MAX_YES_PRICE, null),
   leagues: parseList(process.env.LEAGUES, defaultCompetitions),
+  ignoredSettlementTickers: parseList(process.env.IGNORE_SETTLEMENT_TICKERS, defaultIgnoredSettlementTickers),
   timezone: process.env.TIMEZONE || 'America/New_York',
   stateFile: process.env.STATE_FILE || path.resolve('data/state.json'),
   logLevel: process.env.LOG_LEVEL || 'info',
@@ -61,4 +73,27 @@ const config = {
 
 config.maxYesPrice = config.explicitMaxYesPrice ?? Math.max(0.01, Math.min(0.99, config.estimatedWinProbability - config.feeBuffer));
 
-module.exports = { config };
+function validateConfig(cfg) {
+  const out = { ...cfg };
+  out.pollSeconds = Math.max(1, Number(out.pollSeconds) || 10);
+  out.stakeUsd = Math.max(0.1, Number(out.stakeUsd) || 1);
+  out.maxDailyLossUsd = Math.max(1, Number(out.maxDailyLossUsd) || 50);
+  out.recoveryModeEnabled = Boolean(out.recoveryModeEnabled);
+  out.recoveryStakeUsd = Math.max(out.stakeUsd, Number(out.recoveryStakeUsd) || 2);
+  out.recoveryMaxStakeUsd = Math.max(out.recoveryStakeUsd, Number(out.recoveryMaxStakeUsd) || 16);
+  out.maxOpenPositions = Math.max(1, Math.floor(Number(out.maxOpenPositions) || 20));
+  out.minTriggerMinute = clamp(Number(out.minTriggerMinute) || 70, 1, 130);
+  out.retryUntilMinute = clamp(Number(out.retryUntilMinute) || 80, out.minTriggerMinute, 130);
+  out.post80StartMinute = clamp(Number(out.post80StartMinute) || 80, out.minTriggerMinute, 130);
+  out.minGoalLead = Math.max(1, Math.floor(Number(out.minGoalLead) || 2));
+  out.post80MinGoalLead = Math.max(1, Math.floor(Number(out.post80MinGoalLead) || 1));
+  out.maxYesPrice = clamp(Number(out.maxYesPrice) || 0.9, 0.01, 0.99);
+  out.post80MaxYesPrice = clamp(Number(out.post80MaxYesPrice) || out.maxYesPrice, 0.01, 0.99);
+  out.ignoredSettlementTickers = Array.from(
+    new Set((out.ignoredSettlementTickers || []).map((x) => String(x || '').trim()).filter(Boolean)),
+  );
+  out.allLeagues = (out.leagues || []).some((x) => ['all', '*'].includes(String(x).trim().toLowerCase()));
+  return out;
+}
+
+module.exports = { config: validateConfig(config), validateConfig };

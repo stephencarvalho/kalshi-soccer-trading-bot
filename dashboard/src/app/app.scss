@@ -171,43 +171,17 @@
 }
 
 .chart-wrap {
-  --chart-left-pad: 22px;
-  --chart-right-pad: 22px;
   margin-top: 0.75rem;
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
   background: transparent;
 
-  svg {
+  canvas {
     width: 100%;
     height: 320px;
     display: block;
   }
-}
-
-.zero-line {
-  stroke: var(--line);
-  stroke-width: 1;
-  stroke-dasharray: 4 8;
-}
-
-.line {
-  fill: none;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.crosshair {
-  stroke: color-mix(in oklab, var(--muted) 85%, transparent);
-  stroke-width: 1.25;
-}
-
-.cross-dot {
-  fill: var(--danger);
-  stroke: var(--panel);
-  stroke-width: 2;
 }
 
 .ranges {
@@ -346,30 +320,6 @@ table {
 
   tbody tr:hover {
     background: color-mix(in oklab, var(--panel) 84%, var(--chip));
-  }
-}
-
-.axis {
-  margin-top: 0.45rem;
-  padding-inline: 22px;
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.74rem;
-}
-
-.x-axis {
-  position: relative;
-  margin-top: 0.25rem;
-  height: 20px;
-  padding-inline: 22px;
-
-  span {
-    position: absolute;
-    transform: translateX(-50%);
-    font-size: 0.7rem;
-    color: var(--muted);
-    white-space: nowrap;
   }
 }
 

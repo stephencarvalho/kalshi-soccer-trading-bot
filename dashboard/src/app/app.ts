@@ -1,6 +1,18 @@
 import { CommonModule, CurrencyPipe, DatePipe, PercentPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Component, computed, inject, OnDestroy, signal } from '@angular/core';
+import { Component, computed, effect, ElementRef, inject, OnDestroy, signal, ViewChild } from '@angular/core';
+import {
+  CategoryScale,
+  Chart,
+  Filler,
+  Legend,
+  LineController,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+  type ChartConfiguration,
+} from 'chart.js';
 
 interface DashboardPayload {
   generatedAt: string;
@@ -15,6 +27,9 @@ interface DashboardPayload {
     minVolume24hContracts: number;
     minLiquidityDollars: number;
     maxDailyLossUsd: number;
+    recoveryModeEnabled?: boolean;
+    recoveryStakeUsd?: number;
+    recoveryMaxStakeUsd?: number;
     leagues: string[];
     timezone: string;
     runtimeOverridesPath?: string;
@@ -37,6 +52,9 @@ interface DashboardPayload {
     status: 'STARTING' | 'UP_TRADING' | 'UP_DRY_RUN' | 'UP_BLOCKED_STOP_LOSS' | 'UP_DEGRADED' | 'DOWN';
     statusReason: string;
     lastError: string | null;
+    currentStakeUsd?: number;
+    recoveryLossStreak?: number;
+    recoveryLossBalanceUsd?: number;
     validStatuses: string[];
   };
   metrics: {
@@ -48,6 +66,7 @@ interface DashboardPayload {
     fillRate: number;
   };
   analytics: TradeAnalytics;
+  recovery?: RecoveryAnalytics;
   leagueLeaderboard: LeagueLeaderboardRow[];
   monitoredGamesSummary: {
     total: number;
@@ -74,12 +93,15 @@ interface TradeRecord {
   event_title?: string | null;
   selection_label?: string | null;
   market_title?: string | null;
+  market_status?: string | null;
   position_fp?: string;
   side?: string;
   quantity?: number;
   cost_basis_usd?: number;
+  amount_bet_usd?: number;
   mark_price?: number | null;
   mark_value_usd?: number | null;
+  total_return_usd?: number | null;
   unrealized_pnl_usd?: number | null;
   unrealized_roi_pct?: number | null;
   realized_pnl_dollars?: number;
@@ -89,7 +111,10 @@ interface TradeRecord {
     triggerRule?: string;
     placedMinute?: number;
     placedScore?: string;
+    placedCards?: string | null;
+    placedLeaderVsTrailingCards?: string | null;
     leadingTeam?: string | null;
+    eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
   } | null;
@@ -104,13 +129,18 @@ interface ClosedTradeRecord {
   settled_time: string;
   pnl_usd: number;
   total_cost_usd?: number;
+  amount_bet_usd?: number;
+  total_return_usd?: number;
   roi_pct?: number | null;
   wins_to_recover_at_avg_win?: number | null;
   placed_context?: {
     triggerRule?: string;
     placedMinute?: number;
     placedScore?: string;
+    placedCards?: string | null;
+    placedLeaderVsTrailingCards?: string | null;
     leadingTeam?: string | null;
+    eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
   } | null;
@@ -142,6 +172,33 @@ interface TradeAnalytics {
   longestLossStreak: number;
 }
 
+interface RecoveryLadderRow {
+  stakeUsd: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  lossUsdAbs: number;
+  winUsd: number;
+  netPnlUsd: number;
+  avgWinUsd: number | null;
+  prevTierStakeUsd: number | null;
+  prevTierLossUsd: number;
+  remainingLossUsd?: number;
+  winsNeededToOffsetPrevTierLosses: number | null;
+}
+
+interface RecoveryAnalytics {
+  enabled: boolean;
+  baseStakeUsd: number;
+  recoveryStakeUsd: number;
+  recoveryMaxStakeUsd?: number;
+  currentLossStreak: number;
+  recoveryLossBalanceUsd: number;
+  nextStakeUsd: number;
+  ladder: RecoveryLadderRow[];
+}
+
 interface LeagueLeaderboardRow {
   league: string;
   trades: number;
@@ -159,6 +216,8 @@ interface MonitoredGameRecord {
   competition: string;
   minute: number | null;
   score: string;
+  redCards: string | null;
+  leadingVsTrailingRedCards: string | null;
   leadingTeam: string;
   goalDiff: number | null;
   status: 'ELIGIBLE_NOW' | 'ALREADY_BET' | 'WATCHING' | 'FILTERED' | 'NO_LIVE_DATA';
@@ -173,10 +232,7 @@ interface PnlPoint {
   pnl: number;
 }
 
-interface ChartRenderPoint extends PnlPoint {
-  x: number;
-  y: number;
-}
+Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
 
 @Component({
   selector: 'app-root',
@@ -186,9 +242,10 @@ interface ChartRenderPoint extends PnlPoint {
 })
 export class App implements OnDestroy {
   private readonly http = inject(HttpClient);
-  private readonly chartWidth = 1080;
-  private readonly chartHeight = 320;
-  private readonly chartPadding = 22;
+  @ViewChild('pnlChart') private chartCanvas?: ElementRef<HTMLCanvasElement>;
+  private chartInstance: Chart<'line'> | null = null;
+  private chartPoints: PnlPoint[] = [];
+  private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   readonly loading = signal(true);
@@ -198,7 +255,7 @@ export class App implements OnDestroy {
   readonly theme = signal<ThemeMode>(this.loadTheme());
   readonly chartRange = signal<ChartRange>('ALL');
   readonly chartRanges: ChartRange[] = ['LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
-  readonly hoveredPoint = signal<ChartRenderPoint | null>(null);
+  readonly hoveredPoint = signal<PnlPoint | null>(null);
 
   readonly kpi = computed(() => {
     const d = this.data();
@@ -217,6 +274,9 @@ export class App implements OnDestroy {
       { label: 'Orders Filled', value: d.metrics.totalFilled, format: 'num' },
       { label: 'Eligible Games', value: d.monitoredGamesSummary.eligibleNow, format: 'num' },
       { label: 'Settled Trades', value: d.analytics.settledTrades, format: 'num' },
+      { label: 'Next Stake', value: d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? null, format: 'usd' },
+      { label: 'Loss Streak', value: d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0, format: 'num' },
+      { label: 'Recovery Loss $', value: d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0, format: 'usd' },
     ];
   });
 
@@ -306,68 +366,19 @@ export class App implements OnDestroy {
     return points;
   });
 
-  readonly chartModel = computed(() => {
+  readonly chartStats = computed(() => {
     const points = this.rangeFilteredSeries();
-    const w = this.chartWidth;
-    const h = this.chartHeight;
-    const p = this.chartPadding;
-    const innerW = w - p * 2;
-    const innerH = h - p * 2;
-
-    const minX = points[0]?.ts ?? 0;
-    const maxX = points[points.length - 1]?.ts ?? minX + 1;
-    const rawMinY = Math.min(...points.map((x) => x.pnl));
-    const rawMaxY = Math.max(...points.map((x) => x.pnl));
-    const rawRange = Math.max(0.01, rawMaxY - rawMinY);
-    const yPad = rawRange * 0.12;
-    const minY = rawMinY - yPad;
-    const maxY = rawMaxY + yPad;
-    const yRange = Math.max(0.0001, maxY - minY);
-
-    const x = (ts: number) => {
-      if (maxX === minX) return p + innerW;
-      return p + ((ts - minX) / (maxX - minX)) * innerW;
-    };
-    const y = (val: number) => p + (1 - (val - minY) / yRange) * innerH;
-
-    const path = points
-      .map((pt) => ({ ...pt, x: x(pt.ts), y: y(pt.pnl) } satisfies ChartRenderPoint));
-    const linearPath = path
-      .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)} ${pt.y.toFixed(2)}`)
-      .join(' ');
-    const linePath = linearPath;
-    const first = path[0]?.pnl ?? 0;
-    const last = path[path.length - 1]?.pnl ?? 0;
+    const first = points[0]?.pnl ?? 0;
+    const last = points[points.length - 1]?.pnl ?? 0;
     const delta = Number((last - first).toFixed(4));
     const deltaPct = Math.abs(first) > 0 ? delta / Math.abs(first) : null;
-    const zeroY = y(0);
-    const showZero = minY <= 0 && maxY >= 0;
-    const stroke = delta >= 0 ? '#00C805' : '#FF5000';
-
-    const xTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-      const ts = minX + (maxX - minX) * ratio;
-      return {
-        x: Number((p + innerW * ratio).toFixed(2)),
-        label: this.formatChartTs(ts, this.chartRange()),
-      };
-    });
+    const hovered = this.hoveredPoint();
 
     return {
-      width: w,
-      height: h,
-      path: linePath,
-      zeroY: Number(zeroY.toFixed(2)),
-      showZero,
-      currentValue: last,
+      currentValue: hovered?.pnl ?? last,
       delta,
       deltaPct,
-      stroke,
-      minY,
-      maxY,
-      renderPoints: path,
-      xTicks,
-      fromTs: points[0]?.ts ?? null,
-      toTs: points[points.length - 1]?.ts ?? null,
+      currentTs: hovered?.ts ?? points[points.length - 1]?.ts ?? null,
     };
   });
 
@@ -385,6 +396,14 @@ export class App implements OnDestroy {
   });
 
   constructor() {
+    effect(() => {
+      if (!this.chartViewReady()) return;
+      this.theme();
+      this.chartRange();
+      this.rangeFilteredSeries();
+      queueMicrotask(() => this.renderChart());
+    });
+
     this.fetchDashboard();
     this.refreshTimer = setInterval(() => {
       this.now.set(new Date());
@@ -392,8 +411,17 @@ export class App implements OnDestroy {
     }, 5000);
   }
 
+  ngAfterViewInit(): void {
+    this.chartViewReady.set(true);
+    this.renderChart();
+  }
+
   ngOnDestroy(): void {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.chartInstance) {
+      this.chartInstance.destroy();
+      this.chartInstance = null;
+    }
   }
 
   private loadTheme(): ThemeMode {
@@ -421,24 +449,6 @@ export class App implements OnDestroy {
     this.hoveredPoint.set(null);
   }
 
-  onChartMove(event: MouseEvent, svg: Element): void {
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width) return;
-
-    const relativeX = ((event.clientX - rect.left) / rect.width) * this.chartWidth;
-    const points = this.chartModel().renderPoints;
-    if (!points.length) return;
-    let nearest = points[0];
-    for (const p of points) {
-      if (Math.abs(p.x - relativeX) < Math.abs(nearest.x - relativeX)) nearest = p;
-    }
-    this.hoveredPoint.set(nearest);
-  }
-
-  onChartLeave(): void {
-    this.hoveredPoint.set(null);
-  }
-
   private formatChartTs(ts: number, range: ChartRange): string {
     const d = new Date(ts);
     if (range === 'LIVE') return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -451,6 +461,7 @@ export class App implements OnDestroy {
     this.http.get<DashboardPayload>('/api/dashboard').subscribe({
       next: (payload) => {
         this.data.set(payload);
+        this.renderChart();
         this.loading.set(false);
         this.error.set(null);
       },
@@ -493,5 +504,111 @@ export class App implements OnDestroy {
       default:
         return 'status-neutral';
     }
+  }
+
+  private renderChart(): void {
+    const canvas = this.chartCanvas?.nativeElement;
+    if (!canvas) return;
+
+    const points = this.rangeFilteredSeries();
+    this.chartPoints = points;
+    const delta = this.chartStats().delta;
+    const colors = this.theme() === 'dark'
+      ? { grid: '#1f2d40', text: '#9aa5b1', line: delta >= 0 ? '#00c805' : '#ff5000' }
+      : { grid: '#e6e9ed', text: '#6f7277', line: delta >= 0 ? '#00c805' : '#ff5000' };
+
+    const labels = points.map((pt) => this.formatChartTs(pt.ts, this.chartRange()));
+    const values = points.map((pt) => Number(pt.pnl.toFixed(4)));
+    const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+
+    if (!this.chartInstance) {
+      const config: ChartConfiguration<'line'> = {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              data: values,
+              borderColor: colors.line,
+              pointBackgroundColor: colors.line,
+              borderWidth: 3,
+              pointRadius: 0,
+              pointHoverRadius: 5,
+              pointHitRadius: 16,
+              tension: 0.35,
+              cubicInterpolationMode: 'monotone',
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: {
+            mode: 'index',
+            intersect: false,
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: false },
+          },
+          onHover: (_event, activeElements) => {
+            if (!activeElements.length) {
+              this.hoveredPoint.set(null);
+              return;
+            }
+            const idx = activeElements[0].index;
+            this.hoveredPoint.set(this.chartPoints[idx] || null);
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: {
+                color: colors.text,
+                maxTicksLimit: 6,
+              },
+            },
+              y: {
+                border: { display: false },
+                grid: {
+                  color: colors.grid,
+                },
+                ticks: {
+                  color: colors.text,
+                  callback: (value) => currency.format(Number(value)),
+              },
+            },
+          },
+        },
+      };
+      this.chartInstance = new Chart(canvas, config);
+      return;
+    }
+
+    this.chartInstance.data.labels = labels;
+    this.chartInstance.data.datasets[0].data = values;
+    this.chartInstance.data.datasets[0].borderColor = colors.line;
+    this.chartInstance.data.datasets[0].pointBackgroundColor = colors.line;
+    this.chartInstance.options.scales = {
+      x: {
+        grid: { display: false },
+        ticks: {
+          color: colors.text,
+          maxTicksLimit: 6,
+        },
+      },
+      y: {
+        border: { display: false },
+        grid: {
+          color: colors.grid,
+        },
+        ticks: {
+          color: colors.text,
+          callback: (value) => currency.format(Number(value)),
+        },
+      },
+    };
+    this.chartInstance.update('none');
   }
 }

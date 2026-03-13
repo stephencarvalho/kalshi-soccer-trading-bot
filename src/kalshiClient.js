@@ -53,19 +53,36 @@ class KalshiClient {
       'KALSHI-ACCESS-SIGNATURE': signature,
     };
 
-    try {
-      const response = await this.http.request({
-        method,
-        url: pathWithQuery,
-        data,
-        headers,
-      });
-      return response.data;
-    } catch (error) {
-      const status = error.response?.status;
-      const details = error.response?.data || error.message;
-      this.logger.error({ method, path: pathWithQuery, status, details }, 'Kalshi API request failed');
-      throw error;
+    const methodUpper = String(method || '').toUpperCase();
+    const isRead = methodUpper === 'GET';
+    const maxAttempts = isRead ? 3 : 1;
+    let attempt = 0;
+
+    while (attempt < maxAttempts) {
+      attempt += 1;
+      try {
+        const response = await this.http.request({
+          method,
+          url: pathWithQuery,
+          data,
+          headers,
+        });
+        return response.data;
+      } catch (error) {
+        const status = error.response?.status;
+        const details = error.response?.data || error.message;
+        const retriable = isRead && (status === 429 || (status >= 500 && status < 600));
+        const canRetry = retriable && attempt < maxAttempts;
+
+        this.logger.error(
+          { method, path: pathWithQuery, status, details, attempt, maxAttempts },
+          canRetry ? 'Kalshi API request failed, retrying' : 'Kalshi API request failed',
+        );
+
+        if (!canRetry) throw error;
+        const backoffMs = 250 * 2 ** (attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
     }
   }
 

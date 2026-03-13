@@ -1,5 +1,6 @@
 const { parseFp } = require('./kalshiClient');
 const { toISODateInTz } = require('./stateStore');
+const { isSoccerCompetitionName } = require('./kalshiLiveSoccer');
 
 function normalize(s) {
   return String(s || '')
@@ -63,6 +64,12 @@ function extractGameState(event) {
       const goalDiff = Math.abs(live.homeScore - live.awayScore);
       const leadingSide = live.homeScore > live.awayScore ? 'home' : live.awayScore > live.homeScore ? 'away' : null;
       const leadingTeam = leadingSide === 'home' ? live.homeTeam : leadingSide === 'away' ? live.awayTeam : null;
+      const homeRedCards = Number.isFinite(Number(live.homeRedCards)) ? Number(live.homeRedCards) : null;
+      const awayRedCards = Number.isFinite(Number(live.awayRedCards)) ? Number(live.awayRedCards) : null;
+      const leadingTeamRedCards =
+        leadingSide === 'home' ? homeRedCards : leadingSide === 'away' ? awayRedCards : null;
+      const trailingTeamRedCards =
+        leadingSide === 'home' ? awayRedCards : leadingSide === 'away' ? homeRedCards : null;
       return {
         minute: live.minute,
         homeScore: live.homeScore,
@@ -70,6 +77,10 @@ function extractGameState(event) {
         goalDiff,
         leadingSide,
         leadingTeam,
+        homeRedCards,
+        awayRedCards,
+        leadingTeamRedCards,
+        trailingTeamRedCards,
         competition: live.competition || null,
       };
     }
@@ -94,6 +105,8 @@ function extractGameState(event) {
   const awayScoreKeys = ['away_score', 'score_away', 'away.goals', 'away_score_current'];
   const homeTeamKeys = ['home_team', 'home.name', 'team_home', 'home'];
   const awayTeamKeys = ['away_team', 'away.name', 'team_away', 'away'];
+  const homeRedCardKeys = ['home_red_cards', 'red_cards_home', 'home.red_cards', 'home_red_card_count'];
+  const awayRedCardKeys = ['away_red_cards', 'red_cards_away', 'away.red_cards', 'away_red_card_count'];
 
   let minute = null;
   for (const [k, v] of Object.entries(flat)) {
@@ -130,12 +143,23 @@ function extractGameState(event) {
 
   let homeTeam = null;
   let awayTeam = null;
+  let homeRedCards = null;
+  let awayRedCards = null;
 
   for (const [k, v] of Object.entries(flat)) {
-    if (typeof v !== 'string') continue;
     const key = k.toLowerCase();
-    if (!homeTeam && homeTeamKeys.some((x) => key.endsWith(x))) homeTeam = v;
-    if (!awayTeam && awayTeamKeys.some((x) => key.endsWith(x))) awayTeam = v;
+    if (homeRedCards === null && homeRedCardKeys.some((x) => key.endsWith(x))) {
+      const n = Number(v);
+      if (Number.isFinite(n)) homeRedCards = n;
+    }
+    if (awayRedCards === null && awayRedCardKeys.some((x) => key.endsWith(x))) {
+      const n = Number(v);
+      if (Number.isFinite(n)) awayRedCards = n;
+    }
+    if (typeof v === 'string') {
+      if (!homeTeam && homeTeamKeys.some((x) => key.endsWith(x))) homeTeam = v;
+      if (!awayTeam && awayTeamKeys.some((x) => key.endsWith(x))) awayTeam = v;
+    }
   }
 
   const fromTitle = parseTeamsFromTitle(event.title || event.sub_title || '');
@@ -155,6 +179,10 @@ function extractGameState(event) {
   const goalDiff = Math.abs(homeScore - awayScore);
   const leadingSide = homeScore > awayScore ? 'home' : awayScore > homeScore ? 'away' : null;
   const leadingTeam = leadingSide === 'home' ? homeTeam : leadingSide === 'away' ? awayTeam : null;
+  const leadingTeamRedCards =
+    leadingSide === 'home' ? homeRedCards : leadingSide === 'away' ? awayRedCards : null;
+  const trailingTeamRedCards =
+    leadingSide === 'home' ? awayRedCards : leadingSide === 'away' ? homeRedCards : null;
 
   return {
     minute,
@@ -163,13 +191,26 @@ function extractGameState(event) {
     goalDiff,
     leadingSide,
     leadingTeam,
+    homeRedCards,
+    awayRedCards,
+    leadingTeamRedCards,
+    trailingTeamRedCards,
     competition: md.competition || null,
   };
 }
 
 function isLeagueAllowed(competition, config) {
+  if (config.allLeagues) return isSoccerCompetitionName(competition);
   if (!competition) return false;
-  return config.leagues.map(normalize).includes(normalize(competition));
+  const leagues = Array.isArray(config.leagues) ? config.leagues : [];
+  const key = leagues.join('|');
+  if (!config.__leagueSetCache || config.__leagueSetCache.key !== key) {
+    config.__leagueSetCache = {
+      key,
+      set: new Set(leagues.map(normalize)),
+    };
+  }
+  return config.__leagueSetCache.set.has(normalize(competition));
 }
 
 function marketIsMatchWinner(market) {
@@ -224,12 +265,20 @@ function settlementPnlUsd(settlement) {
   return revenue - costYes - costNo - fee;
 }
 
-function computeDailyLossUsd(settlements, timezone) {
+function isIgnoredSettlement(settlement, ignoredTickers = []) {
+  const ignored = new Set((ignoredTickers || []).map((x) => String(x)));
+  const ticker = String(settlement?.ticker || '');
+  const eventTicker = String(settlement?.event_ticker || '');
+  return ignored.has(ticker) || ignored.has(eventTicker);
+}
+
+function computeDailyLossUsd(settlements, timezone, ignoredTickers = []) {
   const nowMs = Date.now();
   const todayKey = toISODateInTz(nowMs, timezone);
 
   let dailyPnl = 0;
   for (const s of settlements) {
+    if (isIgnoredSettlement(s, ignoredTickers)) continue;
     const ts = new Date(s.settled_time).getTime();
     if (!Number.isFinite(ts)) continue;
     const key = toISODateInTz(ts, timezone);
@@ -251,6 +300,13 @@ function eligibleTradeCandidate(event, config, stateStore) {
   const stageMaxYesPrice = inPost80Window ? Math.min(config.maxYesPrice, config.post80MaxYesPrice) : config.maxYesPrice;
 
   if (!game.leadingTeam || game.goalDiff < requiredLead) return null;
+  if (
+    game.leadingTeamRedCards !== null &&
+    game.trailingTeamRedCards !== null &&
+    game.leadingTeamRedCards > game.trailingTeamRedCards
+  ) {
+    return null;
+  }
   if (stateStore.hasTradedEvent(event.event_ticker)) return null;
 
   const market = pickMarketForLeadingTeam(event, game.leadingTeam, config);

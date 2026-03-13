@@ -30,6 +30,11 @@ const VALID_AGENT_STATUSES = [
   'UP_DEGRADED',
   'DOWN',
 ];
+let logCache = {
+  mtimeMs: 0,
+  size: 0,
+  parsed: [],
+};
 
 function safeReadJson(filePath, fallback) {
   try {
@@ -39,17 +44,41 @@ function safeReadJson(filePath, fallback) {
   }
 }
 
+function isIgnoredSettlement(settlement, ignoredTickers = []) {
+  const ignored = new Set((ignoredTickers || []).map((x) => String(x)));
+  const ticker = String(settlement?.ticker || '');
+  const eventTicker = String(settlement?.event_ticker || '');
+  return ignored.has(ticker) || ignored.has(eventTicker);
+}
+
 function readActionLogs(limit = 5000) {
   try {
-    const lines = fs
-      .readFileSync(logsPath, 'utf8')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const stat = fs.statSync(logsPath);
+    const changed = stat.mtimeMs !== logCache.mtimeMs || stat.size !== logCache.size;
 
-    return lines.slice(-limit).map((line) => {
+    if (changed) {
+      const lines = fs
+        .readFileSync(logsPath, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      logCache = {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        parsed: lines.map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return { ts: new Date().toISOString(), action: 'parse_error', raw: line };
+          }
+        }),
+      };
+    }
+
+    return logCache.parsed.slice(-limit).map((line) => {
       try {
-        return JSON.parse(line);
+        return typeof line === 'string' ? JSON.parse(line) : line;
       } catch {
         return { ts: new Date().toISOString(), action: 'parse_error', raw: line };
       }
@@ -72,11 +101,20 @@ function safeRatio(n, d) {
 }
 
 function computeDerivedMetrics(actionLogs) {
-  const totalCycles = actionLogs.filter((x) => x.action === 'cycle_evaluated').length;
-  const totalOrderSubmit = actionLogs.filter((x) => x.action === 'order_submit').length;
-  const totalFilled = actionLogs.filter((x) => x.action === 'order_filled').length;
-  const totalNotFilled = actionLogs.filter((x) => x.action === 'order_not_filled').length;
-  const totalErrors = actionLogs.filter((x) => x.action.endsWith('_error') || x.action === 'fatal_error').length;
+  let totalCycles = 0;
+  let totalOrderSubmit = 0;
+  let totalFilled = 0;
+  let totalNotFilled = 0;
+  let totalErrors = 0;
+
+  for (const x of actionLogs) {
+    const action = x.action;
+    if (action === 'cycle_evaluated') totalCycles += 1;
+    else if (action === 'order_submit') totalOrderSubmit += 1;
+    else if (action === 'order_filled') totalFilled += 1;
+    else if (action === 'order_not_filled') totalNotFilled += 1;
+    if (action === 'fatal_error' || String(action).endsWith('_error')) totalErrors += 1;
+  }
 
   const fillRate = totalOrderSubmit > 0 ? totalFilled / totalOrderSubmit : 0;
 
@@ -234,6 +272,135 @@ function computeTradeAnalytics(closedTrades) {
   };
 }
 
+function roundToLadderStake(stakeUsd, ladder) {
+  if (!Number.isFinite(stakeUsd) || stakeUsd <= 0 || !ladder.length) return null;
+  let nearest = ladder[0];
+  for (const s of ladder) {
+    if (Math.abs(s - stakeUsd) < Math.abs(nearest - stakeUsd)) nearest = s;
+  }
+  return nearest;
+}
+
+function computeRecoveryAnalytics(closedTrades, openTrades, runtime) {
+  const baseStake = Number(runtime.stakeUsd || 1);
+  const recoveryStake = Math.max(baseStake, Number(runtime.recoveryStakeUsd || 2));
+  const maxStake = Math.max(recoveryStake, Number(runtime.recoveryMaxStakeUsd || 16));
+  const ladder = [baseStake];
+  let next = recoveryStake;
+  while (next <= maxStake + 1e-9) {
+    if (!ladder.includes(Number(next.toFixed(2)))) ladder.push(Number(next.toFixed(2)));
+    next *= 2;
+  }
+
+  const byStake = new Map(
+    ladder.map((s) => [
+      s,
+      {
+        stakeUsd: s,
+        trades: 0,
+        wins: 0,
+        losses: 0,
+        pushes: 0,
+        winUsd: 0,
+        lossUsdAbs: 0,
+        openWinUsd: 0,
+        openLossUsdAbs: 0,
+        netPnlUsd: 0,
+      },
+    ]),
+  );
+
+  const ordered = [...(closedTrades || [])].sort((a, b) => new Date(a.settled_time).getTime() - new Date(b.settled_time).getTime());
+  let lossStreak = 0;
+  for (const t of ordered) {
+    const rawStake = Number(t.placed_context?.stakeUsdTarget ?? t.total_cost_usd ?? 0);
+    const stake = roundToLadderStake(rawStake, ladder);
+    if (!stake || !byStake.has(stake)) continue;
+    const row = byStake.get(stake);
+    row.trades += 1;
+    row.netPnlUsd += Number(t.pnl_usd || 0);
+    if (t.pnl_usd > 0) {
+      row.wins += 1;
+      row.winUsd += Number(t.pnl_usd || 0);
+      lossStreak = 0;
+    } else if (t.pnl_usd < 0) {
+      row.losses += 1;
+      row.lossUsdAbs += Math.abs(Number(t.pnl_usd || 0));
+      lossStreak += 1;
+    } else {
+      row.pushes += 1;
+      lossStreak = 0;
+    }
+  }
+
+  for (const t of openTrades || []) {
+    const rawStake = Number(t.placed_context?.stakeUsdTarget ?? t.amount_bet_usd ?? 0);
+    const stake = roundToLadderStake(rawStake, ladder);
+    if (!stake || !byStake.has(stake)) continue;
+    const row = byStake.get(stake);
+    const pnl = Number(t.unrealized_pnl_usd || 0);
+    row.netPnlUsd += pnl;
+    if (pnl > 0) row.openWinUsd += pnl;
+    if (pnl < 0) row.openLossUsdAbs += Math.abs(pnl);
+  }
+
+  const remainingByTier = {};
+  for (let i = 0; i < ladder.length - 1; i += 1) {
+    const source = byStake.get(ladder[i]);
+    const offset = byStake.get(ladder[i + 1]);
+    const sourceLoss = source.lossUsdAbs + source.openLossUsdAbs;
+    const nextGain = offset.winUsd + offset.openWinUsd;
+    remainingByTier[ladder[i]] = Math.max(0, sourceLoss - nextGain);
+  }
+  const last = byStake.get(ladder[ladder.length - 1]);
+  remainingByTier[ladder[ladder.length - 1]] = Math.max(0, last.lossUsdAbs + last.openLossUsdAbs);
+
+  const recoveryLossBalanceUsd = Object.values(remainingByTier).reduce((acc, v) => acc + Number(v || 0), 0);
+  let nextStakeUsd = baseStake;
+  for (let i = ladder.length - 1; i >= 0; i -= 1) {
+    const tier = ladder[i];
+    const rem = remainingByTier[tier] || 0;
+    if (rem <= 0.0001) continue;
+    nextStakeUsd = i < ladder.length - 1 ? ladder[i + 1] : tier;
+    break;
+  }
+
+  const ladderRows = ladder.map((s, i) => {
+    const row = byStake.get(s);
+    const avgWinUsd = row.wins > 0 ? row.winUsd / row.wins : null;
+    const prev = i > 0 ? byStake.get(ladder[i - 1]) : null;
+    const prevLossUsd = prev ? prev.lossUsdAbs + prev.openLossUsdAbs : 0;
+    const winsNeededToOffsetPrevTierLosses =
+      i > 0 && avgWinUsd && avgWinUsd > 0 ? Math.ceil(prevLossUsd / avgWinUsd) : null;
+    return {
+      stakeUsd: s,
+      trades: row.trades,
+      wins: row.wins,
+      losses: row.losses,
+      pushes: row.pushes,
+      lossUsdAbs: Number((row.lossUsdAbs + row.openLossUsdAbs).toFixed(4)),
+      winUsd: Number((row.winUsd + row.openWinUsd).toFixed(4)),
+      netPnlUsd: Number(row.netPnlUsd.toFixed(4)),
+      avgWinUsd: avgWinUsd !== null ? Number(avgWinUsd.toFixed(4)) : null,
+      prevTierStakeUsd: i > 0 ? ladder[i - 1] : null,
+      prevTierLossUsd: Number(prevLossUsd.toFixed(4)),
+      remainingLossUsd: Number((remainingByTier[s] || 0).toFixed(4)),
+      winsNeededToOffsetPrevTierLosses,
+    };
+  });
+
+  return {
+    enabled: Boolean(runtime.recoveryModeEnabled),
+    baseStakeUsd: baseStake,
+    recoveryStakeUsd: recoveryStake,
+    recoveryMaxStakeUsd: maxStake,
+    currentLossStreak: lossStreak,
+    recoveryLossBalanceUsd: Number(recoveryLossBalanceUsd.toFixed(4)),
+    nextStakeUsd: Number(nextStakeUsd.toFixed(2)),
+    ladder: ladderRows,
+  };
+}
+
 function markPriceForPosition(position, market) {
   const qty = parseFp(position.position_fp);
   const yesBid = parseFp(market?.yes_bid_dollars);
@@ -281,6 +448,8 @@ function inferCompetitionFromTicker(ticker) {
   if (upper.includes('BUNGAME')) return 'Bundesliga';
   if (upper.includes('LALGAME')) return 'La Liga';
   if (upper.includes('SERAGAME') || upper.includes('SERIEAGAME')) return 'Serie A';
+  if (upper.includes('BRAGAME') || upper.includes('BRASGAME')) return 'Brasileiro Serie A';
+  if (upper.includes('ARGGAME') || upper.includes('ARGPGAME')) return 'Argentina Primera Division';
   if (upper.includes('FACUP')) return 'FA Cup';
   if (upper.includes('CDRGAME') || upper.includes('COPA')) return 'Copa del Rey';
   return null;
@@ -295,9 +464,12 @@ function buildPlacementContextByEvent(actionLogs, runtime) {
       triggerRule: deriveRuleFromMinute(log.minute, runtime),
       placedMinute: log.minute ?? null,
       placedScore: log.score ?? null,
+      placedCards: log.cards ?? null,
+      placedLeaderVsTrailingCards: log.leaderVsTrailingCards ?? null,
+      stakeUsdTarget: Number.isFinite(Number(log.stakeUsd)) ? Number(log.stakeUsd) : null,
       leadingTeam: log.leadingTeam ?? null,
       competition: log.competition ?? null,
-      selectedOutcome: log.payload?.ticker ? null : null,
+      selectedOutcome: log.selectedOutcome || log.leadingTeam || null,
       markedAt: log.ts || null,
       marketTicker: log.marketTicker || null,
     });
@@ -313,6 +485,10 @@ function mergePlacementContext(stateCtx, logCtx) {
     triggerRule: stateCtx?.triggerRule || logCtx?.triggerRule || null,
     placedMinute: stateCtx?.placedMinute ?? logCtx?.placedMinute ?? null,
     placedScore: stateCtx?.placedScore || logCtx?.placedScore || null,
+    placedCards: stateCtx?.placedCards || logCtx?.placedCards || null,
+    placedLeaderVsTrailingCards:
+      stateCtx?.placedLeaderVsTrailingCards || logCtx?.placedLeaderVsTrailingCards || null,
+    stakeUsdTarget: stateCtx?.stakeUsdTarget ?? logCtx?.stakeUsdTarget ?? null,
     leadingTeam: stateCtx?.leadingTeam || logCtx?.leadingTeam || null,
     competition: stateCtx?.competition || logCtx?.competition || null,
     selectedOutcome: stateCtx?.selectedOutcome || logCtx?.selectedOutcome || null,
@@ -463,7 +639,9 @@ app.get('/api/dashboard', async (_req, res) => {
   }
 
   const todayKey = toISODateInTz(Date.now(), config.timezone);
-  const closedTrades = settlements
+  const ignoredSettlementTickers = runtime.ignoredSettlementTickers || config.ignoredSettlementTickers || [];
+  const filteredSettlements = settlements.filter((s) => !isIgnoredSettlement(s, ignoredSettlementTickers));
+  const closedTrades = filteredSettlements
     .map((s) => ({
       ticker: s.ticker,
       event_ticker: s.event_ticker,
@@ -475,6 +653,8 @@ app.get('/api/dashboard', async (_req, res) => {
       settled_time: s.settled_time,
       pnl_usd: settlementPnlUsd(s),
       total_cost_usd: parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars),
+      amount_bet_usd: parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars),
+      total_return_usd: Number((Number(s.revenue || 0) / 100).toFixed(4)),
       roi_pct: null,
       placed_context: mergePlacementContext(
         (state.tradedEvents || {})[s.event_ticker],
@@ -497,7 +677,7 @@ app.get('/api/dashboard', async (_req, res) => {
   const settledTickerSet = new Set(closedTrades.map((t) => t.ticker).filter(Boolean));
 
   const marketTickers = (openPositions || []).map((p) => p.ticker).filter(Boolean);
-  const marketBooks = client ? await client.getMarketsByTickers(marketTickers) : [];
+  const marketBooks = client && marketTickers.length ? await client.getMarketsByTickers(marketTickers) : [];
   const marketMap = new Map(marketBooks.map((m) => [m.ticker, m]));
   const eventTitleMap = new Map((events || []).map((e) => [e.event_ticker, e.title]));
 
@@ -509,7 +689,7 @@ app.get('/api/dashboard', async (_req, res) => {
     const absQty = Math.abs(qty);
     const costBasisUsd = Math.abs(parseFp(p.market_exposure_dollars));
     const market = marketMap.get(p.ticker);
-    if (market?.status && String(market.status).toLowerCase() !== 'open') return null;
+    const marketStatus = market?.status ? String(market.status).toLowerCase() : 'unknown';
     const eventTicker = p.event_ticker || market?.event_ticker || null;
     const eventTitle = eventTicker ? eventTitleMap.get(eventTicker) || null : null;
     const markPrice = markPriceForPosition(p, market);
@@ -532,12 +712,15 @@ app.get('/api/dashboard', async (_req, res) => {
       event_title: eventTitle,
       selection_label: selectionLabel,
       market_title: market?.title || null,
+      market_status: marketStatus,
       position_fp: p.position_fp,
       side,
       quantity: absQty,
       cost_basis_usd: Number(costBasisUsd.toFixed(4)),
+      amount_bet_usd: Number(costBasisUsd.toFixed(4)),
       mark_price: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_value_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
+      total_return_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
       unrealized_pnl_usd: unrealizedPnlUsd !== null ? Number(unrealizedPnlUsd.toFixed(4)) : null,
       unrealized_roi_pct: unrealizedRoiPct !== null ? Number(unrealizedRoiPct.toFixed(6)) : null,
       realized_pnl_dollars: parseFp(p.realized_pnl_dollars),
@@ -556,6 +739,8 @@ app.get('/api/dashboard', async (_req, res) => {
   const openRoiPct = openCostBasisUsd > 0 ? Number((openUnrealizedPnlUsd / openCostBasisUsd).toFixed(6)) : null;
   const soccerClosedTrades = closedTrades.filter(isSoccerClosedTrade);
   const analytics = computeTradeAnalytics(soccerClosedTrades);
+  const soccerOpenTrades = openTrades.filter((t) => Boolean(t.placed_context?.competition && t.placed_context?.competition !== 'Unknown'));
+  const recovery = computeRecoveryAnalytics(soccerClosedTrades, soccerOpenTrades, runtime);
 
   const closedTradesWithRecovery = closedTrades.map((t) => ({
     ...t,
@@ -581,6 +766,8 @@ app.get('/api/dashboard', async (_req, res) => {
           competition: competition || '-',
           minute: null,
           score: '-',
+          redCards: null,
+          leadingVsTrailingRedCards: null,
           leadingTeam: '-',
           goalDiff: null,
           status: 'NO_LIVE_DATA',
@@ -606,6 +793,13 @@ app.get('/api/dashboard', async (_req, res) => {
       } else if (!game.leadingTeam) {
         status = 'WATCHING';
         reason = 'No leading team currently';
+      } else if (
+        game.leadingTeamRedCards !== null &&
+        game.trailingTeamRedCards !== null &&
+        game.leadingTeamRedCards > game.trailingTeamRedCards
+      ) {
+        status = 'FILTERED';
+        reason = 'Leading team has more red cards than trailing team';
       } else if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
         status = 'WATCHING';
         reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
@@ -623,6 +817,14 @@ app.get('/api/dashboard', async (_req, res) => {
         competition: game.competition || competition || '-',
         minute: game.minute,
         score: `${game.homeScore}-${game.awayScore}`,
+        redCards:
+          game.homeRedCards !== null && game.awayRedCards !== null
+            ? `${game.homeRedCards}-${game.awayRedCards}`
+            : null,
+        leadingVsTrailingRedCards:
+          game.leadingTeamRedCards !== null && game.trailingTeamRedCards !== null
+            ? `${game.leadingTeamRedCards}-${game.trailingTeamRedCards}`
+            : null,
         leadingTeam: game.leadingTeam || '-',
         goalDiff: game.goalDiff,
         status,
@@ -645,10 +847,14 @@ app.get('/api/dashboard', async (_req, res) => {
       minVolume24hContracts: runtime.minVolume24hContracts,
       minLiquidityDollars: runtime.minLiquidityDollars,
       maxDailyLossUsd: runtime.maxDailyLossUsd,
+      recoveryModeEnabled: runtime.recoveryModeEnabled,
+      recoveryStakeUsd: runtime.recoveryStakeUsd,
+      recoveryMaxStakeUsd: runtime.recoveryMaxStakeUsd,
       leagues: runtime.leagues,
       timezone: config.timezone,
       runtimeOverridesPath: OVERRIDES_PATH,
       runtimeOverrides: readOverrides(),
+      ignoredSettlementTickers,
     },
     account: {
       balanceUsd,
@@ -667,10 +873,14 @@ app.get('/api/dashboard', async (_req, res) => {
       status: agentStatus.status,
       statusReason: agentStatus.reason,
       lastError: agentStatus.lastError,
+      currentStakeUsd: recovery.nextStakeUsd,
+      recoveryLossStreak: recovery.currentLossStreak,
+      recoveryLossBalanceUsd: recovery.recoveryLossBalanceUsd,
       validStatuses: VALID_AGENT_STATUSES,
     },
     metrics,
     analytics,
+    recovery,
     leagueLeaderboard: analytics.leagueLeaderboard,
     monitoredGamesSummary: {
       total: monitoredGames.length,
