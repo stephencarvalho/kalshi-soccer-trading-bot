@@ -11,7 +11,7 @@ const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { toISODateInTz } = require('./stateStore');
 const { getRuntimeConfig, readOverrides, OVERRIDES_PATH } = require('./runtimeConfig');
-const { eligibleTradeCandidate, extractGameState, isLeagueAllowed } = require('./strategy');
+const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule } = require('./strategy');
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
@@ -804,6 +804,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
 
       const alreadyBet = Boolean(tradedEventsMap[event.event_ticker]);
       const candidate = eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet });
+      const signalRule = deriveSignalRule(game, runtime);
 
       let status = 'WATCHING';
       let reason = 'Tracking game conditions';
@@ -814,7 +815,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       } else if (candidate) {
         status = 'ELIGIBLE_NOW';
         reason = 'Signal and market filters currently pass';
-      } else if (game.minute < runtime.minTriggerMinute) {
+      } else if (!signalRule && game.minute < runtime.minTriggerMinute) {
         status = 'WATCHING';
         reason = `Before trigger minute ${runtime.minTriggerMinute}`;
       } else if (!game.leadingTeam) {
@@ -827,6 +828,11 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       ) {
         status = 'FILTERED';
         reason = 'Leading team has more red cards than trailing team';
+      } else if (signalRule?.bypassMinute) {
+        status = 'FILTERED';
+        reason = `3+ goal lead override failed price/market cap ${Math.round(
+          Math.min(runtime.maxYesPrice, runtime.anytimeLargeLeadMaxYesPrice) * 100,
+        )}c`;
       } else if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
         status = 'WATCHING';
         reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;

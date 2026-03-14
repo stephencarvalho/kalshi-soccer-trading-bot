@@ -12,6 +12,8 @@ const ALLOWED_KEYS = new Set([
   'minLiquidityDollars',
   'minTriggerMinute',
   'minGoalLead',
+  'anytimeLargeLeadMinGoalLead',
+  'anytimeLargeLeadMaxYesPrice',
   'retryUntilMinute',
   'maxOpenPositions',
   'maxDailyLossUsd',

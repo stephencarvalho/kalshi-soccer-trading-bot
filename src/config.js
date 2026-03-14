@@ -46,6 +46,8 @@ const config = {
   retryUntilMinute: parseNumber(process.env.RETRY_UNTIL_MINUTE, 80),
   minTriggerMinute: parseNumber(process.env.MIN_TRIGGER_MINUTE, 70),
   minGoalLead: parseNumber(process.env.MIN_GOAL_LEAD, 2),
+  anytimeLargeLeadMinGoalLead: parseNumber(process.env.ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD, 3),
+  anytimeLargeLeadMaxYesPrice: parseNumber(process.env.ANYTIME_LARGE_LEAD_MAX_YES_PRICE, 0.9),
   stakeUsd: parseNumber(process.env.STAKE_USD, 1),
   post80StartMinute: parseNumber(process.env.POST80_START_MINUTE, 80),
   post80MinGoalLead: parseNumber(process.env.POST80_MIN_GOAL_LEAD, 1),
@@ -87,8 +89,14 @@ function validateConfig(cfg) {
   out.retryUntilMinute = clamp(Number(out.retryUntilMinute) || 80, out.minTriggerMinute, 130);
   out.post80StartMinute = clamp(Number(out.post80StartMinute) || 80, out.minTriggerMinute, 130);
   out.minGoalLead = Math.max(1, Math.floor(Number(out.minGoalLead) || 2));
+  out.anytimeLargeLeadMinGoalLead = Math.max(2, Math.floor(Number(out.anytimeLargeLeadMinGoalLead) || 3));
   out.post80MinGoalLead = Math.max(1, Math.floor(Number(out.post80MinGoalLead) || 1));
   out.maxYesPrice = clamp(Number(out.maxYesPrice) || 0.9, 0.01, 0.99);
+  out.anytimeLargeLeadMaxYesPrice = clamp(
+    Number(out.anytimeLargeLeadMaxYesPrice) || out.maxYesPrice,
+    0.01,
+    0.99,
+  );
   out.post80MaxYesPrice = clamp(Number(out.post80MaxYesPrice) || out.maxYesPrice, 0.01, 0.99);
   out.ignoredSettlementTickers = Array.from(
     new Set((out.ignoredSettlementTickers || []).map((x) => String(x || '').trim()).filter(Boolean)),
