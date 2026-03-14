@@ -176,6 +176,64 @@ function countSignificantEvents(events, eventType) {
 	return seenAny ? count : null;
 }
 
+function parseEventMinute(value) {
+	return parseMinute(String(value || ""));
+}
+
+function computeLeadHistory(homeEvents, awayEvents) {
+	const timeline = [];
+
+	for (const event of homeEvents || []) {
+		if (!event || String(event.event_type || "").toLowerCase() !== "score_change")
+			continue;
+		timeline.push({
+			side: "home",
+			minute: parseEventMinute(event.time),
+		});
+	}
+
+	for (const event of awayEvents || []) {
+		if (!event || String(event.event_type || "").toLowerCase() !== "score_change")
+			continue;
+		timeline.push({
+			side: "away",
+			minute: parseEventMinute(event.time),
+		});
+	}
+
+	if (!timeline.length) {
+		return {
+			homeMaxLead: 0,
+			awayMaxLead: 0,
+		};
+	}
+
+	timeline.sort((a, b) => {
+		const left = Number.isFinite(a.minute) ? a.minute : Number.MAX_SAFE_INTEGER;
+		const right = Number.isFinite(b.minute) ? b.minute : Number.MAX_SAFE_INTEGER;
+		if (left !== right) return left - right;
+		if (a.side === b.side) return 0;
+		return a.side === "home" ? -1 : 1;
+	});
+
+	let homeScore = 0;
+	let awayScore = 0;
+	let homeMaxLead = 0;
+	let awayMaxLead = 0;
+
+	for (const event of timeline) {
+		if (event.side === "home") homeScore += 1;
+		if (event.side === "away") awayScore += 1;
+		homeMaxLead = Math.max(homeMaxLead, homeScore - awayScore);
+		awayMaxLead = Math.max(awayMaxLead, awayScore - homeScore);
+	}
+
+	return {
+		homeMaxLead,
+		awayMaxLead,
+	};
+}
+
 function parseTeams(title) {
 	const t = String(title || "");
 	const m = t.match(/^(.+?)\s+vs\s+(.+)$/i) || t.match(/^(.+?)\s+at\s+(.+)$/i);
@@ -295,6 +353,10 @@ async function getLiveSoccerEventData(client, competitions) {
 			parseNullableInt(details.away_red_card_count) ??
 			parseNullableInt(details.away_cards_red) ??
 			countSignificantEvents(details.away_significant_events, "red_card");
+		const leadHistory = computeLeadHistory(
+			details.home_significant_events,
+			details.away_significant_events,
+		);
 		const tickers = [
 			...(m.primary_event_tickers || []),
 			...(m.related_event_tickers || []),
@@ -310,6 +372,8 @@ async function getLiveSoccerEventData(client, competitions) {
 				awayScore,
 				homeRedCards,
 				awayRedCards,
+				homeMaxLead: leadHistory.homeMaxLead,
+				awayMaxLead: leadHistory.awayMaxLead,
 				half: details.half || null,
 				status: details.status || null,
 				statusText: details.status_text || null,
@@ -336,6 +400,8 @@ function attachLiveDataToEvents(events, liveMap) {
 				awayScore: live.awayScore,
 				homeRedCards: live.homeRedCards,
 				awayRedCards: live.awayRedCards,
+				homeMaxLead: live.homeMaxLead,
+				awayMaxLead: live.awayMaxLead,
 				homeTeam,
 				awayTeam,
 				isLive: live.isLive,

@@ -5,7 +5,7 @@ const { createLogger } = require('./logger');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { StateStore } = require('./stateStore');
-const { eligibleTradeCandidate, computeDailyLossUsd } = require('./strategy');
+const { eligibleTradeCandidate, computeDailyLossUsd, deriveSignalRule } = require('./strategy');
 const { Notifier } = require('./notifier');
 const { appendAction, LOG_PATH } = require('./actionLog');
 const { getRuntimeConfig } = require('./runtimeConfig');
@@ -188,10 +188,7 @@ function computeRecoveryState(settlements, openPositions, openMarketMap, stateSt
 }
 
 function deriveTriggerRule(game, runtime) {
-  if (game.minute >= runtime.post80StartMinute) {
-    return `POST_${runtime.post80StartMinute}_LEAD_${runtime.post80MinGoalLead}`;
-  }
-  return `POST_${runtime.minTriggerMinute}_LEAD_${runtime.minGoalLead}`;
+  return deriveSignalRule(game, runtime)?.id || 'UNKNOWN_RULE';
 }
 
 function makeOrderPayload(candidate, balanceUsd, runtime, cycleStakeUsd) {

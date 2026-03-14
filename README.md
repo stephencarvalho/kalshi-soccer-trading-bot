@@ -46,12 +46,14 @@ npm -v
 1. Live game data must be available (minute + score).
 2. Match minute must be `>= MIN_TRIGGER_MINUTE` (default `70`).
 3. Team must be leading by:
+   - `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD` at any minute, if the current leader has held that lead at any point in the match (default: 3-goal lead)
    - `MIN_GOAL_LEAD` before `POST80_START_MINUTE` (default: 2-goal lead)
    - `POST80_MIN_GOAL_LEAD` at/after `POST80_START_MINUTE` (default: 1-goal lead)
 4. Leading team red-card filter:
    - skip if `leadingTeamRedCards > trailingTeamRedCards` (when card data is available).
 5. Market must be active and look like a match-winner market (draw/tie props excluded).
 6. YES ask price must be at or below:
+   - `min(MAX_YES_PRICE, ANYTIME_LARGE_LEAD_MAX_YES_PRICE)` for the anytime 3-goal override
    - `MAX_YES_PRICE` before post-80 window
    - `min(MAX_YES_PRICE, POST80_MAX_YES_PRICE)` in post-80 window.
 7. Event is skipped if already traded (one filled entry per event).
@@ -180,6 +182,8 @@ UI:
 
 - `MIN_TRIGGER_MINUTE`
 - `MIN_GOAL_LEAD`
+- `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD`
+- `ANYTIME_LARGE_LEAD_MAX_YES_PRICE`
 - `RETRY_UNTIL_MINUTE`
 - `STAKE_USD`
 - `ESTIMATED_WIN_PROBABILITY`
@@ -235,4 +239,3 @@ If you stop/restart processes, these files preserve bot state and dashboard hist
 2. `http://localhost:8787/api/health` returns `{"ok": true, ...}`.
 3. `http://localhost:4200` loads and refreshes.
 4. Dashboard "Agent" status is not `DOWN`.
-
