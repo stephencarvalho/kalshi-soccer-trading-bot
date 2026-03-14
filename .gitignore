@@ -3,6 +3,10 @@ node_modules/
 logs/*.log
 logs/*.ndjson
 logs/*.out
+logs/*.pid
+logs/*.pid.lock
+*.pid
+*.pid.lock
 data/*.json
 .DS_Store
 dashboard/node_modules/
