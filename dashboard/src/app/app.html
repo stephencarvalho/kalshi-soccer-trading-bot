@@ -105,6 +105,8 @@
                     <th>Competition</th>
                     <th>Game</th>
                     <th>Score</th>
+                    <th>Home YES</th>
+                    <th>Away YES</th>
                     <th>Red (H-A)</th>
                     <th>Red (L-T)</th>
                     <th>Leader</th>
@@ -115,7 +117,7 @@
                 </thead>
                 <tbody>
                   @if (!d.monitoredGames.length) {
-                    <tr><td colspan="10" class="muted">No live tracked games right now</td></tr>
+                    <tr><td colspan="12" class="muted">No live tracked games right now</td></tr>
                   }
                   @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
                     <tr>
@@ -123,6 +125,8 @@
                       <td>{{ g.competition }}</td>
                       <td>{{ g.title }}</td>
                       <td>{{ g.score }}</td>
+                      <td>{{ g.homeYesPrice === null || g.homeYesPrice === undefined ? '-' : (g.homeYesPrice | percent:'1.0-0') }}</td>
+                      <td>{{ g.awayYesPrice === null || g.awayYesPrice === undefined ? '-' : (g.awayYesPrice | percent:'1.0-0') }}</td>
                       <td>{{ g.redCards || '-' }}</td>
                       <td>{{ g.leadingVsTrailingRedCards || '-' }}</td>
                       <td>{{ g.leadingTeam }}</td>
@@ -150,6 +154,7 @@
                     <th>Mkt</th>
                     <th>Qty</th>
                     <th>Amt Bet</th>
+                    <th>Entry Px</th>
                     <th>Total Return</th>
                     <th>Cost</th>
                     <th>Mark</th>
@@ -162,7 +167,7 @@
                 </thead>
                 <tbody>
                   @if (!d.openTrades.length) {
-                    <tr><td colspan="14" class="muted">No open positions</td></tr>
+                    <tr><td colspan="15" class="muted">No open positions</td></tr>
                   }
                   @for (t of d.openTrades; track trackByTicker($index, t)) {
                     <tr>
@@ -172,6 +177,7 @@
                       <td>{{ t.market_status || '-' }}</td>
                       <td>{{ t.quantity ?? '-' }}</td>
                       <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                      <td>{{ t.placed_context?.yesPrice === null || t.placed_context?.yesPrice === undefined ? '-' : (t.placed_context?.yesPrice | percent:'1.0-0') }}</td>
                       <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
                       <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
                       <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
@@ -269,7 +275,7 @@
       <div class="panel-title-row">
         <div>
           <h2>Recovery Overview</h2>
-          <p class="panel-subtitle">Stake escalation metrics stay above the ladder so next action and recovery context are visible in one place.</p>
+          <p class="panel-subtitle">Closed losses enter a FIFO recovery queue, and the next trade targets the oldest unresolved loss using fee-aware sizing.</p>
         </div>
       </div>
       <article class="recovery-overview">
@@ -293,46 +299,50 @@
 
       <section class="desk-panel recovery-ladder-block">
         <div class="panel-title-row">
-          <h2>Recovery Ladder</h2>
+          <h2>Recovery Queue</h2>
           <span class="chip">
             {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} |
-            Next {{ (d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? 0) | currency:'USD':'symbol':'1.0-0' }} |
+            Next Target {{ (d.recovery?.nextTargetProfitUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }} |
             Streak {{ d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
-            Loss {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
+            Queue {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
           </span>
         </div>
         <div class="table-wrap terminal-table">
           <table>
             <thead>
               <tr>
-                <th>Stake</th>
-                <th>Trades</th>
-                <th>Wins</th>
-                <th>Losses</th>
+                <th>Queue ID</th>
+                <th>Loss Trade</th>
+                <th>League</th>
                 <th>Loss $</th>
-                <th>Win $</th>
-                <th>Net PnL</th>
-                <th>Prev Stake Loss $</th>
-                <th>Remaining Loss $</th>
-                <th>Wins Needed To Offset Prev Loss</th>
+                <th>Recovered $</th>
+                <th>Remaining $</th>
+                <th>Recovery Bet</th>
+                <th>Bet Size</th>
+                <th>Contract Px</th>
+                <th>Bet Result</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              @if (!(d.recovery?.ladder?.length)) {
-                <tr><td colspan="10" class="muted">No recovery stats yet</td></tr>
+              @if (!(d.recovery?.queue?.length)) {
+                <tr><td colspan="11" class="muted">No unresolved recovery queue items</td></tr>
               }
-              @for (r of (d.recovery?.ladder || []); track r.stakeUsd) {
+              @for (r of (d.recovery?.queue || []); track r.queueId) {
                 <tr>
-                  <td>{{ r.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</td>
-                  <td>{{ r.trades }}</td>
-                  <td>{{ r.wins }}</td>
-                  <td>{{ r.losses }}</td>
-                  <td class="neg">{{ r.lossUsdAbs | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td class="pos">{{ r.winUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td [class.pos]="r.netPnlUsd >= 0" [class.neg]="r.netPnlUsd < 0">{{ r.netPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td>{{ r.prevTierStakeUsd === null ? '-' : (r.prevTierLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
-                  <td [class.neg]="(r.remainingLossUsd || 0) > 0">{{ r.remainingLossUsd === undefined ? '-' : (r.remainingLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
-                  <td>{{ r.prevTierStakeUsd === null ? '-' : (r.winsNeededToOffsetPrevTierLosses ?? '-') }}</td>
+                  <td>{{ r.queueId }}</td>
+                  <td>{{ r.sourceEventTitle }}</td>
+                  <td>{{ r.competition }}</td>
+                  <td class="neg">{{ r.lossUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td class="pos">{{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td [class.neg]="r.remainingTargetUsd > 0">{{ r.remainingTargetUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td>{{ r.recoveryBet?.eventTitle || '-' }}</td>
+                  <td>{{ r.recoveryBet?.stakeUsdTarget === null || r.recoveryBet?.stakeUsdTarget === undefined ? '-' : (r.recoveryBet?.stakeUsdTarget | currency:'USD':'symbol':'1.2-2') }}</td>
+                  <td>{{ r.recoveryBet?.yesPrice === null || r.recoveryBet?.yesPrice === undefined ? '-' : (r.recoveryBet?.yesPrice | percent:'1.0-0') }}</td>
+                  <td [class.pos]="(r.recoveryBetResultUsd || 0) > 0" [class.neg]="(r.recoveryBetResultUsd || 0) < 0">
+                    {{ r.recoveryBetResultUsd === null || r.recoveryBetResultUsd === undefined ? '-' : (r.recoveryBetResultUsd | currency:'USD':'symbol':'1.2-2') }}
+                  </td>
+                  <td>{{ r.status }}</td>
                 </tr>
               }
             </tbody>
@@ -374,7 +384,7 @@
           <li><span>Trigger</span><strong>{{ d.config.minTriggerMinute }}'+ and {{ d.config.minGoalLead }}+ lead</strong></li>
           <li><span>Retry Until</span><strong>{{ d.config.retryUntilMinute }}'</strong></li>
           <li><span>Daily Stop Loss</span><strong>{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
-          <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? ('ON ($' + d.config.recoveryStakeUsd + ' -> max $' + (d.config.recoveryMaxStakeUsd || 16) + ')') : 'OFF' }}</strong></li>
+          <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? 'ON (closed-loss queue)' : 'OFF' }}</strong></li>
           <li><span>Leagues</span><strong>{{ d.config.leagues.length }}</strong></li>
         </ul>
       </article>

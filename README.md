@@ -73,7 +73,7 @@ npm -v
 - Max concurrent open positions: `MAX_OPEN_POSITIONS`.
 - Skip if insufficient available cash balance.
 
-### Recovery sizing ladder (optional)
+### Recovery queue sizing (optional)
 
 Controlled by:
 
@@ -81,14 +81,13 @@ Controlled by:
 - `RECOVERY_STAKE_USD`
 - `RECOVERY_MAX_STAKE_USD`
 
-Current ladder logic:
+Current queue logic:
 
-- Track unresolved losses by stake tier and offset with the next higher tier.
-- Includes both settled PnL and open unrealized PnL.
-- With defaults (`$1 -> $2 -> $4 -> $8 -> $16`):
-  - `$1` losses are offset by `$2` wins,
-  - `$2` losses by `$4` wins, etc.
-- Bot chooses the next stake from the highest tier that still has unresolved loss.
+- Base stake remains `STAKE_USD` when there are no unresolved closed losses.
+- Only settled losing trades create recovery targets.
+- Open unrealized PnL does not affect recovery sizing.
+- The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
+- Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
 
 ## Setup
 
@@ -150,7 +149,7 @@ UI:
 
 ![Dashboard overview](docs/screenshots/01-overview.png)
 
-### 2. Recovery ladder + live games + open trades
+### 2. Recovery queue + live games + open trades
 
 ![Live games and open trades](docs/screenshots/02-live-open-trades.png)
 
@@ -203,7 +202,7 @@ UI:
 - `MAX_OPEN_POSITIONS`
 - `MAX_DAILY_LOSS_USD`
 
-### Recovery ladder sizing
+### Recovery queue sizing
 
 - `RECOVERY_MODE_ENABLED`
 - `RECOVERY_STAKE_USD`

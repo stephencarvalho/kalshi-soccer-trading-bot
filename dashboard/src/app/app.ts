@@ -114,10 +114,19 @@ interface TradeRecord {
     placedScore?: string;
     placedCards?: string | null;
     placedLeaderVsTrailingCards?: string | null;
+    stakeUsdTarget?: number | null;
+    targetProfitUsd?: number | null;
+    recoveryQueueId?: string | null;
+    recoveryRemainingUsd?: number | null;
+    recoverySourceLossUsd?: number | null;
+    recoverySourceEventTitle?: string | null;
+    sizingMode?: string | null;
     leadingTeam?: string | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
+    yesPrice?: number | null;
+    fillCount?: number | null;
   } | null;
 }
 
@@ -140,10 +149,19 @@ interface ClosedTradeRecord {
     placedScore?: string;
     placedCards?: string | null;
     placedLeaderVsTrailingCards?: string | null;
+    stakeUsdTarget?: number | null;
+    targetProfitUsd?: number | null;
+    recoveryQueueId?: string | null;
+    recoveryRemainingUsd?: number | null;
+    recoverySourceLossUsd?: number | null;
+    recoverySourceEventTitle?: string | null;
+    sizingMode?: string | null;
     leadingTeam?: string | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
+    yesPrice?: number | null;
+    fillCount?: number | null;
   } | null;
 }
 
@@ -173,31 +191,47 @@ interface TradeAnalytics {
   longestLossStreak: number;
 }
 
-interface RecoveryLadderRow {
-  stakeUsd: number;
-  trades: number;
-  wins: number;
-  losses: number;
-  pushes: number;
-  lossUsdAbs: number;
-  winUsd: number;
-  netPnlUsd: number;
-  avgWinUsd: number | null;
-  prevTierStakeUsd: number | null;
-  prevTierLossUsd: number;
-  remainingLossUsd?: number;
-  winsNeededToOffsetPrevTierLosses: number | null;
+interface RecoveryTradeLink {
+  tradeKey: string;
+  eventTitle: string;
+  competition: string;
+  settledTime: string;
+  pnlUsd: number;
+  amountBetUsd: number | null;
+  stakeUsdTarget: number | null;
+  yesPrice: number | null;
+  contracts: number | null;
+  targetedRemainingUsdBefore?: number;
+  allocatedRecoveryUsd?: number;
+}
+
+interface RecoveryQueueRow {
+  queueId: string;
+  sourceTradeKey: string;
+  sourceTicker: string;
+  sourceEventTicker: string | null;
+  sourceEventTitle: string;
+  competition: string;
+  lossSettledTime: string;
+  lossUsd: number;
+  recoveredUsd: number;
+  remainingTargetUsd: number;
+  status: string;
+  resolvedAt: string | null;
+  recoveryBet: RecoveryTradeLink | null;
+  recoveryBetResultUsd: number | null;
+  resolutionTrade: RecoveryTradeLink | null;
 }
 
 interface RecoveryAnalytics {
   enabled: boolean;
+  strategy?: string;
   baseStakeUsd: number;
-  recoveryStakeUsd: number;
-  recoveryMaxStakeUsd?: number;
   currentLossStreak: number;
   recoveryLossBalanceUsd: number;
-  nextStakeUsd: number;
-  ladder: RecoveryLadderRow[];
+  nextTargetProfitUsd: number;
+  unresolvedLossCount: number;
+  queue: RecoveryQueueRow[];
 }
 
 interface LeagueLeaderboardRow {
@@ -217,6 +251,10 @@ interface MonitoredGameRecord {
   competition: string;
   minute: number | null;
   score: string;
+  homeTeam?: string | null;
+  awayTeam?: string | null;
+  homeYesPrice?: number | null;
+  awayYesPrice?: number | null;
   redCards: string | null;
   leadingVsTrailingRedCards: string | null;
   leadingTeam: string;
@@ -366,12 +404,13 @@ export class App implements OnDestroy {
     const d = this.data();
     if (!d) return [];
     return [
-      { label: 'Next Stake', value: d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? null, format: 'usd' },
+      { label: 'Next Recovery Target', value: d.recovery?.nextTargetProfitUsd ?? 0, format: 'usd' },
+      { label: 'Unresolved Losses', value: d.recovery?.unresolvedLossCount ?? 0, format: 'num' },
       { label: 'Loss Streak', value: d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0, format: 'num' },
       { label: 'Recovery Loss $', value: d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0, format: 'usd' },
       { label: 'Wins / Single Loss', value: d.analytics.winsRequiredToRecoverSingleLoss, format: 'num' },
       { label: 'Wins To Breakeven', value: d.analytics.winsRequiredToBreakeven, format: 'num' },
-      { label: 'Settled Trades', value: d.analytics.settledTrades, format: 'num' },
+      { label: 'Base Stake', value: d.recovery?.baseStakeUsd ?? d.config.stakeUsd ?? null, format: 'usd' },
     ];
   });
 
