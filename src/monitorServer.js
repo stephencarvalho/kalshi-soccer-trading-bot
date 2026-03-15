@@ -17,7 +17,7 @@ const {
   attachLiveDataToEvents,
   resolveSoccerCompetitionScope,
 } = require('./kalshiLiveSoccer');
-const { buildRecoveryQueue } = require('./recoveryQueue');
+const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy } = require('./recoveryQueue');
 
 const app = express();
 app.use(cors());
@@ -314,6 +314,43 @@ function computeRecoveryAnalytics(closedTrades, runtime) {
   };
 }
 
+function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
+  const budget = Number(maxSpendUsd || 0);
+  if (!Number.isFinite(budget) || budget <= 0) return null;
+
+  let candidateCount = 1;
+  let latestAffordable = null;
+  while (candidateCount <= 100000) {
+    const candidateCostUsd = totalCostForYesBuy(candidateCount, priceUsd);
+    if (candidateCostUsd === null || candidateCostUsd > budget + 1e-9) break;
+    latestAffordable = candidateCount;
+    candidateCount += 1;
+  }
+  return latestAffordable;
+}
+
+function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
+  if (!candidate || !Number.isFinite(Number(balanceUsd))) return true;
+  const ask = Number(candidate.ask || 0);
+  if (!Number.isFinite(ask) || ask <= 0 || ask >= 1) return false;
+
+  if (recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
+    const targetProfitUsd = Number(recovery.nextTargetProfitUsd || 0);
+    const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
+    const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
+    const maxSpendUsd =
+      Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
+        ? Math.min(maxRecoverySpendUsd, Number(balanceUsd))
+        : Number(balanceUsd);
+    if (sized && sized.totalCostUsd <= maxSpendUsd + 1e-9) return true;
+    return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
+  }
+
+  const stakeUsd = Number(runtime.stakeUsd || 0);
+  const maxSpendUsd = Math.min(stakeUsd, Number(balanceUsd));
+  return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
+}
+
 function markPriceForPosition(position, market) {
   const qty = parseFp(position.position_fp);
   const yesBid = parseFp(market?.yes_bid_dollars);
@@ -387,7 +424,7 @@ function deriveRuleFromMinute(minute, runtime) {
   if (!Number.isFinite(Number(minute))) return 'UNKNOWN_RULE';
   return Number(minute) >= Number(runtime.post80StartMinute)
     ? `POST_${runtime.post80StartMinute}_LEAD_${runtime.post80MinGoalLead}`
-    : `POST_${runtime.minTriggerMinute}_LEAD_${runtime.minGoalLead}`;
+    : `CURRENT_LEAD_${runtime.minGoalLead}`;
 }
 
 function inferCompetitionFromTicker(ticker) {
@@ -428,6 +465,7 @@ function buildPlacementContextByEvent(actionLogs, runtime) {
       recoverySourceEventTitle: log.recoverySourceEventTitle || null,
       sizingMode: log.sizingMode || null,
       leadingTeam: log.leadingTeam ?? null,
+      leadingTeamMaxLead: Number.isFinite(Number(log.leadingTeamMaxLead)) ? Number(log.leadingTeamMaxLead) : null,
       competition: log.competition ?? null,
       selectedOutcome: log.selectedOutcome || log.leadingTeam || null,
       markedAt: log.ts || null,
@@ -458,6 +496,7 @@ function mergePlacementContext(stateCtx, logCtx) {
     recoverySourceEventTitle: stateCtx?.recoverySourceEventTitle || logCtx?.recoverySourceEventTitle || null,
     sizingMode: stateCtx?.sizingMode || logCtx?.sizingMode || null,
     leadingTeam: stateCtx?.leadingTeam || logCtx?.leadingTeam || null,
+    leadingTeamMaxLead: stateCtx?.leadingTeamMaxLead ?? logCtx?.leadingTeamMaxLead ?? null,
     competition: stateCtx?.competition || logCtx?.competition || null,
     selectedOutcome: stateCtx?.selectedOutcome || logCtx?.selectedOutcome || null,
     markedAt: stateCtx?.markedAt || logCtx?.markedAt || null,
@@ -752,6 +791,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       const alreadyBet = Boolean(tradedEventsMap[event.event_ticker]);
       const candidate = eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet });
       const signalRule = deriveSignalRule(game, runtime);
+      const hasOrderCapacity = candidate ? canSizeCandidate(candidate, balanceUsd, runtime, recovery) : false;
 
       let status = 'WATCHING';
       let reason = 'Tracking game conditions';
@@ -759,15 +799,18 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       if (alreadyBet) {
         status = 'ALREADY_BET';
         reason = 'Bot has already placed a filled trade on this event';
+      } else if (candidate && !hasOrderCapacity) {
+        status = 'ELIGIBLE_NO_CAPACITY';
+        reason = 'Signal passes, but current balance or stake cap cannot size a valid order';
       } else if (candidate) {
         status = 'ELIGIBLE_NOW';
         reason = 'Signal and market filters currently pass';
-      } else if (!signalRule && game.minute < runtime.minTriggerMinute) {
-        status = 'WATCHING';
-        reason = `Before trigger minute ${runtime.minTriggerMinute}`;
       } else if (!game.leadingTeam) {
         status = 'WATCHING';
         reason = 'No leading team currently';
+      } else if (game.homeRedCards === null || game.awayRedCards === null) {
+        status = 'WATCHING';
+        reason = 'Waiting for red-card data before allowing a trade';
       } else if (
         game.leadingTeamRedCards !== null &&
         game.trailingTeamRedCards !== null &&
@@ -775,20 +818,19 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       ) {
         status = 'FILTERED';
         reason = 'Leading team has more red cards than trailing team';
-      } else if (signalRule?.bypassMinute) {
-        status = 'FILTERED';
-        reason = `3+ goal lead override failed price/market cap ${Math.round(
-          Math.min(runtime.maxYesPrice, runtime.anytimeLargeLeadMaxYesPrice) * 100,
-        )}c`;
-      } else if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
-        status = 'WATCHING';
-        reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
-      } else if (game.minute < runtime.post80StartMinute && game.goalDiff < runtime.minGoalLead) {
-        status = 'WATCHING';
-        reason = `Need lead >= ${runtime.minGoalLead} before minute ${runtime.post80StartMinute}`;
+      } else if (game.goalDiff < runtime.minGoalLead) {
+        if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
+          status = 'WATCHING';
+          reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
+        } else {
+          status = 'WATCHING';
+          reason = `Need current leader to be ahead by at least ${runtime.minGoalLead} goals`;
+        }
       } else {
         status = 'FILTERED';
-        reason = 'Price cap not satisfied or no matching team-winner market';
+        reason = `Current ${runtime.minGoalLead}+ goal lead signal failed price/market cap ${Math.round(
+          Math.min(runtime.maxYesPrice, runtime.anytimeLargeLeadMaxYesPrice) * 100,
+        )}c or no matching team-winner market`;
       }
 
       return {

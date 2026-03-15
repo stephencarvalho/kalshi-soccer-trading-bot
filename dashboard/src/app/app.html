@@ -101,25 +101,25 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Minute</th>
-                    <th>Competition</th>
-                    <th>Game</th>
-                    <th>Score</th>
-                    <th>Home YES</th>
-                    <th>Away YES</th>
-                    <th>Red (H-A)</th>
-                    <th>Red (L-T)</th>
-                    <th>Leader</th>
-                    <th>Diff</th>
-                    <th>Status</th>
-                    <th>Reason</th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'minute')">Minute <span>{{ sortIndicator('monitoredGames', 'minute') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'competition')">Competition <span>{{ sortIndicator('monitoredGames', 'competition') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'title')">Game <span>{{ sortIndicator('monitoredGames', 'title') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'score')">Score <span>{{ sortIndicator('monitoredGames', 'score') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'homeYesPrice')">Home YES <span>{{ sortIndicator('monitoredGames', 'homeYesPrice') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'awayYesPrice')">Away YES <span>{{ sortIndicator('monitoredGames', 'awayYesPrice') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'redCards')">Red (H-A) <span>{{ sortIndicator('monitoredGames', 'redCards') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingVsTrailingRedCards')">Red (L-T) <span>{{ sortIndicator('monitoredGames', 'leadingVsTrailingRedCards') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingTeam')">Leader <span>{{ sortIndicator('monitoredGames', 'leadingTeam') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'goalDiff')">Diff <span>{{ sortIndicator('monitoredGames', 'goalDiff') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'status')">Status <span>{{ sortIndicator('monitoredGames', 'status') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'reason')">Reason <span>{{ sortIndicator('monitoredGames', 'reason') }}</span></button></th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.monitoredGames.length) {
                     <tr><td colspan="12" class="muted">No live tracked games right now</td></tr>
                   }
-                  @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
+                  @for (g of sortedMonitoredGames().slice(0, 120); track g.eventTicker) {
                     <tr>
                       <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
                       <td>{{ g.competition }}</td>
@@ -148,28 +148,28 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Ticker</th>
-                    <th>Game</th>
-                    <th>Bet</th>
-                    <th>Mkt</th>
-                    <th>Qty</th>
-                    <th>Amt Bet</th>
-                    <th>Entry Px</th>
-                    <th>Total Return</th>
-                    <th>Cost</th>
-                    <th>Mark</th>
-                    <th>PnL</th>
-                    <th>ROI</th>
-                    <th>Condition</th>
-                    <th>Cards</th>
-                    <th>Update</th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'ticker')">Ticker <span>{{ sortIndicator('openTrades', 'ticker') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'eventTitle')">Game <span>{{ sortIndicator('openTrades', 'eventTitle') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'selectionLabel')">Bet <span>{{ sortIndicator('openTrades', 'selectionLabel') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'marketStatus')">Mkt <span>{{ sortIndicator('openTrades', 'marketStatus') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'quantity')">Qty <span>{{ sortIndicator('openTrades', 'quantity') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('openTrades', 'amountBetUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'entryPx')">Entry Px <span>{{ sortIndicator('openTrades', 'entryPx') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('openTrades', 'totalReturnUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'costBasisUsd')">Cost <span>{{ sortIndicator('openTrades', 'costBasisUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'markPrice')">Mark <span>{{ sortIndicator('openTrades', 'markPrice') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedPnlUsd')">PnL <span>{{ sortIndicator('openTrades', 'unrealizedPnlUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedRoiPct')">ROI <span>{{ sortIndicator('openTrades', 'unrealizedRoiPct') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'condition')">Condition <span>{{ sortIndicator('openTrades', 'condition') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'cards')">Cards <span>{{ sortIndicator('openTrades', 'cards') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'lastUpdated')">Update <span>{{ sortIndicator('openTrades', 'lastUpdated') }}</span></button></th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.openTrades.length) {
                     <tr><td colspan="15" class="muted">No open positions</td></tr>
                   }
-                  @for (t of d.openTrades; track trackByTicker($index, t)) {
+                  @for (t of sortedOpenTrades(); track trackByTicker($index, t)) {
                     <tr>
                       <td>{{ t.ticker }}</td>
                       <td>{{ t.event_title || t.event_ticker || '-' }}</td>
@@ -190,7 +190,7 @@
                       <td>
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
-                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red {{ t.placed_context.placedCards || '-' }} | L-T {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
                         }
                       </td>
                       <td>
@@ -268,6 +268,35 @@
             }
           </div>
         </article>
+
+        <article class="desk-panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Risk & Sustainability</h2>
+              <p class="panel-subtitle">These metrics matter because long-run survival depends on edge, payoff ratio, drawdown, and how much bankroll each bet consumes.</p>
+            </div>
+            <span class="chip" [class.warn]="riskStatus().ruinRisk !== 'Controlled'">
+              Edge {{ riskStatus().edge }} | Ruin Risk {{ riskStatus().ruinRisk }}
+            </span>
+          </div>
+          <div class="signal-grid signal-grid--six">
+            @for (card of riskMetrics(); track card.label) {
+              <article class="signal-card">
+                <h3>{{ card.label }}</h3>
+                @if (card.format === 'usd') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                }
+                @if (card.format === 'pct') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+                }
+                @if (card.format === 'num') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : card.value }}</p>
+                }
+              </article>
+            }
+          </div>
+          <p class="panel-subtitle" style="margin-top:0.7rem">{{ riskStatus().note }}</p>
+        </article>
       </div>
     </section>
 
@@ -311,24 +340,24 @@
           <table>
             <thead>
               <tr>
-                <th>Queue ID</th>
-                <th>Loss Trade</th>
-                <th>League</th>
-                <th>Loss $</th>
-                <th>Recovered $</th>
-                <th>Remaining $</th>
-                <th>Recovery Bet</th>
-                <th>Bet Size</th>
-                <th>Contract Px</th>
-                <th>Bet Result</th>
-                <th>Status</th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'queueId')">Queue ID <span>{{ sortIndicator('recoveryQueue', 'queueId') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'sourceEventTitle')">Loss Trade <span>{{ sortIndicator('recoveryQueue', 'sourceEventTitle') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'competition')">League <span>{{ sortIndicator('recoveryQueue', 'competition') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'lossUsd')">Loss $ <span>{{ sortIndicator('recoveryQueue', 'lossUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveredUsd')">Recovered $ <span>{{ sortIndicator('recoveryQueue', 'recoveredUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'remainingTargetUsd')">Remaining $ <span>{{ sortIndicator('recoveryQueue', 'remainingTargetUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveryBet')">Recovery Bet <span>{{ sortIndicator('recoveryQueue', 'recoveryBet') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'stakeUsdTarget')">Bet Size <span>{{ sortIndicator('recoveryQueue', 'stakeUsdTarget') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'yesPrice')">Contract Px <span>{{ sortIndicator('recoveryQueue', 'yesPrice') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveryBetResultUsd')">Bet Result <span>{{ sortIndicator('recoveryQueue', 'recoveryBetResultUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'status')">Status <span>{{ sortIndicator('recoveryQueue', 'status') }}</span></button></th>
               </tr>
             </thead>
             <tbody>
               @if (!(d.recovery?.queue?.length)) {
                 <tr><td colspan="11" class="muted">No unresolved recovery queue items</td></tr>
               }
-              @for (r of (d.recovery?.queue || []); track r.queueId) {
+              @for (r of sortedRecoveryQueue(); track r.queueId) {
                 <tr>
                   <td>{{ r.queueId }}</td>
                   <td>{{ r.sourceEventTitle }}</td>
@@ -400,20 +429,20 @@
         <table>
           <thead>
             <tr>
-              <th>League</th>
-              <th>Trades</th>
-              <th>Wins</th>
-              <th>Losses</th>
-              <th>Win Rate</th>
-              <th>Avg ROI</th>
-              <th>Total PnL</th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'league')">League <span>{{ sortIndicator('leagueLeaderboard', 'league') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'trades')">Trades <span>{{ sortIndicator('leagueLeaderboard', 'trades') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'wins')">Wins <span>{{ sortIndicator('leagueLeaderboard', 'wins') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'losses')">Losses <span>{{ sortIndicator('leagueLeaderboard', 'losses') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'winRate')">Win Rate <span>{{ sortIndicator('leagueLeaderboard', 'winRate') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'avgRoiPct')">Avg ROI <span>{{ sortIndicator('leagueLeaderboard', 'avgRoiPct') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'totalPnlUsd')">Total PnL <span>{{ sortIndicator('leagueLeaderboard', 'totalPnlUsd') }}</span></button></th>
             </tr>
           </thead>
           <tbody>
             @if (!d.leagueLeaderboard.length) {
               <tr><td colspan="7" class="muted">No settled league stats yet</td></tr>
             }
-            @for (r of d.leagueLeaderboard; track r.league) {
+            @for (r of sortedLeagueLeaderboard(); track r.league) {
               <tr>
                 <td>{{ r.league }}</td>
                 <td>{{ r.trades }}</td>
@@ -506,24 +535,24 @@
         <table>
           <thead>
             <tr>
-              <th>Settled</th>
-              <th>Ticker</th>
-              <th>Event</th>
-              <th>Result</th>
-              <th>Amt Bet</th>
-              <th>Total Return</th>
-              <th>PnL</th>
-              <th>ROI</th>
-              <th>Recovery Wins</th>
-              <th>Placed Condition</th>
-              <th>Cards</th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'settledTime')">Settled <span>{{ sortIndicator('closedTrades', 'settledTime') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'ticker')">Ticker <span>{{ sortIndicator('closedTrades', 'ticker') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'eventTitle')">Event <span>{{ sortIndicator('closedTrades', 'eventTitle') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'marketResult')">Result <span>{{ sortIndicator('closedTrades', 'marketResult') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('closedTrades', 'amountBetUsd') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('closedTrades', 'totalReturnUsd') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'pnlUsd')">PnL <span>{{ sortIndicator('closedTrades', 'pnlUsd') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'roiPct')">ROI <span>{{ sortIndicator('closedTrades', 'roiPct') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'winsToRecover')">Recovery Wins <span>{{ sortIndicator('closedTrades', 'winsToRecover') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'placedCondition')">Placed Condition <span>{{ sortIndicator('closedTrades', 'placedCondition') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'cards')">Cards <span>{{ sortIndicator('closedTrades', 'cards') }}</span></button></th>
             </tr>
           </thead>
           <tbody>
             @if (!d.closedTrades.length) {
               <tr><td colspan="11" class="muted">No settled trades yet</td></tr>
             }
-            @for (t of d.closedTrades.slice(0, 80); track t.ticker + t.settled_time) {
+            @for (t of sortedClosedTrades().slice(0, 80); track t.ticker + t.settled_time) {
               <tr>
                 <td>{{ t.settled_time | date:'short' }}</td>
                 <td>{{ t.ticker }}</td>
@@ -541,7 +570,7 @@
                 <td>
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
-                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red {{ t.placed_context.placedCards || '-' }} | L-T {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
                   }
                 </td>
                 <td>

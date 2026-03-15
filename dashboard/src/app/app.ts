@@ -122,6 +122,7 @@ interface TradeRecord {
     recoverySourceEventTitle?: string | null;
     sizingMode?: string | null;
     leadingTeam?: string | null;
+    leadingTeamMaxLead?: number | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
@@ -157,6 +158,7 @@ interface ClosedTradeRecord {
     recoverySourceEventTitle?: string | null;
     sizingMode?: string | null;
     leadingTeam?: string | null;
+    leadingTeamMaxLead?: number | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
@@ -259,7 +261,7 @@ interface MonitoredGameRecord {
   leadingVsTrailingRedCards: string | null;
   leadingTeam: string;
   goalDiff: number | null;
-  status: 'ELIGIBLE_NOW' | 'ALREADY_BET' | 'WATCHING' | 'FILTERED' | 'NO_LIVE_DATA';
+  status: 'ELIGIBLE_NOW' | 'ELIGIBLE_NO_CAPACITY' | 'ALREADY_BET' | 'WATCHING' | 'FILTERED' | 'NO_LIVE_DATA';
   reason: string;
 }
 
@@ -267,6 +269,13 @@ type ThemeMode = 'light' | 'dark';
 type ChartRange = '1H' | '3H' | '6H' | '12H' | 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
 type LogViewMode = 'important' | 'verbose';
 type LogTimeRange = 'TODAY' | '24H' | '7D' | 'ALL';
+type SortDirection = 'asc' | 'desc';
+type TableId = 'monitoredGames' | 'openTrades' | 'recoveryQueue' | 'leagueLeaderboard' | 'closedTrades';
+
+interface TableSortState {
+  key: string;
+  direction: SortDirection;
+}
 
 interface PnlPoint {
   ts: number;
@@ -323,6 +332,13 @@ export class App implements OnDestroy {
   readonly chartRange = signal<ChartRange>('ALL');
   readonly logViewMode = signal<LogViewMode>('important');
   readonly logTimeRange = signal<LogTimeRange>('TODAY');
+  readonly tableSort = signal<Record<TableId, TableSortState>>({
+    monitoredGames: { key: 'minute', direction: 'desc' },
+    openTrades: { key: 'lastUpdated', direction: 'desc' },
+    recoveryQueue: { key: 'remainingTargetUsd', direction: 'desc' },
+    leagueLeaderboard: { key: 'avgRoiPct', direction: 'desc' },
+    closedTrades: { key: 'settledTime', direction: 'desc' },
+  });
   readonly chartRanges: ChartRange[] = ['1H', '3H', '6H', '12H', 'LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
   readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
@@ -347,6 +363,92 @@ export class App implements OnDestroy {
     return selected.filter((item) => {
       const ts = new Date(String(item.ts || '')).getTime();
       return Number.isFinite(ts) ? ts >= fromTs : false;
+    });
+  });
+  readonly sortedMonitoredGames = computed<MonitoredGameRecord[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.monitoredGames || [], this.tableSort().monitoredGames, {
+      minute: (row) => row.minute,
+      competition: (row) => row.competition,
+      title: (row) => row.title,
+      score: (row) => row.score,
+      homeYesPrice: (row) => row.homeYesPrice,
+      awayYesPrice: (row) => row.awayYesPrice,
+      redCards: (row) => row.redCards,
+      leadingVsTrailingRedCards: (row) => row.leadingVsTrailingRedCards,
+      leadingTeam: (row) => row.leadingTeam,
+      goalDiff: (row) => row.goalDiff,
+      status: (row) => row.status,
+      reason: (row) => row.reason,
+    });
+  });
+  readonly sortedOpenTrades = computed<TradeRecord[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.openTrades || [], this.tableSort().openTrades, {
+      ticker: (row) => row.ticker,
+      eventTitle: (row) => row.event_title || row.event_ticker,
+      selectionLabel: (row) => row.selection_label || row.market_title,
+      marketStatus: (row) => row.market_status,
+      quantity: (row) => row.quantity,
+      amountBetUsd: (row) => row.amount_bet_usd,
+      entryPx: (row) => row.placed_context?.yesPrice,
+      totalReturnUsd: (row) => row.total_return_usd,
+      costBasisUsd: (row) => row.cost_basis_usd,
+      markPrice: (row) => row.mark_price,
+      unrealizedPnlUsd: (row) => row.unrealized_pnl_usd,
+      unrealizedRoiPct: (row) => row.unrealized_roi_pct,
+      condition: (row) => row.placed_context?.triggerRule,
+      cards: (row) => row.placed_context?.placedLeaderVsTrailingCards || row.placed_context?.placedCards,
+      lastUpdated: (row) => this.toTimestamp(row.last_updated_ts),
+    });
+  });
+  readonly sortedRecoveryQueue = computed<RecoveryQueueRow[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.recovery?.queue || [], this.tableSort().recoveryQueue, {
+      queueId: (row) => row.queueId,
+      sourceEventTitle: (row) => row.sourceEventTitle,
+      competition: (row) => row.competition,
+      lossUsd: (row) => row.lossUsd,
+      recoveredUsd: (row) => row.recoveredUsd,
+      remainingTargetUsd: (row) => row.remainingTargetUsd,
+      recoveryBet: (row) => row.recoveryBet?.eventTitle,
+      stakeUsdTarget: (row) => row.recoveryBet?.stakeUsdTarget,
+      yesPrice: (row) => row.recoveryBet?.yesPrice,
+      recoveryBetResultUsd: (row) => row.recoveryBetResultUsd,
+      status: (row) => row.status,
+    });
+  });
+  readonly sortedLeagueLeaderboard = computed<LeagueLeaderboardRow[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.leagueLeaderboard || [], this.tableSort().leagueLeaderboard, {
+      league: (row) => row.league,
+      trades: (row) => row.trades,
+      wins: (row) => row.wins,
+      losses: (row) => row.losses,
+      winRate: (row) => row.winRate,
+      avgRoiPct: (row) => row.avgRoiPct,
+      totalPnlUsd: (row) => row.totalPnlUsd,
+    });
+  });
+  readonly sortedClosedTrades = computed<ClosedTradeRecord[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.closedTrades || [], this.tableSort().closedTrades, {
+      settledTime: (row) => this.toTimestamp(row.settled_time),
+      ticker: (row) => row.ticker,
+      eventTitle: (row) => row.placed_context?.eventTitle || row.event_ticker,
+      marketResult: (row) => row.market_result,
+      amountBetUsd: (row) => row.amount_bet_usd,
+      totalReturnUsd: (row) => row.total_return_usd,
+      pnlUsd: (row) => row.pnl_usd,
+      roiPct: (row) => row.roi_pct,
+      winsToRecover: (row) => row.wins_to_recover_at_avg_win,
+      placedCondition: (row) => row.placed_context?.triggerRule,
+      cards: (row) => row.placed_context?.placedLeaderVsTrailingCards || row.placed_context?.placedCards,
     });
   });
 
@@ -400,6 +502,92 @@ export class App implements OnDestroy {
     ];
   });
 
+  readonly riskMetrics = computed<MetricCard[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    const netAccountValue =
+      (d.account.balanceUsd ?? 0) +
+      (d.account.portfolioValueUsd ?? 0);
+    const edgeGap =
+      d.analytics.winRate !== null && d.analytics.breakevenWinRate !== null
+        ? d.analytics.winRate - d.analytics.breakevenWinRate
+        : null;
+    const avgLossToWin =
+      d.analytics.avgLossAbsUsd && d.analytics.avgWinUsd
+        ? d.analytics.avgLossAbsUsd / d.analytics.avgWinUsd
+        : null;
+    const avgBetPct =
+      netAccountValue > 0 && d.analytics.avgTotalCostUsd !== null
+        ? d.analytics.avgTotalCostUsd / netAccountValue
+        : null;
+    const maxDrawdownPct =
+      netAccountValue > 0 && d.analytics.maxDrawdownUsd !== null
+        ? d.analytics.maxDrawdownUsd / netAccountValue
+        : null;
+    const stopLossPct =
+      netAccountValue > 0 && d.config.maxDailyLossUsd !== null && d.config.maxDailyLossUsd !== undefined
+        ? d.config.maxDailyLossUsd / netAccountValue
+        : null;
+    const recoveryQueuePct =
+      netAccountValue > 0 && d.recovery?.recoveryLossBalanceUsd !== undefined
+        ? d.recovery.recoveryLossBalanceUsd / netAccountValue
+        : null;
+    const lossesToStop =
+      d.analytics.avgLossAbsUsd && d.analytics.avgLossAbsUsd > 0
+        ? Math.floor(d.config.maxDailyLossUsd / d.analytics.avgLossAbsUsd)
+        : null;
+
+    return [
+      { label: 'Edge Gap', value: edgeGap, format: 'pct' },
+      { label: 'Loss / Win Ratio', value: avgLossToWin, format: 'num' },
+      { label: 'Avg Bet % Bankroll', value: avgBetPct, format: 'pct' },
+      { label: 'Max Drawdown %', value: maxDrawdownPct, format: 'pct' },
+      { label: 'Stop-Loss % Bankroll', value: stopLossPct, format: 'pct' },
+      { label: 'Recovery Queue %', value: recoveryQueuePct, format: 'pct' },
+      { label: 'Avg Losses To Stop', value: lossesToStop, format: 'num' },
+    ];
+  });
+
+  readonly riskStatus = computed(() => {
+    const d = this.data();
+    if (!d) {
+      return {
+        edge: 'Unknown',
+        ruinRisk: 'Unknown',
+        note: 'No dashboard data loaded',
+      };
+    }
+    const expectancy = d.analytics.expectancyPerTradeUsd;
+    const edgeGap =
+      d.analytics.winRate !== null && d.analytics.breakevenWinRate !== null
+        ? d.analytics.winRate - d.analytics.breakevenWinRate
+        : null;
+    const queueBurden = d.recovery?.recoveryLossBalanceUsd ?? 0;
+    const balance = d.account.balanceUsd ?? 0;
+
+    if ((expectancy ?? 0) < 0 || (edgeGap ?? 0) < 0) {
+      return {
+        edge: 'Negative',
+        ruinRisk: 'High',
+        note: 'Current win rate is below breakeven for the current payoff profile.',
+      };
+    }
+
+    if (queueBurden > balance * 0.15) {
+      return {
+        edge: 'Thin',
+        ruinRisk: 'Elevated',
+        note: 'Recovery burden is large relative to available balance.',
+      };
+    }
+
+    return {
+      edge: 'Positive',
+      ruinRisk: 'Controlled',
+      note: 'Sustainability still depends on keeping stake size small relative to bankroll.',
+    };
+  });
+
   readonly recoveryMetrics = computed<MetricCard[]>(() => {
     const d = this.data();
     if (!d) return [];
@@ -424,6 +612,14 @@ export class App implements OnDestroy {
 
     const points: PnlPoint[] = [];
     let cumulative = 0;
+    const firstSettledTs = sorted.length ? new Date(sorted[0].settled_time).getTime() : null;
+
+    if (firstSettledTs !== null && Number.isFinite(firstSettledTs)) {
+      points.push({
+        ts: firstSettledTs - 1,
+        pnl: 0,
+      });
+    }
 
     for (const t of sorted) {
       cumulative += Number(t.pnl_usd || 0);
@@ -438,6 +634,21 @@ export class App implements OnDestroy {
     points.push({ ts: nowTs, pnl: withOpen });
 
     return points.length ? points : [{ ts: nowTs, pnl: 0 }];
+  });
+  readonly chartCapitalDeployed = computed(() => {
+    const d = this.data();
+    if (!d) return null;
+
+    const nowTs = this.now().getTime();
+    const fromTs = this.rangeStartTs(nowTs, this.chartRange());
+    const closedCapitalUsd = (d.closedTrades || []).reduce((sum, trade) => {
+      const settledTs = this.toTimestamp(trade.settled_time);
+      if (fromTs !== null && (settledTs === null || settledTs < fromTs)) return sum;
+      return sum + Number(trade.amount_bet_usd || 0);
+    }, 0);
+    const openCapitalUsd = Number(d.account.openCostBasisUsd || 0);
+    const totalCapitalDeployed = Number((closedCapitalUsd + openCapitalUsd).toFixed(4));
+    return totalCapitalDeployed > 0 ? totalCapitalDeployed : null;
   });
 
   readonly rangeFilteredSeries = computed(() => {
@@ -489,7 +700,8 @@ export class App implements OnDestroy {
     const first = points[0]?.pnl ?? 0;
     const last = points[points.length - 1]?.pnl ?? 0;
     const delta = Number((last - first).toFixed(4));
-    const deltaPct = Math.abs(first) > 0 ? delta / Math.abs(first) : null;
+    const capitalDeployed = this.chartCapitalDeployed();
+    const deltaPct = capitalDeployed && capitalDeployed > 0 ? delta / capitalDeployed : null;
     const hovered = this.hoveredPoint();
 
     return {
@@ -568,6 +780,24 @@ export class App implements OnDestroy {
     this.logTimeRange.set(range);
   }
 
+  setTableSort(table: TableId, key: string): void {
+    this.tableSort.update((current) => {
+      const existing = current[table];
+      const direction: SortDirection =
+        existing.key === key ? (existing.direction === 'asc' ? 'desc' : 'asc') : 'desc';
+      return {
+        ...current,
+        [table]: { key, direction },
+      };
+    });
+  }
+
+  sortIndicator(table: TableId, key: string): string {
+    const current = this.tableSort()[table];
+    if (current.key !== key) return '';
+    return current.direction === 'asc' ? '^' : 'v';
+  }
+
   private formatChartTs(ts: number, range: ChartRange): string {
     const d = new Date(ts);
     if (range === '1H' || range === '3H' || range === '6H' || range === '12H' || range === 'LIVE') {
@@ -576,6 +806,25 @@ export class App implements OnDestroy {
     if (range === '1D') return d.toLocaleTimeString([], { hour: 'numeric' });
     if (range === '1W' || range === '1M') return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+  }
+
+  private rangeStartTs(nowTs: number, range: ChartRange): number | null {
+    if (range === 'ALL') return null;
+    if (range === '1H') return nowTs - 1 * 60 * 60 * 1000;
+    if (range === '3H') return nowTs - 3 * 60 * 60 * 1000;
+    if (range === '6H') return nowTs - 6 * 60 * 60 * 1000;
+    if (range === '12H') return nowTs - 12 * 60 * 60 * 1000;
+    if (range === 'LIVE') return nowTs - 6 * 60 * 60 * 1000;
+    if (range === '1D') return nowTs - 24 * 60 * 60 * 1000;
+    if (range === '1W') return nowTs - 7 * 24 * 60 * 60 * 1000;
+    if (range === '1M') return nowTs - 30 * 24 * 60 * 60 * 1000;
+    if (range === '3M') return nowTs - 90 * 24 * 60 * 60 * 1000;
+    if (range === '1Y') return nowTs - 365 * 24 * 60 * 60 * 1000;
+    if (range === 'YTD') {
+      const d = new Date(nowTs);
+      return new Date(d.getFullYear(), 0, 1).getTime();
+    }
+    return null;
   }
 
   fetchDashboard(): void {
@@ -662,6 +911,36 @@ export class App implements OnDestroy {
         label: this.prettyKey(key),
         value: this.asString(value),
       }));
+  }
+
+  private sortRows<T>(
+    rows: T[],
+    sort: TableSortState,
+    accessors: Record<string, (row: T) => unknown>,
+  ): T[] {
+    const accessor = accessors[sort.key];
+    if (!accessor) return [...rows];
+    const multiplier = sort.direction === 'asc' ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const primary = this.compareValues(accessor(left), accessor(right)) * multiplier;
+      if (primary !== 0) return primary;
+      return this.compareValues(JSON.stringify(left), JSON.stringify(right));
+    });
+  }
+
+  private compareValues(left: unknown, right: unknown): number {
+    if (left === right) return 0;
+    if (left === null || left === undefined || left === '') return 1;
+    if (right === null || right === undefined || right === '') return -1;
+    if (typeof left === 'number' && typeof right === 'number') return left - right;
+    if (typeof left === 'boolean' && typeof right === 'boolean') return Number(left) - Number(right);
+    return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  private toTimestamp(value: string | null | undefined): number | null {
+    if (!value) return null;
+    const ts = new Date(value).getTime();
+    return Number.isFinite(ts) ? ts : null;
   }
 
   logPrimaryFields(item: LogRecord): LogField[] {

@@ -93,6 +93,33 @@ function deriveTriggerRule(game, runtime) {
   return deriveSignalRule(game, runtime)?.id || 'UNKNOWN_RULE';
 }
 
+function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
+  const budget = Number(maxSpendUsd || 0);
+  if (!Number.isFinite(budget) || budget <= 0) return null;
+
+  let candidateCount = 1;
+  let latestAffordable = null;
+  while (candidateCount <= 100000) {
+    const candidateCostUsd = totalCostForYesBuy(candidateCount, priceUsd);
+    if (candidateCostUsd === null || candidateCostUsd > budget + 1e-9) {
+      break;
+    }
+    latestAffordable = candidateCount;
+    candidateCount += 1;
+  }
+
+  if (!latestAffordable) return null;
+  const totalCostUsd = totalCostForYesBuy(latestAffordable, priceUsd);
+  const feeUsd = kalshiImmediateFeeUsd(latestAffordable, priceUsd);
+  if (totalCostUsd === null) return null;
+  return {
+    count: latestAffordable,
+    feeUsd,
+    totalCostUsd,
+    netProfitUsd: Number((latestAffordable * (1 - priceUsd) - feeUsd).toFixed(4)),
+  };
+}
+
 function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
   const ask = candidate.ask;
   const baseStakeUsd = Number(runtime.stakeUsd || 1);
@@ -110,14 +137,22 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
     targetProfitUsd = Number(recoveryState.nextTargetProfitUsd || 0);
     queueItem = recoveryState.queue.find((item) => Number(item.remainingTargetUsd || 0) > 0.0001) || null;
     const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
-    if (!sized) return null;
-    count = sized.count;
-    feeUsd = sized.feeUsd;
-    totalCostUsd = sized.totalCostUsd;
-    netProfitUsd = sized.netProfitUsd;
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
-    if (Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0 && totalCostUsd > maxRecoverySpendUsd + 1e-9) return null;
-    if (totalCostUsd > balanceUsd + 1e-9) return null;
+    const maxSpendUsd =
+      Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
+        ? Math.min(maxRecoverySpendUsd, balanceUsd)
+        : balanceUsd;
+    const fitsBudget =
+      sized &&
+      sized.totalCostUsd <= maxSpendUsd + 1e-9;
+    const fallbackSized = fitsBudget ? null : maxContractsWithinBudget(ask, maxSpendUsd);
+    const chosen = fitsBudget ? sized : fallbackSized;
+    if (!chosen) return null;
+    if (!fitsBudget) sizingMode = 'RECOVERY_QUEUE_CAPPED';
+    count = chosen.count;
+    feeUsd = chosen.feeUsd;
+    totalCostUsd = chosen.totalCostUsd;
+    netProfitUsd = chosen.netProfitUsd;
   } else {
     let candidateCount = 1;
     let latestAffordable = null;
@@ -282,6 +317,7 @@ async function runCycle(client) {
       recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
       sizingMode: orderPlan.sizing.sizingMode,
       leadingTeam: candidate.game.leadingTeam,
+      leadingTeamMaxLead: candidate.game.leadingTeamMaxLead,
       marketTicker: candidate.market.ticker,
       ask: candidate.ask,
       count: orderPlan.order.count,
@@ -326,6 +362,7 @@ async function runCycle(client) {
             ? `${candidate.game.leadingTeamRedCards}-${candidate.game.trailingTeamRedCards}`
             : null,
         leadingTeam: candidate.game.leadingTeam || null,
+        leadingTeamMaxLead: candidate.game.leadingTeamMaxLead ?? null,
         competition: candidate.game.competition || null,
         eventTitle: candidate.event.title || null,
         selectedOutcome: candidate.market.yes_sub_title || null,

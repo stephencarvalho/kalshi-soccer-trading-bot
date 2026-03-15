@@ -176,6 +176,27 @@ function countSignificantEvents(events, eventType) {
 	return seenAny ? count : null;
 }
 
+function countDismissalEvents(events) {
+	if (!Array.isArray(events)) return null;
+	let count = 0;
+	let seenAny = false;
+	for (const event of events) {
+		if (!event || typeof event !== "object") continue;
+		const type = String(event.event_type || event.type || "").toLowerCase();
+		if (!type) continue;
+		seenAny = true;
+		if (
+			type === "red_card" ||
+			type === "second_yellow_red_card" ||
+			type === "yellow_red_card" ||
+			type === "second_yellow"
+		) {
+			count += 1;
+		}
+	}
+	return seenAny ? count : null;
+}
+
 function parseEventMinute(value) {
 	return parseMinute(String(value || ""));
 }
@@ -343,16 +364,16 @@ async function getLiveSoccerEventData(client, competitions) {
 		const awayScore = Number.isFinite(Number(details.away_same_game_score))
 			? Number(details.away_same_game_score)
 			: null;
-		const homeRedCards =
-			parseNullableInt(details.home_red_cards) ??
-			parseNullableInt(details.home_red_card_count) ??
-			parseNullableInt(details.home_cards_red) ??
-			countSignificantEvents(details.home_significant_events, "red_card");
-		const awayRedCards =
-			parseNullableInt(details.away_red_cards) ??
-			parseNullableInt(details.away_red_card_count) ??
-			parseNullableInt(details.away_cards_red) ??
-			countSignificantEvents(details.away_significant_events, "red_card");
+			const homeRedCards =
+				parseNullableInt(details.home_red_cards) ??
+				parseNullableInt(details.home_red_card_count) ??
+				parseNullableInt(details.home_cards_red) ??
+				countDismissalEvents(details.home_significant_events);
+			const awayRedCards =
+				parseNullableInt(details.away_red_cards) ??
+				parseNullableInt(details.away_red_card_count) ??
+				parseNullableInt(details.away_cards_red) ??
+				countDismissalEvents(details.away_significant_events);
 		const leadHistory = computeLeadHistory(
 			details.home_significant_events,
 			details.away_significant_events,
