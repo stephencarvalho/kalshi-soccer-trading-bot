@@ -39,6 +39,9 @@ interface DashboardPayload {
   account: {
     balanceUsd: number | null;
     portfolioValueUsd: number | null;
+    investedCapitalUsd: number | null;
+    investedCapitalStartDate?: string | null;
+    investedCapitalSource?: string | null;
     openPositionsCount: number;
     pnlTodayUsd: number;
     pnl14dUsd: number;
@@ -286,6 +289,13 @@ interface MetricCard {
   label: string;
   value: number | null;
   format: 'usd' | 'pct' | 'num';
+  secondaryPct?: number | null;
+}
+
+interface HeaderMetric {
+  label: string;
+  value: string;
+  tone?: 'pos' | 'neg' | '';
 }
 
 interface MetricSection {
@@ -464,10 +474,64 @@ export class App implements OnDestroy {
       { label: 'Fill Rate', value: d.metrics.fillRate, format: 'pct' },
     ];
   });
+  readonly netAccountValue = computed(() => {
+    const d = this.data();
+    if (!d) return null;
+    if (d.account.balanceUsd === null && d.account.portfolioValueUsd === null) return null;
+    return Number(((d.account.balanceUsd ?? 0) + (d.account.portfolioValueUsd ?? 0)).toFixed(2));
+  });
+  readonly headerMetrics = computed<HeaderMetric[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    const allTimePnl = this.allTimePnlStats();
+
+    const netAccountValue = this.netAccountValue();
+    const totalInvested =
+      d.account.investedCapitalUsd === null || d.account.investedCapitalUsd === undefined
+        ? null
+        : Number(d.account.investedCapitalUsd.toFixed(2));
+    const allTimePnlPct = totalInvested && totalInvested > 0 ? (allTimePnl.value / totalInvested) : null;
+
+    return [
+      {
+        label: 'Net Account Value',
+        value: netAccountValue === null ? '-' : `$${netAccountValue.toFixed(2)}`,
+        tone: this.numberTone(netAccountValue),
+      },
+      {
+        label: 'Available Balance',
+        value: d.account.balanceUsd === null ? '-' : `$${Number(d.account.balanceUsd).toFixed(2)}`,
+        tone: this.numberTone(d.account.balanceUsd),
+      },
+      {
+        label: 'All-Time PnL',
+        value:
+          allTimePnlPct === null
+            ? `${allTimePnl.value >= 0 ? '+' : ''}$${allTimePnl.value.toFixed(2)}`
+            : `${allTimePnl.value >= 0 ? '+' : ''}$${allTimePnl.value.toFixed(2)} (${allTimePnlPct >= 0 ? '+' : ''}${(allTimePnlPct * 100).toFixed(2)}%)`,
+        tone: this.numberTone(allTimePnl.value),
+      },
+      {
+        label: 'Open Position Value',
+        value: d.account.portfolioValueUsd === null ? '-' : `$${Number(d.account.portfolioValueUsd).toFixed(2)}`,
+        tone: this.numberTone(d.account.portfolioValueUsd),
+      },
+      {
+        label: 'Total Amount Invested',
+        value: totalInvested === null ? '-' : `$${totalInvested.toFixed(2)}`,
+        tone: this.numberTone(totalInvested),
+      },
+    ];
+  });
 
   readonly botPerformanceMetrics = computed<MetricCard[]>(() => {
     const d = this.data();
     if (!d) return [];
+    const investedCapital = this.investedCapital();
+    const pctOfInvested = (value: number | null) =>
+      investedCapital && investedCapital > 0 && value !== null && value !== undefined
+        ? value / investedCapital
+        : null;
     return [
       { label: 'Available Balance', value: d.account.balanceUsd, format: 'usd' },
       { label: 'Open Position Value', value: d.account.portfolioValueUsd, format: 'usd' },
@@ -479,9 +543,14 @@ export class App implements OnDestroy {
             : Number(((d.account.balanceUsd ?? 0) + (d.account.portfolioValueUsd ?? 0)).toFixed(2)),
         format: 'usd',
       },
-      { label: 'Today PnL', value: d.account.pnlTodayUsd, format: 'usd' },
-      { label: 'Realized PnL', value: d.account.pnl14dUsd, format: 'usd' },
-      { label: 'Open ROI PnL', value: d.account.openUnrealizedPnlUsd, format: 'usd' },
+      { label: 'Today PnL', value: d.account.pnlTodayUsd, format: 'usd', secondaryPct: pctOfInvested(d.account.pnlTodayUsd) },
+      { label: 'Realized PnL', value: d.account.pnl14dUsd, format: 'usd', secondaryPct: pctOfInvested(d.account.pnl14dUsd) },
+      {
+        label: 'Open ROI PnL',
+        value: d.account.openUnrealizedPnlUsd,
+        format: 'usd',
+        secondaryPct: pctOfInvested(d.account.openUnrealizedPnlUsd),
+      },
       { label: 'Open ROI %', value: d.account.openRoiPct, format: 'pct' },
     ];
   });
@@ -635,20 +704,22 @@ export class App implements OnDestroy {
 
     return points.length ? points : [{ ts: nowTs, pnl: 0 }];
   });
-  readonly chartCapitalDeployed = computed(() => {
+  readonly allTimePnlStats = computed(() => {
+    const points = this.pnlSeries();
+    const value = points[points.length - 1]?.pnl ?? 0;
+    const investedCapital = this.investedCapital();
+    return {
+      value,
+      pct: investedCapital && investedCapital > 0 ? value / investedCapital : null,
+    };
+  });
+  readonly investedCapital = computed(() => {
     const d = this.data();
     if (!d) return null;
-
-    const nowTs = this.now().getTime();
-    const fromTs = this.rangeStartTs(nowTs, this.chartRange());
-    const closedCapitalUsd = (d.closedTrades || []).reduce((sum, trade) => {
-      const settledTs = this.toTimestamp(trade.settled_time);
-      if (fromTs !== null && (settledTs === null || settledTs < fromTs)) return sum;
-      return sum + Number(trade.amount_bet_usd || 0);
-    }, 0);
-    const openCapitalUsd = Number(d.account.openCostBasisUsd || 0);
-    const totalCapitalDeployed = Number((closedCapitalUsd + openCapitalUsd).toFixed(4));
-    return totalCapitalDeployed > 0 ? totalCapitalDeployed : null;
+    const investedCapitalUsd = d.account.investedCapitalUsd;
+    return investedCapitalUsd !== null && investedCapitalUsd !== undefined && investedCapitalUsd > 0
+      ? Number(investedCapitalUsd.toFixed(4))
+      : null;
   });
 
   readonly rangeFilteredSeries = computed(() => {
@@ -700,16 +771,27 @@ export class App implements OnDestroy {
     const first = points[0]?.pnl ?? 0;
     const last = points[points.length - 1]?.pnl ?? 0;
     const delta = Number((last - first).toFixed(4));
-    const capitalDeployed = this.chartCapitalDeployed();
-    const deltaPct = capitalDeployed && capitalDeployed > 0 ? delta / capitalDeployed : null;
+    const investedCapital = this.investedCapital();
+    const deltaPct = investedCapital && investedCapital > 0 ? delta / investedCapital : null;
     const hovered = this.hoveredPoint();
+    const currentValue = hovered?.pnl ?? last;
+    const currentPct = investedCapital && investedCapital > 0 ? currentValue / investedCapital : null;
 
     return {
-      currentValue: hovered?.pnl ?? last,
+      currentValue,
+      currentPct,
       delta,
       deltaPct,
       currentTs: hovered?.ts ?? points[points.length - 1]?.ts ?? null,
     };
+  });
+  readonly chartNetAccountValue = computed(() => {
+    const d = this.data();
+    if (!d) return null;
+    const currentNetAccountValue = this.netAccountValue();
+    if (currentNetAccountValue === null) return null;
+    const allTimePnl = this.allTimePnlStats().value;
+    return Number((currentNetAccountValue - allTimePnl + this.chartStats().currentValue).toFixed(2));
   });
 
   constructor() {
@@ -984,9 +1066,29 @@ export class App implements OnDestroy {
     }
   }
 
+  agentStatusLabel(status: string | undefined): string {
+    switch (status) {
+      case 'UP_TRADING':
+        return 'Live Trading';
+      case 'UP_DRY_RUN':
+        return 'Paper Trading';
+      case 'UP_BLOCKED_STOP_LOSS':
+        return 'Paused for Stop-Loss';
+      case 'UP_DEGRADED':
+        return 'Running with Issues';
+      case 'DOWN':
+        return 'Offline';
+      case 'STARTING':
+        return 'Starting Up';
+      default:
+        return 'Checking Status';
+    }
+  }
+
   private renderChart(): void {
     const canvas = this.chartCanvas?.nativeElement;
     if (!canvas) return;
+    canvas.onmouseleave = () => this.hoveredPoint.set(null);
 
     const points = this.rangeFilteredSeries();
     this.chartPoints = points;

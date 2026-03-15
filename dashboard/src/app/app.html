@@ -1,7 +1,40 @@
 <main class="terminal" [class.theme-dark]="theme() === 'dark'" [class.theme-light]="theme() === 'light'">
   <div class="page-shell">
-  <header class="topbar">
-    <div class="brand">
+    @if (data(); as d) {
+      <section class="account-strip">
+        <div class="account-strip__row">
+          <div class="account-strip__metrics">
+            @for (metric of headerMetrics(); track metric.label) {
+              <article class="account-metric">
+                <span>{{ metric.label }}</span>
+                <strong [ngClass]="metric.tone || ''">{{ metric.value }}</strong>
+              </article>
+            }
+          </div>
+          <div class="account-strip__actions">
+            <article class="account-metric account-metric--status account-metric--time">
+              <span>Last Updated</span>
+              <strong>{{ now() | date:'mediumTime' }}</strong>
+            </article>
+            <article class="account-metric account-metric--status" [ngClass]="statusClass(d.bot.status)">
+              <span>Agent Status</span>
+              <strong>{{ agentStatusLabel(d.bot.status) }}</strong>
+            </article>
+            <article class="account-metric account-metric--status account-metric--stop" [class.status-warn]="d.bot.riskHaltedToday" [class.status-good]="!d.bot.riskHaltedToday">
+              <span>Stop-Loss</span>
+              <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
+            </article>
+            <button class="nav-toggle nav-toggle--theme" type="button" (click)="toggleTheme()">
+              <span class="nav-toggle__icon" aria-hidden="true">{{ theme() === 'dark' ? '☀' : '☾' }}</span>
+              <span>{{ theme() === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    }
+
+		  <header class="topbar">
+		    <div class="brand">
       <div class="brand-mark" aria-hidden="true">
         <span class="brand-mark__bar"></span>
       </div>
@@ -10,37 +43,27 @@
         <h1>Soccer Trading Terminal</h1>
         <p>Live monitoring, execution state, and strategy performance for in-play Kalshi soccer markets.</p>
       </div>
-    </div>
-    <div class="header-controls">
-      <span class="chip">Updated {{ now() | date:'mediumTime' }}</span>
-      <span class="chip" [ngClass]="statusClass(data()?.bot?.status)">Agent {{ data()?.bot?.status || 'UNKNOWN' }}</span>
-      <span class="chip" [class.warn]="data()?.bot?.riskHaltedToday">Stop-Loss {{ data()?.bot?.riskHaltedToday ? 'ON' : 'OFF' }}</span>
-      <button class="theme-toggle" type="button" (click)="toggleTheme()">
-        {{ theme() === 'dark' ? 'Light' : 'Dark' }} mode
-      </button>
-    </div>
-  </header>
+	    </div>
+		  </header>
 
-  @if (loading()) {
-    <section class="panel loading">Loading terminal data...</section>
-  }
+	  @if (loading()) {
+	    <section class="panel loading">Loading terminal data...</section>
+	  }
 
-  @if (error()) {
-    <section class="panel error">{{ error() }}</section>
-  }
+	  @if (error()) {
+	    <section class="panel error">{{ error() }}</section>
+	  }
 
-  @if (data(); as d) {
-    <section class="hero panel">
+	  @if (data(); as d) {
+	    <section class="hero panel">
       <div class="hero-head">
         <div>
-          <p class="eyebrow">All-Time Strategy PnL</p>
-          <h2>{{ chartStats().currentValue | currency:'USD':'symbol':'1.2-2' }}</h2>
-          <p class="delta" [class.pos]="chartStats().delta >= 0" [class.neg]="chartStats().delta < 0">
-            {{ chartStats().delta >= 0 ? '+' : '' }}{{ chartStats().delta | currency:'USD':'symbol':'1.2-2' }}
-            @if (chartStats().deltaPct !== null) {
-              ({{ chartStats().deltaPct | percent:'1.1-2' }})
+          <h2>{{ chartNetAccountValue() === null ? '-' : (chartNetAccountValue() | currency:'USD':'symbol':'1.2-2') }}</h2>
+          <p class="delta" [class.pos]="chartStats().currentValue >= 0" [class.neg]="chartStats().currentValue < 0">
+            {{ chartStats().currentValue >= 0 ? '+' : '' }}{{ chartStats().currentValue | currency:'USD':'symbol':'1.2-2' }}
+            @if (chartStats().currentPct !== null) {
+              ({{ (chartStats().currentPct ?? 0) >= 0 ? '+' : '' }}{{ (chartStats().currentPct ?? 0) | percent:'1.1-2' }})
             }
-            in {{ chartRange() }}
             @if (chartStats().currentTs) {
               <span class="hover-readout">
                 {{ chartStats().currentTs | date:'MMM d, h:mm a' }}
@@ -81,7 +104,12 @@
             <article class="signal-card">
               <h3>{{ card.label }}</h3>
               @if (card.format === 'usd') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                <p [ngClass]="numberTone(card.value)">
+                  {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                  @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                    <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                  }
+                </p>
               }
               @if (card.format === 'pct') {
                 <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
@@ -231,7 +259,12 @@
               <article class="signal-card">
                 <h3>{{ card.label }}</h3>
                 @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                  <p [ngClass]="numberTone(card.value)">
+                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                    }
+                  </p>
                 }
                 @if (card.format === 'pct') {
                   <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
@@ -256,7 +289,12 @@
               <article class="signal-card">
                 <h3>{{ card.label }}</h3>
                 @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                  <p [ngClass]="numberTone(card.value)">
+                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                    }
+                  </p>
                 }
                 @if (card.format === 'pct') {
                   <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
@@ -284,7 +322,12 @@
               <article class="signal-card">
                 <h3>{{ card.label }}</h3>
                 @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                  <p [ngClass]="numberTone(card.value)">
+                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                    }
+                  </p>
                 }
                 @if (card.format === 'pct') {
                   <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>

@@ -166,6 +166,30 @@ UI:
 - `KALSHI_API_KEY_ID` (required)
 - `KALSHI_PRIVATE_KEY_PATH` (required unless using inline PEM)
 - `KALSHI_PRIVATE_KEY_PEM` (optional, not recommended)
+- `KALSHI_WEB_AUTH_STATE_PATH` (optional, default: `./.openclaw/kalshi-web-auth.json`)
+- `KALSHI_WEB_USER_ID` (optional override, used only if not reading from auth state)
+- `KALSHI_WEB_SESSION_COOKIE` (optional override, Kalshi web `sessions` cookie value)
+- `KALSHI_WEB_CSRF_TOKEN` (optional override, Kalshi web `csrfToken` value)
+- `INVESTED_START_DATE` (optional, default: `2026-03-01T00:00:00Z`)
+
+### One-Time Kalshi web auth for deposit-based invested capital
+
+To avoid manually updating web session env vars, run:
+
+```bash
+npm install
+npm run kalshi:web-auth
+```
+
+This opens a browser, lets you log into Kalshi normally, and saves local browser auth state to `.openclaw/kalshi-web-auth.json`.
+
+After that, restart the monitor API:
+
+```bash
+npm run monitor:api
+```
+
+The dashboard will then read deposit history automatically from the saved web session. Re-run `npm run kalshi:web-auth` only when Kalshi eventually expires the session.
 
 ### Bot runtime
 

@@ -72,6 +72,11 @@ const config = {
   twilioFromWhatsApp: process.env.TWILIO_WHATSAPP_FROM || '',
   twilioToWhatsApp: process.env.TWILIO_WHATSAPP_TO || '',
   monitorApiToken: process.env.MONITOR_API_TOKEN || '',
+  kalshiWebUserId: process.env.KALSHI_WEB_USER_ID || '',
+  kalshiWebSessionCookie: process.env.KALSHI_WEB_SESSION_COOKIE || '',
+  kalshiWebCsrfToken: process.env.KALSHI_WEB_CSRF_TOKEN || '',
+  kalshiWebAuthStatePath: process.env.KALSHI_WEB_AUTH_STATE_PATH || path.resolve('.openclaw/kalshi-web-auth.json'),
+  investedStartDate: process.env.INVESTED_START_DATE || '2026-03-01T00:00:00Z',
 };
 
 config.maxYesPrice = config.explicitMaxYesPrice ?? Math.max(0.01, Math.min(0.99, config.estimatedWinProbability - config.feeBuffer));

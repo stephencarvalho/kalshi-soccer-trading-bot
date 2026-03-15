@@ -9,6 +9,7 @@ const { config } = require('./config');
 const { createLogger } = require('./logger');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
+const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
 const { getRuntimeConfig, readOverrides, OVERRIDES_PATH } = require('./runtimeConfig');
 const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice } = require('./strategy');
@@ -604,6 +605,48 @@ function getClient() {
   }
 }
 
+function getWebClient() {
+  const auth = resolveWebSessionAuth(config);
+  if (!auth) return null;
+  try {
+    return new KalshiWebClient({
+      userId: auth.userId,
+      sessionCookie: auth.sessionCookie,
+      csrfToken: auth.csrfToken,
+      logger,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function parseIsoMs(value) {
+  const ms = Date.parse(String(value || ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function computeInvestedCapital(deposits, startDate) {
+  const appliedFromMs = parseIsoMs(startDate);
+  const eligibleDeposits = (deposits || []).filter((deposit) => {
+    const createdMs = parseIsoMs(deposit.created_ts);
+    return appliedFromMs === null || (createdMs !== null && createdMs >= appliedFromMs);
+  });
+
+  let investedUsd = 0;
+  for (const deposit of eligibleDeposits) {
+    if (String(deposit.status || '').toLowerCase() === 'applied') {
+      investedUsd += Number(deposit.amount_cents || 0) / 100;
+      continue;
+    }
+
+    if (String(deposit.immediate_status || '').toLowerCase() === 'applied') {
+      investedUsd += Number(deposit.immediate_amount || 0) / 100;
+    }
+  }
+
+  return Number(investedUsd.toFixed(2));
+}
+
 app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
@@ -625,6 +668,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   let settlements = [];
   let events = [];
   let liveSoccerMap = new Map();
+  let investedCapitalUsd = null;
+  let investedCapitalStartDate = config.investedStartDate;
+  let investedCapitalSource = 'unavailable';
 
   if (client) {
     try {
@@ -644,6 +690,17 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       events = attachLiveDataToEvents(events, liveSoccerMap);
     } catch (error) {
       logger.warn({ err: error.message }, 'Dashboard API failed to fetch account data');
+    }
+  }
+
+  const webClient = getWebClient();
+  if (webClient) {
+    try {
+      const deposits = await webClient.getDeposits();
+      investedCapitalUsd = computeInvestedCapital(deposits, config.investedStartDate);
+      investedCapitalSource = 'kalshi_deposits';
+    } catch (error) {
+      logger.warn({ err: error.message }, 'Dashboard API failed to fetch Kalshi deposit history');
     }
   }
 
@@ -885,6 +942,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     account: {
       balanceUsd,
       portfolioValueUsd,
+      investedCapitalUsd,
+      investedCapitalStartDate,
+      investedCapitalSource,
       openPositionsCount: openTrades.length,
       pnlTodayUsd: Number(pnlToday.toFixed(2)),
       pnl14dUsd: Number(closedTrades.reduce((a, b) => a + b.pnl_usd, 0).toFixed(2)),

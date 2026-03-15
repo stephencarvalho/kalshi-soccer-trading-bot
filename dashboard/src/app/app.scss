@@ -18,7 +18,7 @@
   color: var(--ink);
   background: var(--bg);
   min-height: 100dvh;
-  padding: 1.2rem;
+  padding: 0 1.2rem 1.2rem;
 }
 
 .theme-dark {
@@ -43,11 +43,163 @@
 }
 
 .topbar {
-  margin: 0 0 1rem;
+  margin: 1rem 0 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
+}
+
+.account-strip {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin: 0 0 1rem;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  background: color-mix(in oklab, var(--panel) 92%, var(--chip));
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+.account-strip__row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.account-strip__row > *,
+.account-strip__metrics > *,
+.account-strip__actions > * {
+  min-width: 0;
+}
+
+.account-strip__metrics {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.account-strip__actions {
+  flex: 0 1 40%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+  justify-content: end;
+}
+
+.nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  min-height: clamp(34px, 2.8vw, 40px);
+  align-self: center;
+  padding: 0 clamp(0.5rem, 0.25rem + 0.35vw, 0.8rem);
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: clamp(0.54rem, 0.36rem + 0.3vw, 0.76rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-toggle {
+  background: linear-gradient(180deg, color-mix(in oklab, #7d8cff 72%, white 12%), color-mix(in oklab, #5e72ff 68%, var(--panel)));
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(93, 114, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+}
+
+.theme-light .nav-toggle {
+  background: linear-gradient(180deg, #8ea2ff, #6b80ff);
+  color: #ffffff;
+  border-color: color-mix(in oklab, #5e72ff 55%, var(--line));
+  box-shadow: 0 10px 24px rgba(93, 114, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.nav-toggle__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  font-size: 0.8rem;
+}
+
+.account-metric {
+  min-width: 0;
+  padding: clamp(0.34rem, 0.2rem + 0.24vw, 0.5rem) clamp(0.38rem, 0.18rem + 0.25vw, 0.6rem);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--panel) 86%, var(--chip));
+  overflow: hidden;
+
+  span {
+    display: block;
+    margin-bottom: 0.16rem;
+    color: var(--muted);
+    font-size: clamp(0.42rem, 0.3rem + 0.16vw, 0.56rem);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  strong {
+    display: block;
+    font-size: clamp(0.6rem, 0.42rem + 0.28vw, 0.82rem);
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.account-metric--status {
+  background: color-mix(in oklab, var(--panel) 78%, var(--chip));
+}
+
+.account-metric--time {
+  background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 18%, var(--panel)), color-mix(in oklab, #7bb4ff 8%, var(--panel)));
+}
+
+.account-metric--stop {
+  background: linear-gradient(180deg, color-mix(in oklab, #ffbe4d 16%, var(--panel)), color-mix(in oklab, #ffbe4d 8%, var(--panel)));
+}
+
+.account-metric.status-good {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 18%, var(--panel)), color-mix(in oklab, var(--accent) 8%, var(--panel)));
+}
+
+.account-metric.status-info {
+  background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 16%, var(--panel)), color-mix(in oklab, #7bb4ff 8%, var(--panel)));
+}
+
+.account-metric.status-warn {
+  background: linear-gradient(180deg, color-mix(in oklab, #ffbe4d 18%, var(--panel)), color-mix(in oklab, #ffbe4d 8%, var(--panel)));
+}
+
+.account-metric.status-bad,
+.account-metric.status-down {
+  background: linear-gradient(180deg, color-mix(in oklab, #ff7b6b 18%, var(--panel)), color-mix(in oklab, #ff7b6b 8%, var(--panel)));
+}
+
+.account-metric.status-neutral {
+  background: color-mix(in oklab, var(--panel) 78%, var(--chip));
 }
 
 .brand {
@@ -103,15 +255,6 @@
   min-width: 0;
 }
 
-.header-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
 .chip {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -130,15 +273,25 @@
   }
 }
 
-.theme-toggle {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink);
-  font-weight: 700;
-  font-size: 0.76rem;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
+@media (max-width: 720px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-strip {
+    padding: 0.55rem 0.6rem;
+  }
+}
+
+@media (max-width: 1200px) {
+  .account-strip__metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .account-strip__actions {
+    flex-basis: 42%;
+  }
 }
 
 .chip[class*='status-'] {
@@ -165,6 +318,19 @@
 .hero {
   margin: 0 0 1.2rem;
   overflow: hidden;
+}
+
+.headline-percent {
+  margin-left: 0.5rem;
+  font-size: 0.55em;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.metric-secondary {
+  margin-left: 0.35rem;
+  font-size: 0.82em;
+  color: var(--muted);
 }
 
 .hero-head {
