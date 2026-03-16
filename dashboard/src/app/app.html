@@ -24,25 +24,6 @@
               <span>Stop-Loss</span>
               <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
             </article>
-            <button class="nav-toggle nav-toggle--theme" type="button" (click)="toggleTheme()">
-              <span class="nav-toggle__icon" aria-hidden="true">
-                @if (theme() === 'dark') {
-                  <svg viewBox="0 0 24 24" class="bulb-icon bulb-icon--on">
-                    <path class="bulb-icon__glow" d="M12 1.8c-4.5 0-8.2 3.5-8.2 7.9 0 2.8 1.4 4.7 3 6.4 1 1.1 1.7 2 2 3.2h6.5c.3-1.2 1-2.1 2-3.2 1.6-1.7 3-3.6 3-6.4 0-4.4-3.7-7.9-8.3-7.9Z"/>
-                    <path class="bulb-icon__glass" d="M12 3.1c-3.8 0-6.8 2.9-6.8 6.5 0 2.2 1 3.8 2.5 5.3 1.2 1.2 2 2.3 2.3 3.8h4c.3-1.5 1.1-2.6 2.3-3.8 1.4-1.5 2.5-3.1 2.5-5.3 0-3.6-3.1-6.5-6.8-6.5Z"/>
-                    <path class="bulb-icon__filament" d="M9.4 10.2c.5-1.2 1.5-1.9 2.6-1.9s2.1.7 2.6 1.9M9.6 12.4h4.8"/>
-                    <path class="bulb-icon__base" d="M9.2 18.8h5.6M9.7 21h4.6"/>
-                  </svg>
-                } @else {
-                  <svg viewBox="0 0 24 24" class="bulb-icon bulb-icon--off">
-                    <path class="bulb-icon__glass" d="M12 3.1c-3.8 0-6.8 2.9-6.8 6.5 0 2.2 1 3.8 2.5 5.3 1.2 1.2 2 2.3 2.3 3.8h4c.3-1.5 1.1-2.6 2.3-3.8 1.4-1.5 2.5-3.1 2.5-5.3 0-3.6-3.1-6.5-6.8-6.5Z"/>
-                    <path class="bulb-icon__filament" d="M9.7 11.2 11 10l1 1.1L13 10l1.3 1.2M9.9 12.9h4.2"/>
-                    <path class="bulb-icon__base" d="M9.2 18.8h5.6M9.7 21h4.6"/>
-                  </svg>
-                }
-              </span>
-              <span>{{ theme() === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
-            </button>
           </div>
         </div>
       </section>
@@ -143,8 +124,9 @@
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'competition')">Competition <span>{{ sortIndicator('monitoredGames', 'competition') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'title')">Game <span>{{ sortIndicator('monitoredGames', 'title') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'score')">Score <span>{{ sortIndicator('monitoredGames', 'score') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'homeYesPrice')">Home YES <span>{{ sortIndicator('monitoredGames', 'homeYesPrice') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'awayYesPrice')">Away YES <span>{{ sortIndicator('monitoredGames', 'awayYesPrice') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'homeYesNo')">Home Yes/No <span>{{ sortIndicator('monitoredGames', 'homeYesNo') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'awayYesNo')">Away Yes/No <span>{{ sortIndicator('monitoredGames', 'awayYesNo') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'tieYesNo')">Tie Yes/No <span>{{ sortIndicator('monitoredGames', 'tieYesNo') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'redCards')">Red (H-A) <span>{{ sortIndicator('monitoredGames', 'redCards') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingTeam')">Leader <span>{{ sortIndicator('monitoredGames', 'leadingTeam') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'goalDiff')">Diff <span>{{ sortIndicator('monitoredGames', 'goalDiff') }}</span></button></th>
@@ -162,8 +144,21 @@
                       <td>{{ g.competition }}</td>
                       <td>{{ g.title }}</td>
                       <td>{{ g.score }}</td>
-                      <td>{{ g.homeYesPrice === null || g.homeYesPrice === undefined ? '-' : (g.homeYesPrice | percent:'1.0-0') }}</td>
-                      <td>{{ g.awayYesPrice === null || g.awayYesPrice === undefined ? '-' : (g.awayYesPrice | percent:'1.0-0') }}</td>
+                      <td class="market-pair">
+                        <span class="pos">{{ g.homeYesPrice === null || g.homeYesPrice === undefined ? '-' : (g.homeYesPrice | percent:'1.0-0') }}</span>
+                        <span class="market-pair__separator"> / </span>
+                        <span class="neg">{{ g.homeNoPrice === null || g.homeNoPrice === undefined ? '-' : (g.homeNoPrice | percent:'1.0-0') }}</span>
+                      </td>
+                      <td class="market-pair">
+                        <span class="pos">{{ g.awayYesPrice === null || g.awayYesPrice === undefined ? '-' : (g.awayYesPrice | percent:'1.0-0') }}</span>
+                        <span class="market-pair__separator"> / </span>
+                        <span class="neg">{{ g.awayNoPrice === null || g.awayNoPrice === undefined ? '-' : (g.awayNoPrice | percent:'1.0-0') }}</span>
+                      </td>
+                      <td class="market-pair">
+                        <span class="pos">{{ g.tieYesPrice === null || g.tieYesPrice === undefined ? '-' : (g.tieYesPrice | percent:'1.0-0') }}</span>
+                        <span class="market-pair__separator"> / </span>
+                        <span class="neg">{{ g.tieNoPrice === null || g.tieNoPrice === undefined ? '-' : (g.tieNoPrice | percent:'1.0-0') }}</span>
+                      </td>
                       <td>{{ g.redCards || '-' }}</td>
                       <td>{{ g.leadingTeam }}</td>
                       <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
@@ -226,7 +221,7 @@
                       <td>
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
-                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red (H-A) {{ t.placed_context.placedCards || '-' }}
+                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.selectedOutcome || t.placed_context.leadingTeam || '-' }}@if (t.placed_context.triggerRule !== 'POST_85_TIE_YES') { | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} } | Red (H-A) {{ t.placed_context.placedCards || '-' }}
                         }
                       </td>
                       <td>
@@ -621,7 +616,7 @@
                 <td>
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
-                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red (H-A) {{ t.placed_context.placedCards || '-' }}
+                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.selectedOutcome || t.placed_context.leadingTeam || '-' }}@if (t.placed_context.triggerRule !== 'POST_85_TIE_YES') { | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} } | Red (H-A) {{ t.placed_context.placedCards || '-' }}
                   }
                 </td>
                 <td>
@@ -636,6 +631,26 @@
         </table>
       </div>
     </section>
-  }
+	  }
   </div>
+  <button
+    class="theme-fab"
+    type="button"
+    (click)="toggleTheme()"
+    [attr.aria-label]="theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+    @if (theme() === 'dark') {
+      <svg viewBox="0 0 24 24" class="theme-icon theme-icon--sun" aria-hidden="true">
+        <circle class="theme-icon__sun-core" cx="12" cy="12" r="4.3" />
+        <circle class="theme-icon__sun-halo" cx="12" cy="12" r="6.3" />
+        <path class="theme-icon__sun-ray" d="M12 2.4v2.6M12 19v2.6M21.6 12H19M5 12H2.4M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9M18.8 18.8l-1.9-1.9M7.1 7.1 5.2 5.2" />
+      </svg>
+    } @else {
+      <svg viewBox="0 0 24 24" class="theme-icon theme-icon--moon" aria-hidden="true">
+        <path class="theme-icon__moon-halo" d="M16.8 4.8a8.8 8.8 0 1 0 0 14.4A9.8 9.8 0 0 1 16.8 4.8Z" />
+        <path class="theme-icon__moon-body" d="M15.7 4.1a8.55 8.55 0 1 0 0 15.8c-3.9-.3-7-3.55-7-7.9s3.1-7.6 7-7.9Z" />
+        <circle class="theme-icon__moon-star" cx="17.8" cy="7.2" r="0.9" />
+        <circle class="theme-icon__moon-star theme-icon__moon-star--small" cx="19.3" cy="11" r="0.55" />
+      </svg>
+    }
+  </button>
 </main>

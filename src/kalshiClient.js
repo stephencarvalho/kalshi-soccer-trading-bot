@@ -145,6 +145,27 @@ class KalshiClient {
     return positions;
   }
 
+  async getOrders(params = {}) {
+    const orders = [];
+    let cursor = '';
+    do {
+      const data = await this.request('GET', '/portfolio/orders', {
+        params: { ...params, limit: 200, cursor },
+      });
+      orders.push(...(data.orders || []));
+      cursor = data.cursor || '';
+    } while (cursor);
+    return orders;
+  }
+
+  async getOrder(orderId) {
+    return this.request('GET', `/portfolio/orders/${orderId}`);
+  }
+
+  async cancelOrder(orderId) {
+    return this.request('DELETE', `/portfolio/orders/${orderId}`);
+  }
+
   async getOpenEventsWithMarkets() {
     const allEvents = [];
     let cursor = '';

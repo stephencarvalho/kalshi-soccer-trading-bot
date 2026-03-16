@@ -63,7 +63,38 @@ class StateStore {
   }
 
   setEventOpenOrder(eventTicker, orderId) {
-    this.state.openOrderIdsByEvent[eventTicker] = orderId;
+    if (!eventTicker || !orderId) return;
+    const payload =
+      typeof orderId === 'object'
+        ? {
+            ...orderId,
+            markedAt: new Date().toISOString(),
+          }
+        : {
+            orderId,
+            markedAt: new Date().toISOString(),
+          };
+    this.state.openOrderIdsByEvent[eventTicker] = payload;
+  }
+
+  getEventOpenOrder(eventTicker) {
+    const value = this.state.openOrderIdsByEvent[eventTicker];
+    if (!value) return null;
+    if (typeof value === 'string') {
+      return { orderId: value };
+    }
+    return value;
+  }
+
+  clearEventOpenOrder(eventTicker) {
+    delete this.state.openOrderIdsByEvent[eventTicker];
+  }
+
+  listOpenOrders() {
+    return Object.entries(this.state.openOrderIdsByEvent || {}).map(([eventTicker, value]) => ({
+      eventTicker,
+      ...(typeof value === 'string' ? { orderId: value } : value),
+    }));
   }
 
   getDailyLossUsd(nowMs, timezone) {
