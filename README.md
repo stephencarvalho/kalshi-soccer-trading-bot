@@ -47,22 +47,31 @@ npm -v
 2. Team must be leading by either:
    - `MIN_GOAL_LEAD` or more right now at the time of entry (default: 2-goal lead)
    - `POST80_MIN_GOAL_LEAD` at/after `POST80_START_MINUTE` (now `85`, default late-rule lead: 1 goal)
+   - or, at/after minute `85`, the match is tied and the bot buys `Tie = YES`
 3. Leading team red-card filter:
    - skip if `leadingTeamRedCards > trailingTeamRedCards` (when card data is available).
-4. Market must be active and look like a match-winner market (draw/tie props excluded).
-5. YES ask price must be at or below:
+4. Late tie red-card filter:
+   - late tie entries only qualify when both teams have the same number of red cards
+   - if card data is unavailable, the trade is skipped
+5. Market must be active and look like a valid match-winner outcome market.
+6. YES ask price must be at or below:
    - `min(MAX_YES_PRICE, ANYTIME_LARGE_LEAD_MAX_YES_PRICE)` for the current 2+ lead signal
    - `min(MAX_YES_PRICE, POST80_MAX_YES_PRICE)` for the late 1-goal rule starting at minute `85`
-6. Event is skipped if already traded (one filled entry per event).
+   - `min(MAX_YES_PRICE, POST80_MAX_YES_PRICE)` for the late tie rule starting at minute `85`
+7. Event is skipped if already traded (one filled entry per event).
 
 ### Order behavior
 
 - Side: Buy `YES` on leading team market.
-- Type: IOC (`time_in_force=immediate_or_cancel`).
-- Contracts: `min(floor(stake / ask), floor(balance / ask))`.
-- Retry model:
-  - if not filled, bot tries again on the next cycle until event no longer eligible.
-  - pending orders are not left resting (IOC only).
+- Type: GTC limit order (`time_in_force=good_till_canceled`).
+- Limit price:
+  - order can fill at any price at or below the signal's configured cap
+  - the bot never posts above the stage-specific max price cap (for example `0.90`)
+- Contracts: sized against the configured limit price, not just the current ask snapshot.
+- Resting-order safety model:
+  - at most one bot-managed resting order is allowed per event
+  - resting orders are canceled automatically if the signal becomes invalid, the market mapping changes, trading is paused, stop-loss is hit, or the bot is already at max position capacity
+  - if a GTC order partially fills, any remaining quantity is canceled immediately so the bot cannot overfill the same event later
 
 ### Risk controls
 
@@ -100,6 +109,10 @@ This project keeps historical trigger labels in persisted trade metadata and act
   - Current late-game signal.
   - Meaning: once the match reaches minute `85` or later, a team leading by `1+` goal can qualify.
   - Uses the late-rule price cap `POST80_MAX_YES_PRICE`.
+- `POST_85_TIE_YES`
+  - Current late-game tie signal.
+  - Meaning: once the match reaches minute `85` or later, a tied match can qualify for `Tie = YES`.
+  - Requires equal red cards for both teams and uses the same late-rule price cap `POST80_MAX_YES_PRICE`.
 
 ### Historical trigger rules still found in saved logs/state
 
@@ -124,6 +137,18 @@ This project keeps historical trigger labels in persisted trade metadata and act
 
 - `data/state.json` and `logs/trading-actions.ndjson` preserve the original trigger labels used at the time of each trade.
 - The dashboard intentionally shows those original labels for historical accuracy, even if the live strategy has changed since then.
+
+### Dated strategy update log
+
+- `2026-03-16` `POST_85_TIE_YES` added
+  - Decision: add late tie entries at/after minute `85` when `Tie = YES` is priced at or below `90c` and both teams have equal red cards.
+  - Reason: increase the number of eligible bets and playable games without taking materially different late-game risk than the existing `POST_85_LEAD_1` rule.
+- `2026-03-15` `CURRENT_LEAD_2` replaced `ANYTIME_LEAD_2`
+  - Decision: require the team to be currently leading by `2+` goals at entry instead of only having led by `2+` at some earlier point.
+  - Reason: prevent trades from firing after a lead had already narrowed, which made the dashboard condition text misleading and loosened the intended setup.
+- `2026-03-15` `POST_85_LEAD_1` replaced `POST_80_LEAD_1`
+  - Decision: move the late 1-goal rule from minute `80` to minute `85`.
+  - Reason: make late one-goal entries more conservative while keeping the strategy active in endgame situations.
 
 ## Setup
 

@@ -401,15 +401,36 @@ function buildMonitoredPrices(event) {
     homeTeam: homeTeam || null,
     awayTeam: awayTeam || null,
     homeYesPrice: null,
+    homeNoPrice: null,
     awayYesPrice: null,
+    awayNoPrice: null,
+    tieYesPrice: null,
+    tieNoPrice: null,
   };
 
   for (const market of markets) {
     const subtitle = normalizeText(market?.yes_sub_title);
-    const ask = marketAskPrice(market);
-    if (!Number.isFinite(ask)) continue;
-    if (homeKey && subtitle === homeKey) prices.homeYesPrice = ask;
-    if (awayKey && subtitle === awayKey) prices.awayYesPrice = ask;
+    const yesAsk = parseFp(market?.yes_ask_dollars);
+    const noAsk = parseFp(market?.no_ask_dollars);
+    const yesPrice = Number.isFinite(yesAsk) && yesAsk > 0
+      ? yesAsk
+      : marketAskPrice(market);
+    const noPrice = Number.isFinite(noAsk) && noAsk > 0
+      ? noAsk
+      : (Number.isFinite(yesPrice) && yesPrice > 0 && yesPrice < 1 ? Number((1 - yesPrice).toFixed(4)) : null);
+
+    if (homeKey && subtitle === homeKey) {
+      prices.homeYesPrice = yesPrice;
+      prices.homeNoPrice = noPrice;
+    }
+    if (awayKey && subtitle === awayKey) {
+      prices.awayYesPrice = yesPrice;
+      prices.awayNoPrice = noPrice;
+    }
+    if (subtitle === 'tie' || subtitle === 'draw') {
+      prices.tieYesPrice = yesPrice;
+      prices.tieNoPrice = noPrice;
+    }
   }
 
   return prices;
@@ -756,6 +777,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     const qty = parseFp(p.position_fp);
     const absQty = Math.abs(qty);
     const costBasisUsd = Math.abs(parseFp(p.market_exposure_dollars));
+    const entryContractCostUsd = absQty > 0 ? Number((costBasisUsd / absQty).toFixed(4)) : null;
     const market = marketMap.get(p.ticker);
     const marketStatus = market?.status ? String(market.status).toLowerCase() : 'unknown';
     const eventTicker = p.event_ticker || market?.event_ticker || null;
@@ -769,11 +791,17 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     const side = qty >= 0 ? 'YES' : 'NO';
     const selectionLabel = side === 'YES' ? market?.yes_sub_title || null : market?.no_sub_title || null;
 
-    const placedContext = eventTicker
+    const placedContextRaw = eventTicker
       ? mergePlacementContext(
           (state.tradedEvents || {})[eventTicker],
           placementContextByEvent.get(eventTicker),
         )
+      : null;
+    const placedContext = placedContextRaw
+      ? {
+          ...placedContextRaw,
+          yesPrice: entryContractCostUsd ?? placedContextRaw.yesPrice ?? null,
+        }
       : null;
 
     return {
@@ -835,7 +863,11 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       const prices = event ? buildMonitoredPrices(event) : {
         ...parseTeamsFromEventTitle(title),
         homeYesPrice: null,
+        homeNoPrice: null,
         awayYesPrice: null,
+        awayNoPrice: null,
+        tieYesPrice: null,
+        tieNoPrice: null,
       };
       const game = event ? extractGameState(event) : {
         competition,
@@ -882,7 +914,11 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
           homeTeam: prices.homeTeam,
           awayTeam: prices.awayTeam,
           homeYesPrice: prices.homeYesPrice,
+          homeNoPrice: prices.homeNoPrice,
           awayYesPrice: prices.awayYesPrice,
+          awayNoPrice: prices.awayNoPrice,
+          tieYesPrice: prices.tieYesPrice,
+          tieNoPrice: prices.tieNoPrice,
           redCards: null,
           leadingVsTrailingRedCards: null,
           leadingTeam: '-',
@@ -910,6 +946,18 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       } else if (candidate) {
         status = 'ELIGIBLE_NOW';
         reason = 'Signal and market filters currently pass';
+      } else if (game.homeScore === game.awayScore && game.minute >= runtime.post80StartMinute) {
+        if (game.homeRedCards === null || game.awayRedCards === null) {
+          reason = 'Waiting for red-card data before allowing a late tie trade';
+        } else if (game.homeRedCards !== game.awayRedCards) {
+          status = 'FILTERED';
+          reason = 'Late tie trades require equal red cards for both teams';
+        } else if (!event) {
+          reason = 'Late tie signal may qualify, but no open tradable Kalshi game market is attached yet';
+        } else {
+          status = 'FILTERED';
+          reason = `Late tie signal failed price cap ${Math.round(Math.min(runtime.maxYesPrice, runtime.post80MaxYesPrice) * 100)}c or no matching Tie market`;
+        }
       } else if (!game.leadingTeam) {
         reason = 'No leading team currently';
       } else if (game.homeRedCards === null || game.awayRedCards === null) {
@@ -945,7 +993,11 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
         homeTeam: prices.homeTeam,
         awayTeam: prices.awayTeam,
         homeYesPrice: prices.homeYesPrice,
+        homeNoPrice: prices.homeNoPrice,
         awayYesPrice: prices.awayYesPrice,
+        awayNoPrice: prices.awayNoPrice,
+        tieYesPrice: prices.tieYesPrice,
+        tieNoPrice: prices.tieNoPrice,
         redCards:
           game.homeRedCards !== null && game.awayRedCards !== null
             ? `${game.homeRedCards}-${game.awayRedCards}`

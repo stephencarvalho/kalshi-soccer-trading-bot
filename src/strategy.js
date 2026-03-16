@@ -213,7 +213,22 @@ function extractGameState(event) {
 }
 
 function deriveSignalRule(game, config) {
-  if (!game || !game.leadingTeam) return null;
+  if (!game) return null;
+
+  if (
+    game.homeScore === game.awayScore &&
+    game.minute >= config.post80StartMinute
+  ) {
+    return {
+      id: `POST_${config.post80StartMinute}_TIE_YES`,
+      requiredLead: 0,
+      stageMaxYesPrice: Math.min(config.maxYesPrice, config.post80MaxYesPrice),
+      bypassMinute: false,
+      outcomeType: 'tie',
+    };
+  }
+
+  if (!game.leadingTeam) return null;
 
   if ((game.goalDiff || 0) >= config.minGoalLead) {
     return {
@@ -221,6 +236,7 @@ function deriveSignalRule(game, config) {
       requiredLead: config.minGoalLead,
       stageMaxYesPrice: Math.min(config.maxYesPrice, config.anytimeLargeLeadMaxYesPrice),
       bypassMinute: false,
+      outcomeType: 'leader',
     };
   }
 
@@ -232,6 +248,7 @@ function deriveSignalRule(game, config) {
       requiredLead: config.post80MinGoalLead,
       stageMaxYesPrice: Math.min(config.maxYesPrice, config.post80MaxYesPrice),
       bypassMinute: false,
+      outcomeType: 'leader',
     };
   }
 
@@ -260,6 +277,11 @@ function marketIsMatchWinner(market) {
   return true;
 }
 
+function marketIsTieOutcome(market) {
+  const yes = normalize(market?.yes_sub_title || '');
+  return yes === 'tie' || yes === 'draw' || yes.includes(' tie') || yes.includes('draw');
+}
+
 function pickMarketForLeadingTeam(event, leadingTeam, config) {
   if (!leadingTeam) return null;
   const teamN = normalize(leadingTeam);
@@ -286,6 +308,14 @@ function pickMarketForLeadingTeam(event, leadingTeam, config) {
   if (goodFuzzy.length > 1 && goodFuzzy[0].score - goodFuzzy[1].score >= 0.2) return goodFuzzy[0].market;
 
   return null;
+}
+
+function pickTieMarket(event) {
+  const markets = (event.markets || [])
+    .filter((market) => market.status === 'active')
+    .filter((market) => marketIsTieOutcome(market))
+    .sort((a, b) => parseFp(b.liquidity_dollars) - parseFp(a.liquidity_dollars));
+  return markets[0] || null;
 }
 
 function marketAskPrice(market) {
@@ -335,10 +365,32 @@ function eligibleTradeCandidate(event, config, stateStore) {
   const signalRule = deriveSignalRule(game, config);
   if (!signalRule) return null;
 
+  if (game.homeRedCards === null || game.awayRedCards === null) return null;
+  if (stateStore.hasTradedEvent(event.event_ticker)) return null;
+
+  if (signalRule.outcomeType === 'tie') {
+    if (game.homeScore !== game.awayScore) return null;
+    if (game.homeRedCards !== game.awayRedCards) return null;
+
+    const market = pickTieMarket(event);
+    if (!market) return null;
+
+    const ask = marketAskPrice(market);
+    if (!ask || ask > signalRule.stageMaxYesPrice) return null;
+
+    return {
+      event,
+      game,
+      market,
+      ask,
+      signalRule,
+      selectedOutcome: 'Tie',
+    };
+  }
+
   if (!game.leadingTeam) return null;
   const signalLead = signalRule.bypassMinute ? game.leadingTeamMaxLead : game.goalDiff;
   if (signalLead < signalRule.requiredLead) return null;
-  if (game.homeRedCards === null || game.awayRedCards === null) return null;
   if (
     game.leadingTeamRedCards !== null &&
     game.trailingTeamRedCards !== null &&
@@ -346,7 +398,6 @@ function eligibleTradeCandidate(event, config, stateStore) {
   ) {
     return null;
   }
-  if (stateStore.hasTradedEvent(event.event_ticker)) return null;
 
   const market = pickMarketForLeadingTeam(event, game.leadingTeam, config);
   if (!market) return null;
@@ -360,6 +411,7 @@ function eligibleTradeCandidate(event, config, stateStore) {
     market,
     ask,
     signalRule,
+    selectedOutcome: game.leadingTeam,
   };
 }
 

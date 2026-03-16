@@ -262,7 +262,11 @@ interface MonitoredGameRecord {
   homeTeam?: string | null;
   awayTeam?: string | null;
   homeYesPrice?: number | null;
+  homeNoPrice?: number | null;
   awayYesPrice?: number | null;
+  awayNoPrice?: number | null;
+  tieYesPrice?: number | null;
+  tieNoPrice?: number | null;
   redCards: string | null;
   leadingVsTrailingRedCards: string | null;
   leadingTeam: string;
@@ -455,8 +459,9 @@ export class App implements OnDestroy {
       competition: (row) => row.competition,
       title: (row) => row.title,
       score: (row) => row.score,
-      homeYesPrice: (row) => row.homeYesPrice,
-      awayYesPrice: (row) => row.awayYesPrice,
+      homeYesNo: (row) => row.homeYesPrice,
+      awayYesNo: (row) => row.awayYesPrice,
+      tieYesNo: (row) => row.tieYesPrice,
       redCards: (row) => row.redCards,
       leadingTeam: (row) => row.leadingTeam,
       goalDiff: (row) => row.goalDiff,

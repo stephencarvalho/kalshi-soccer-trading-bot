@@ -123,6 +123,7 @@ function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
 
 function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
   const ask = candidate.ask;
+  const limitPrice = Number(candidate.signalRule.stageMaxYesPrice.toFixed(4));
   const baseStakeUsd = Number(runtime.stakeUsd || 1);
 
   let sizingMode = 'BASE';
@@ -137,7 +138,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
     sizingMode = 'RECOVERY_QUEUE';
     targetProfitUsd = Number(recoveryState.nextTargetProfitUsd || 0);
     queueItem = recoveryState.queue.find((item) => Number(item.remainingTargetUsd || 0) > 0.0001) || null;
-    const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
+    const sized = contractsForTargetNetProfit(limitPrice, targetProfitUsd);
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
     const maxSpendUsd =
       Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
@@ -146,7 +147,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
     const fitsBudget =
       sized &&
       sized.totalCostUsd <= maxSpendUsd + 1e-9;
-    const fallbackSized = fitsBudget ? null : maxContractsWithinBudget(ask, maxSpendUsd);
+    const fallbackSized = fitsBudget ? null : maxContractsWithinBudget(limitPrice, maxSpendUsd);
     const chosen = fitsBudget ? sized : fallbackSized;
     if (!chosen) return null;
     if (!fitsBudget) sizingMode = 'RECOVERY_QUEUE_CAPPED';
@@ -158,7 +159,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
     let candidateCount = 1;
     let latestAffordable = null;
     while (candidateCount <= 100000) {
-      const candidateCostUsd = totalCostForYesBuy(candidateCount, ask);
+      const candidateCostUsd = totalCostForYesBuy(candidateCount, limitPrice);
       if (candidateCostUsd === null || candidateCostUsd > baseStakeUsd + 1e-9 || candidateCostUsd > balanceUsd + 1e-9) {
         break;
       }
@@ -167,9 +168,9 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
     }
     count = latestAffordable || 0;
     if (count < 1) return null;
-    feeUsd = kalshiImmediateFeeUsd(count, ask);
-    totalCostUsd = totalCostForYesBuy(count, ask);
-    netProfitUsd = Number((count * (1 - ask) - feeUsd).toFixed(4));
+    feeUsd = kalshiImmediateFeeUsd(count, limitPrice);
+    totalCostUsd = totalCostForYesBuy(count, limitPrice);
+    netProfitUsd = Number((count * (1 - limitPrice) - feeUsd).toFixed(4));
   }
 
   if (count < 1) return null;
@@ -180,8 +181,9 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
       side: 'yes',
       action: 'buy',
       count,
-      yes_price_dollars: ask.toFixed(4),
-      time_in_force: 'immediate_or_cancel',
+      yes_price_dollars: limitPrice.toFixed(4),
+      time_in_force: 'good_till_canceled',
+      cancel_order_on_pause: true,
       client_order_id: `openclaw-${candidate.event.event_ticker}-${Date.now()}`,
     },
     sizing: {
@@ -190,6 +192,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
       feeUsd,
       totalCostUsd,
       netProfitUsd,
+      limitPrice,
       targetProfitUsd: targetProfitUsd || null,
       recoveryQueueId: queueItem?.queueId || null,
       recoverySourceEventTitle: queueItem?.sourceEventTitle || null,
@@ -198,6 +201,97 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
       baseStakeUsd,
     },
   };
+}
+
+function orderStatus(order) {
+  return String(order?.status || '').toLowerCase();
+}
+
+function isRestingOrder(order) {
+  return ['resting', 'open', 'pending'].includes(orderStatus(order));
+}
+
+function parseEventTickerFromClientOrderId(clientOrderId) {
+  const text = String(clientOrderId || '');
+  const match = text.match(/^openclaw-(.+)-\d+$/);
+  return match ? match[1] : null;
+}
+
+function buildMarketToEventMap(events) {
+  const marketToEvent = new Map();
+  for (const event of events || []) {
+    for (const market of event.markets || []) {
+      if (market?.ticker) {
+        marketToEvent.set(market.ticker, event.event_ticker);
+      }
+    }
+  }
+  return marketToEvent;
+}
+
+function syncRestingOrderState(restingOrders, stateStore, events) {
+  const marketToEvent = buildMarketToEventMap(events);
+  const activeByEvent = new Map();
+
+  for (const order of restingOrders || []) {
+    if (!isRestingOrder(order)) continue;
+    const clientOrderId = order.client_order_id || order.clientOrderId || '';
+    if (!String(clientOrderId).startsWith('openclaw-')) continue;
+    const marketTicker = order.ticker || order.market_ticker || null;
+    const eventTicker =
+      order.event_ticker ||
+      marketToEvent.get(marketTicker) ||
+      parseEventTickerFromClientOrderId(clientOrderId);
+    if (!eventTicker) continue;
+    activeByEvent.set(eventTicker, {
+      orderId: order.order_id || order.id || null,
+      marketTicker,
+      clientOrderId,
+      limitPrice: Number.parseFloat(order.yes_price_dollars || order.price || 0) || null,
+      count: parseFp(order.count || order.count_fp),
+      status: order.status || null,
+    });
+  }
+
+  for (const [eventTicker, meta] of activeByEvent.entries()) {
+    stateStore.setEventOpenOrder(eventTicker, meta);
+  }
+
+  for (const meta of stateStore.listOpenOrders()) {
+    if (!activeByEvent.has(meta.eventTicker)) {
+      stateStore.clearEventOpenOrder(meta.eventTicker);
+    }
+  }
+
+  return Array.from(activeByEvent.entries()).map(([eventTicker, meta]) => ({
+    eventTicker,
+    ...meta,
+  }));
+}
+
+async function cancelRestingOrder(client, stateStore, openOrder, reason) {
+  if (!openOrder?.orderId) {
+    stateStore.clearEventOpenOrder(openOrder?.eventTicker);
+    return;
+  }
+  try {
+    await client.cancelOrder(openOrder.orderId);
+    appendAction('order_cancel', {
+      eventTicker: openOrder.eventTicker,
+      marketTicker: openOrder.marketTicker || null,
+      orderId: openOrder.orderId,
+      reason,
+    });
+    stateStore.clearEventOpenOrder(openOrder.eventTicker);
+  } catch (error) {
+    appendAction('order_cancel_error', {
+      eventTicker: openOrder.eventTicker,
+      marketTicker: openOrder.marketTicker || null,
+      orderId: openOrder.orderId,
+      reason,
+      message: error.message,
+    });
+  }
 }
 
 async function runCycle(client) {
@@ -219,17 +313,92 @@ async function runCycle(client) {
     return;
   }
 
-  const [{ balance }, openPositions, events] = await Promise.all([
+  const previousOpenOrders = stateStore.listOpenOrders();
+  const [{ balance }, openPositions, events, restingOrders] = await Promise.all([
     client.getBalance(),
     client.getOpenPositions(),
     client.getOpenEventsWithMarkets(),
+    client.getOrders({ status: 'resting' }),
   ]);
   const liveCompetitionScope = await resolveSoccerCompetitionScope(client, events, runtime.leagues || [], logger);
   const liveSoccerMap = await getLiveSoccerEventData(client, liveCompetitionScope);
   const enrichedEvents = attachLiveDataToEvents(events, liveSoccerMap);
   const recovery = computeRecoveryState(settlements, stateStore, runtime);
+  let activeRestingOrders = syncRestingOrderState(restingOrders, stateStore, enrichedEvents);
+  const openPositionByMarket = new Map(
+    (openPositions || [])
+      .filter((position) => Math.abs(parseFp(position.position_fp)) > 0)
+      .map((position) => [position.ticker, position]),
+  );
+  const eventMap = new Map((enrichedEvents || []).map((event) => [event.event_ticker, event]));
+
+  for (const previousOrder of previousOpenOrders) {
+    if (stateStore.getEventOpenOrder(previousOrder.eventTicker)) continue;
+    if (stateStore.hasTradedEvent(previousOrder.eventTicker)) continue;
+    const openPosition = openPositionByMarket.get(previousOrder.marketTicker);
+    if (!openPosition) continue;
+    const event = eventMap.get(previousOrder.eventTicker);
+    stateStore.markEventTraded(previousOrder.eventTicker, {
+      orderId: previousOrder.orderId || null,
+      marketTicker: previousOrder.marketTicker || null,
+      fillCount: Math.abs(parseFp(openPosition.position_fp)),
+      yesPrice: null,
+      triggerRule: 'GTC_RESTING_FILL',
+      competition: event?.product_metadata?.competition || event?.__live?.competition || null,
+      eventTitle: event?.title || null,
+      selectedOutcome: event?.markets?.find((market) => market.ticker === previousOrder.marketTicker)?.yes_sub_title || null,
+    });
+    appendAction('order_fill_detected_from_position', {
+      eventTicker: previousOrder.eventTicker,
+      marketTicker: previousOrder.marketTicker || null,
+      orderId: previousOrder.orderId || null,
+      fillCount: Math.abs(parseFp(openPosition.position_fp)),
+    });
+  }
 
   const balanceUsd = Number(balance || 0) / 100;
+
+  const candidates = enrichedEvents
+    .filter((event) => eventLooksLikeSoccer(event, liveSoccerMap))
+    .map((event) => eligibleTradeCandidate(event, runtime, stateStore))
+    .filter(Boolean)
+    .sort((a, b) => b.game.minute - a.game.minute);
+  const candidateByEvent = new Map(candidates.map((candidate) => [candidate.event.event_ticker, candidate]));
+
+  if (!runtime.tradingEnabled || dailyLossUsd >= runtime.maxDailyLossUsd || openPositions.length >= runtime.maxOpenPositions) {
+    const reason = !runtime.tradingEnabled
+      ? 'runtime_override'
+      : dailyLossUsd >= runtime.maxDailyLossUsd
+        ? 'daily_loss_limit'
+        : 'max_open_positions';
+    for (const openOrder of activeRestingOrders) {
+      await cancelRestingOrder(client, stateStore, openOrder, reason);
+    }
+    activeRestingOrders = [];
+  } else {
+    for (const openOrder of activeRestingOrders) {
+      const candidate = candidateByEvent.get(openOrder.eventTicker);
+      const shouldCancel =
+        stateStore.hasTradedEvent(openOrder.eventTicker) ||
+        !candidate ||
+        candidate.market.ticker !== openOrder.marketTicker;
+      if (shouldCancel) {
+        await cancelRestingOrder(client, stateStore, openOrder, !candidate ? 'signal_invalidated' : 'filled_or_market_changed');
+      }
+    }
+    activeRestingOrders = stateStore.listOpenOrders();
+  }
+
+  if (dailyLossUsd >= runtime.maxDailyLossUsd) {
+    const msg = `Trading paused: daily loss ${dailyLossUsd.toFixed(2)} reached limit ${runtime.maxDailyLossUsd.toFixed(2)}.`;
+    logger.warn(msg);
+    appendAction('risk_halt', { reason: 'daily_loss_limit', dailyLossUsd, maxDailyLossUsd: runtime.maxDailyLossUsd });
+    await notifier.send(msg);
+    stateStore.setLastCycle(cycleStarted.toISOString());
+    stateStore.persist();
+    return;
+  }
+
   if (balanceUsd < 0.1) {
     logger.warn({ balanceUsd }, 'No available balance; skipping cycle');
     appendAction('skip_no_balance', { balanceUsd });
@@ -238,9 +407,14 @@ async function runCycle(client) {
     return;
   }
 
-  if (openPositions.length >= runtime.maxOpenPositions) {
-    logger.warn({ openPositions: openPositions.length }, 'Max open positions reached; skipping cycle');
-    appendAction('skip_max_positions', { openPositions: openPositions.length, maxOpenPositions: runtime.maxOpenPositions });
+  const activeExposureCount = openPositions.length + activeRestingOrders.length;
+  if (activeExposureCount >= runtime.maxOpenPositions) {
+    logger.warn({ openPositions: openPositions.length, restingOrders: activeRestingOrders.length }, 'Max position/exposure limit reached; skipping cycle');
+    appendAction('skip_max_positions', {
+      openPositions: openPositions.length,
+      restingOrders: activeRestingOrders.length,
+      maxOpenPositions: runtime.maxOpenPositions,
+    });
     stateStore.setLastCycle(cycleStarted.toISOString());
     stateStore.persist();
     return;
@@ -254,12 +428,6 @@ async function runCycle(client) {
     return;
   }
 
-  const candidates = enrichedEvents
-    .filter((event) => eventLooksLikeSoccer(event, liveSoccerMap))
-    .map((event) => eligibleTradeCandidate(event, runtime, stateStore))
-    .filter(Boolean)
-    .sort((a, b) => b.game.minute - a.game.minute);
-
   logger.info(
     {
       eventsScanned: enrichedEvents.length,
@@ -270,6 +438,7 @@ async function runCycle(client) {
       cycleStakeUsd: recovery.nextTargetProfitUsd || runtime.stakeUsd,
       recoveryModeEnabled: recovery.enabled,
       recoveryLossBalanceUsd: recovery.recoveryLossBalanceUsd,
+      activeRestingOrders: activeRestingOrders.length,
     },
     'Cycle evaluation complete',
   );
@@ -283,9 +452,19 @@ async function runCycle(client) {
     cycleStakeUsd: recovery.nextTargetProfitUsd || runtime.stakeUsd,
     recoveryModeEnabled: recovery.enabled,
     recoveryLossBalanceUsd: recovery.recoveryLossBalanceUsd,
+    activeRestingOrders: activeRestingOrders.length,
   });
 
   for (const candidate of candidates) {
+    const existingResting = stateStore.getEventOpenOrder(candidate.event.event_ticker);
+    if (existingResting?.orderId) {
+      appendAction('skip_existing_open_order', {
+        eventTicker: candidate.event.event_ticker,
+        marketTicker: candidate.market.ticker,
+        orderId: existingResting.orderId,
+      });
+      continue;
+    }
     const orderPlan = makeOrderPayload(candidate, balanceUsd, runtime, recovery);
     if (!orderPlan) {
       appendAction('skip_no_contract_capacity', {
@@ -319,9 +498,11 @@ async function runCycle(client) {
       recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
       sizingMode: orderPlan.sizing.sizingMode,
       leadingTeam: candidate.game.leadingTeam,
+      selectedOutcome: candidate.selectedOutcome || candidate.game.leadingTeam || null,
       leadingTeamMaxLead: candidate.game.leadingTeamMaxLead,
       marketTicker: candidate.market.ticker,
       ask: candidate.ask,
+      limitPrice: orderPlan.sizing.limitPrice,
       count: orderPlan.order.count,
       estimatedFeeUsd: orderPlan.sizing.feeUsd,
       estimatedNetProfitUsd: orderPlan.sizing.netProfitUsd,
@@ -338,13 +519,15 @@ async function runCycle(client) {
     const order = result.order || {};
     const fillCount = parseFp(order.fill_count_fp);
 
+    const remainingCount = parseFp(order.remaining_count_fp || order.resting_count_fp);
+
     if (fillCount > 0) {
       const triggerRule = deriveTriggerRule(candidate.game, runtime);
       stateStore.markEventTraded(candidate.event.event_ticker, {
         orderId: order.order_id,
         marketTicker: candidate.market.ticker,
         fillCount,
-        yesPrice: order.yes_price_dollars,
+        yesPrice: candidate.ask,
         stakeUsdTarget: orderPlan.sizing.totalCostUsd,
         targetProfitUsd: orderPlan.sizing.targetProfitUsd,
         recoveryQueueId: orderPlan.sizing.recoveryQueueId,
@@ -367,14 +550,42 @@ async function runCycle(client) {
         leadingTeamMaxLead: candidate.game.leadingTeamMaxLead ?? null,
         competition: candidate.game.competition || null,
         eventTitle: candidate.event.title || null,
-        selectedOutcome: candidate.market.yes_sub_title || null,
+        selectedOutcome: candidate.selectedOutcome || candidate.market.yes_sub_title || null,
+        limitPrice: orderPlan.sizing.limitPrice,
       });
+
+      if (remainingCount > 0 || isRestingOrder(order)) {
+        await cancelRestingOrder(
+          client,
+          stateStore,
+          {
+            eventTicker: candidate.event.event_ticker,
+            orderId: order.order_id,
+            marketTicker: candidate.market.ticker,
+          },
+          'cancel_remainder_after_fill',
+        );
+      } else {
+        stateStore.clearEventOpenOrder(candidate.event.event_ticker);
+      }
 
       const msg = `Filled ${fillCount} contract(s): ${candidate.event.title} at ${candidate.ask.toFixed(4)} (minute ${candidate.game.minute}, score ${candidate.game.homeScore}-${candidate.game.awayScore})`;
       logger.info({ ...logMeta, orderId: order.order_id, fillCount }, 'Order filled');
       appendAction('order_filled', { ...logMeta, orderId: order.order_id, fillCount });
       await notifier.send(msg);
+    } else if (isRestingOrder(order)) {
+      stateStore.setEventOpenOrder(candidate.event.event_ticker, {
+        orderId: order.order_id,
+        marketTicker: candidate.market.ticker,
+        clientOrderId: order.client_order_id || orderPlan.order.client_order_id,
+        limitPrice: orderPlan.sizing.limitPrice,
+        count: orderPlan.order.count,
+        status: order.status || null,
+      });
+      logger.info({ ...logMeta, orderId: order.order_id, orderStatus: order.status }, 'Order resting on book');
+      appendAction('order_resting', { ...logMeta, orderId: order.order_id, orderStatus: order.status || null });
     } else {
+      stateStore.clearEventOpenOrder(candidate.event.event_ticker);
       logger.info({ ...logMeta, orderStatus: order.status }, 'Order not filled this cycle (will retry until minute cutoff)');
       appendAction('order_not_filled', { ...logMeta, orderStatus: order.status || null });
     }
