@@ -16,6 +16,7 @@ const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalR
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
+  eventLooksLikeSoccer,
   resolveSoccerCompetitionScope,
 } = require('./kalshiLiveSoccer');
 const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy } = require('./recoveryQueue');
@@ -746,6 +747,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const marketBooks = client && marketTickers.length ? await client.getMarketsByTickers(marketTickers) : [];
   const marketMap = new Map(marketBooks.map((m) => [m.ticker, m]));
   const eventTitleMap = new Map((events || []).map((e) => [e.event_ticker, e.title]));
+  const eventMap = new Map((events || []).map((e) => [e.event_ticker, e]));
 
   const openTrades = (openPositions || [])
     .filter((p) => Math.abs(parseFp(p.position_fp)) > 0)
@@ -758,6 +760,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     const marketStatus = market?.status ? String(market.status).toLowerCase() : 'unknown';
     const eventTicker = p.event_ticker || market?.event_ticker || null;
     const eventTitle = eventTicker ? eventTitleMap.get(eventTicker) || null : null;
+    const event = eventTicker ? eventMap.get(eventTicker) || null : null;
+    const game = event ? extractGameState(event) : null;
     const markPrice = markPriceForPosition(p, market);
     const markValueUsd = markPrice !== null ? absQty * markPrice : null;
     const unrealizedPnlUsd = markValueUsd !== null ? markValueUsd - costBasisUsd : null;
@@ -784,6 +788,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       quantity: absQty,
       cost_basis_usd: Number(costBasisUsd.toFixed(4)),
       amount_bet_usd: Number(costBasisUsd.toFixed(4)),
+      current_score: game ? `${game.homeScore}-${game.awayScore}` : null,
+      current_contract_cost_usd: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_price: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_value_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
       total_return_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
@@ -816,19 +822,60 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   }));
 
   const tradedEventsMap = state.tradedEvents || {};
-  const monitoredGames = (events || [])
-    .map((event) => {
-      const competition = (event.product_metadata || {}).competition || null;
-      if (!isLeagueAllowed(competition, runtime)) return null;
-      if (!String(event.event_ticker || '').includes('GAME')) return null;
-      if (!event.__live?.isLive) return null;
-      const prices = buildMonitoredPrices(event);
+  const monitoredGames = Array.from(liveSoccerMap.entries())
+    .map(([eventTicker, live]) => {
+      if (!live?.isLive) return null;
 
-      const game = extractGameState(event);
-      if (!game) {
+      const event = eventMap.get(eventTicker) || null;
+      const competition = live.competition || event?.product_metadata?.competition || null;
+      if (!isLeagueAllowed(competition, runtime)) return null;
+      if (event && !eventLooksLikeSoccer(event, liveSoccerMap)) return null;
+
+      const title = event?.title || live.title || eventTicker;
+      const prices = event ? buildMonitoredPrices(event) : {
+        ...parseTeamsFromEventTitle(title),
+        homeYesPrice: null,
+        awayYesPrice: null,
+      };
+      const game = event ? extractGameState(event) : {
+        competition,
+        minute: live.minute,
+        homeScore: live.homeScore,
+        awayScore: live.awayScore,
+        homeRedCards: live.homeRedCards,
+        awayRedCards: live.awayRedCards,
+        homeTeam: prices.homeTeam,
+        awayTeam: prices.awayTeam,
+        leadingTeam:
+          live.homeScore > live.awayScore ? prices.homeTeam :
+          live.awayScore > live.homeScore ? prices.awayTeam :
+          null,
+        trailingTeam:
+          live.homeScore > live.awayScore ? prices.awayTeam :
+          live.awayScore > live.homeScore ? prices.homeTeam :
+          null,
+        goalDiff:
+          Number.isFinite(live.homeScore) && Number.isFinite(live.awayScore)
+            ? Math.abs(live.homeScore - live.awayScore)
+            : null,
+        leadingTeamRedCards:
+          live.homeScore > live.awayScore ? live.homeRedCards :
+          live.awayScore > live.homeScore ? live.awayRedCards :
+          null,
+        trailingTeamRedCards:
+          live.homeScore > live.awayScore ? live.awayRedCards :
+          live.awayScore > live.homeScore ? live.homeRedCards :
+          null,
+        leadingTeamMaxLead:
+          live.homeScore > live.awayScore ? live.homeMaxLead :
+          live.awayScore > live.homeScore ? live.awayMaxLead :
+          0,
+      };
+
+      if (!game || !Number.isFinite(game.minute) || game.homeScore === null || game.awayScore === null) {
         return {
-          eventTicker: event.event_ticker,
-          title: event.title,
+          eventTicker,
+          title,
           competition: competition || '-',
           minute: null,
           score: '-',
@@ -841,19 +888,20 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
           leadingTeam: '-',
           goalDiff: null,
           status: 'NO_LIVE_DATA',
-          reason: 'Kalshi event payload currently has no live minute/score fields for this game',
+          reason: 'Kalshi live feed currently has no usable minute/score fields for this game',
         };
       }
 
-      const alreadyBet = Boolean(tradedEventsMap[event.event_ticker]);
-      const candidate = eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet });
-      const signalRule = deriveSignalRule(game, runtime);
+      const alreadyBet = Boolean(tradedEventsMap[eventTicker]);
+      const candidate = event ? eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet }) : null;
       const hasOrderCapacity = candidate ? canSizeCandidate(candidate, balanceUsd, runtime, recovery) : false;
 
       let status = 'WATCHING';
       let reason = 'Tracking game conditions';
 
-      if (alreadyBet) {
+      if (!event) {
+        reason = 'Live soccer feed game found, but no open tradable Kalshi game market is attached yet';
+      } else if (alreadyBet) {
         status = 'ALREADY_BET';
         reason = 'Bot has already placed a filled trade on this event';
       } else if (candidate && !hasOrderCapacity) {
@@ -863,10 +911,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
         status = 'ELIGIBLE_NOW';
         reason = 'Signal and market filters currently pass';
       } else if (!game.leadingTeam) {
-        status = 'WATCHING';
         reason = 'No leading team currently';
       } else if (game.homeRedCards === null || game.awayRedCards === null) {
-        status = 'WATCHING';
         reason = 'Waiting for red-card data before allowing a trade';
       } else if (
         game.leadingTeamRedCards !== null &&
@@ -877,12 +923,12 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
         reason = 'Leading team has more red cards than trailing team';
       } else if (game.goalDiff < runtime.minGoalLead) {
         if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
-          status = 'WATCHING';
           reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
         } else {
-          status = 'WATCHING';
           reason = `Need current leader to be ahead by at least ${runtime.minGoalLead} goals`;
         }
+      } else if (!event) {
+        reason = 'Signal may qualify, but no open tradable Kalshi game market is attached yet';
       } else {
         status = 'FILTERED';
         reason = `Current ${runtime.minGoalLead}+ goal lead signal failed price/market cap ${Math.round(
@@ -891,8 +937,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       }
 
       return {
-        eventTicker: event.event_ticker,
-        title: event.title,
+        eventTicker,
+        title,
         competition: game.competition || competition || '-',
         minute: game.minute,
         score: `${game.homeScore}-${game.awayScore}`,

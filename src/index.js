@@ -13,6 +13,7 @@ const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy, kal
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
+  eventLooksLikeSoccer,
   resolveSoccerCompetitionScope,
 } = require('./kalshiLiveSoccer');
 
@@ -254,6 +255,7 @@ async function runCycle(client) {
   }
 
   const candidates = enrichedEvents
+    .filter((event) => eventLooksLikeSoccer(event, liveSoccerMap))
     .map((event) => eligibleTradeCandidate(event, runtime, stateStore))
     .filter(Boolean)
     .sort((a, b) => b.game.minute - a.game.minute);

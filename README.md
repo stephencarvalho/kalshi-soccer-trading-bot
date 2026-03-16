@@ -86,6 +86,45 @@ Current queue logic:
 - The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
 - Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
 
+## Strategy Log and Rule History
+
+This project keeps historical trigger labels in persisted trade metadata and action logs. That means older trades can still show strategy IDs that are no longer active. The current rule set and prior rule labels are documented below so dashboard rows and logs remain interpretable over time.
+
+### Current active trigger rules
+
+- `CURRENT_LEAD_2`
+  - Current implementation for the early/main signal.
+  - Meaning: the currently leading team must be ahead by `MIN_GOAL_LEAD` right now at the moment of entry.
+  - Default current setup: leader must be up by `2+` goals now.
+- `POST_85_LEAD_1`
+  - Current late-game signal.
+  - Meaning: once the match reaches minute `85` or later, a team leading by `1+` goal can qualify.
+  - Uses the late-rule price cap `POST80_MAX_YES_PRICE`.
+
+### Historical trigger rules still found in saved logs/state
+
+- `ANYTIME_LEAD_2`
+  - Older rule that allowed entry if the current leader had reached a `2+` goal lead at any earlier point in the match, even if the lead had narrowed by entry time.
+  - This rule is no longer active and was replaced by `CURRENT_LEAD_2`.
+- `POST_80_LEAD_1`
+  - Older late-game rule that started at minute `80`.
+  - This rule is no longer active and was replaced by `POST_85_LEAD_1`.
+- `POST_70_LEAD_2`
+  - Older lead-based entry rule seen in historical trades/logs.
+  - This rule is no longer active.
+
+### Sizing modes recorded in logs
+
+- `BASE`
+  - Standard non-recovery order sizing using the configured base stake.
+- `RECOVERY_QUEUE_CAPPED`
+  - Recovery mode sizing where the order was capped by current balance and/or `RECOVERY_MAX_STAKE_USD` instead of fully reaching the target recovery profit.
+
+### Notes on historical logs
+
+- `data/state.json` and `logs/trading-actions.ndjson` preserve the original trigger labels used at the time of each trade.
+- The dashboard intentionally shows those original labels for historical accuracy, even if the live strategy has changed since then.
+
 ## Setup
 
 1. Install dependencies:

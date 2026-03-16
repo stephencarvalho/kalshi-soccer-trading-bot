@@ -1,9 +1,10 @@
 import { CommonModule, CurrencyPipe, DatePipe, PercentPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Component, computed, effect, ElementRef, inject, OnDestroy, signal, ViewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, HostListener, inject, OnDestroy, signal, ViewChild } from '@angular/core';
 import {
   CategoryScale,
   Chart,
+  type Chart as ChartInstance,
   Filler,
   Legend,
   LineController,
@@ -95,6 +96,7 @@ interface TradeRecord {
   ticker: string;
   event_ticker?: string;
   event_title?: string | null;
+  current_score?: string | null;
   selection_label?: string | null;
   market_title?: string | null;
   market_status?: string | null;
@@ -103,6 +105,7 @@ interface TradeRecord {
   quantity?: number;
   cost_basis_usd?: number;
   amount_bet_usd?: number;
+  current_contract_cost_usd?: number | null;
   mark_price?: number | null;
   mark_value_usd?: number | null;
   total_return_usd?: number | null;
@@ -269,7 +272,7 @@ interface MonitoredGameRecord {
 }
 
 type ThemeMode = 'light' | 'dark';
-type ChartRange = '1H' | '3H' | '6H' | '12H' | 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
+type ChartRange = 'LIVE' | '1H' | '3H' | '6H' | '12H' | '1D' | '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y' | '3Y' | '5Y' | 'ALL';
 type LogViewMode = 'important' | 'verbose';
 type LogTimeRange = 'TODAY' | '24H' | '7D' | 'ALL';
 type SortDirection = 'asc' | 'desc';
@@ -279,6 +282,14 @@ interface TableSortState {
   key: string;
   direction: SortDirection;
 }
+
+const DEFAULT_TABLE_SORT: Record<TableId, TableSortState> = {
+  monitoredGames: { key: 'minute', direction: 'desc' },
+  openTrades: { key: 'lastUpdated', direction: 'desc' },
+  recoveryQueue: { key: 'remainingTargetUsd', direction: 'desc' },
+  leagueLeaderboard: { key: 'avgRoiPct', direction: 'desc' },
+  closedTrades: { key: 'settledTime', direction: 'desc' },
+};
 
 interface PnlPoint {
   ts: number;
@@ -329,8 +340,74 @@ export class App implements OnDestroy {
     }
   }
   private chartCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('chartWrap') private chartWrap?: ElementRef<HTMLElement>;
   private chartInstance: Chart<'line'> | null = null;
   private chartPoints: PnlPoint[] = [];
+  private readonly chartSelectionPlugin = {
+    id: 'selectionGuides',
+    afterDatasetsDraw: (chart: ChartInstance<'line'>) => {
+      const ctx = chart.ctx;
+      const top = chart.chartArea.top;
+      const bottom = chart.chartArea.bottom;
+      const left = chart.chartArea.left;
+      const right = chart.chartArea.right;
+      const yScale = chart.scales['y'];
+
+      if (yScale && Number.isFinite(yScale.min) && Number.isFinite(yScale.max) && yScale.min <= 0 && yScale.max >= 0) {
+        const zeroY = yScale.getPixelForValue(0);
+        ctx.save();
+        ctx.strokeStyle = this.theme() === 'dark' ? 'rgba(154, 165, 177, 0.4)' : 'rgba(111, 114, 119, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(left, zeroY);
+        ctx.lineTo(right, zeroY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      const selected = [...this.selectedChartPoints()].sort((a, b) => a.ts - b.ts);
+      const hovered = selected.length ? null : this.hoveredPoint();
+      const targets = selected.length ? selected : hovered ? [hovered] : [];
+      if (!targets.length) return;
+      const datasetMeta = chart.getDatasetMeta(0);
+
+      ctx.save();
+      ctx.strokeStyle = this.theme() === 'dark' ? 'rgba(154, 165, 177, 0.55)' : 'rgba(111, 114, 119, 0.55)';
+      ctx.lineWidth = 1;
+
+      const xs = [];
+      for (const point of targets) {
+        const idx = this.chartPoints.findIndex((candidate) => candidate.ts === point.ts && candidate.pnl === point.pnl);
+        const element = idx >= 0 ? datasetMeta.data[idx] : null;
+        const x = element?.x;
+        if (typeof x !== 'number') continue;
+        xs.push(x);
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.stroke();
+      }
+
+      const label = selected.length >= 2
+        ? `${this.formatReadoutTs(selected[0].ts)} - ${this.formatReadoutTs(selected[1].ts)}`
+        : this.formatReadoutTs((targets[0] || hovered).ts);
+
+      if (label && xs.length) {
+        const centerX = selected.length >= 2
+          ? (Math.min(...xs) + Math.max(...xs)) / 2
+          : xs[0];
+        const clampedX = Math.min(right - 8, Math.max(left + 8, centerX));
+        const labelY = selected.length >= 2 ? top + 8 : Math.max(8, top - 18);
+        ctx.fillStyle = this.theme() === 'dark' ? '#c7d0d9' : '#5b6470';
+        ctx.font = '600 12px Space Grotesk, Manrope, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, clampedX, labelY);
+      }
+
+      ctx.restore();
+    },
+  };
   private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -342,16 +419,11 @@ export class App implements OnDestroy {
   readonly chartRange = signal<ChartRange>('ALL');
   readonly logViewMode = signal<LogViewMode>('important');
   readonly logTimeRange = signal<LogTimeRange>('TODAY');
-  readonly tableSort = signal<Record<TableId, TableSortState>>({
-    monitoredGames: { key: 'minute', direction: 'desc' },
-    openTrades: { key: 'lastUpdated', direction: 'desc' },
-    recoveryQueue: { key: 'remainingTargetUsd', direction: 'desc' },
-    leagueLeaderboard: { key: 'avgRoiPct', direction: 'desc' },
-    closedTrades: { key: 'settledTime', direction: 'desc' },
-  });
-  readonly chartRanges: ChartRange[] = ['1H', '3H', '6H', '12H', 'LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
+  readonly tableSort = signal<Record<TableId, TableSortState>>({ ...DEFAULT_TABLE_SORT });
+  readonly chartRanges: ChartRange[] = ['LIVE', '1H', '3H', '6H', '12H', '1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'ALL'];
   readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
+  readonly selectedChartPoints = signal<PnlPoint[]>([]);
   readonly visibleLogs = computed(() => {
     const d = this.data();
     if (!d) return [] as LogRecord[];
@@ -386,7 +458,6 @@ export class App implements OnDestroy {
       homeYesPrice: (row) => row.homeYesPrice,
       awayYesPrice: (row) => row.awayYesPrice,
       redCards: (row) => row.redCards,
-      leadingVsTrailingRedCards: (row) => row.leadingVsTrailingRedCards,
       leadingTeam: (row) => row.leadingTeam,
       goalDiff: (row) => row.goalDiff,
       status: (row) => row.status,
@@ -399,6 +470,7 @@ export class App implements OnDestroy {
     return this.sortRows(d.openTrades || [], this.tableSort().openTrades, {
       ticker: (row) => row.ticker,
       eventTitle: (row) => row.event_title || row.event_ticker,
+      currentScore: (row) => row.current_score,
       selectionLabel: (row) => row.selection_label || row.market_title,
       marketStatus: (row) => row.market_status,
       quantity: (row) => row.quantity,
@@ -406,11 +478,12 @@ export class App implements OnDestroy {
       entryPx: (row) => row.placed_context?.yesPrice,
       totalReturnUsd: (row) => row.total_return_usd,
       costBasisUsd: (row) => row.cost_basis_usd,
+      currentContractCostUsd: (row) => row.current_contract_cost_usd,
       markPrice: (row) => row.mark_price,
       unrealizedPnlUsd: (row) => row.unrealized_pnl_usd,
       unrealizedRoiPct: (row) => row.unrealized_roi_pct,
       condition: (row) => row.placed_context?.triggerRule,
-      cards: (row) => row.placed_context?.placedLeaderVsTrailingCards || row.placed_context?.placedCards,
+      cards: (row) => row.placed_context?.placedCards,
       lastUpdated: (row) => this.toTimestamp(row.last_updated_ts),
     });
   });
@@ -458,7 +531,7 @@ export class App implements OnDestroy {
       roiPct: (row) => row.roi_pct,
       winsToRecover: (row) => row.wins_to_recover_at_avg_win,
       placedCondition: (row) => row.placed_context?.triggerRule,
-      cards: (row) => row.placed_context?.placedLeaderVsTrailingCards || row.placed_context?.placedCards,
+      cards: (row) => row.placed_context?.placedCards,
     });
   });
 
@@ -605,6 +678,10 @@ export class App implements OnDestroy {
       d.analytics.avgLossAbsUsd && d.analytics.avgLossAbsUsd > 0
         ? Math.floor(d.config.maxDailyLossUsd / d.analytics.avgLossAbsUsd)
         : null;
+    const lossesToBankrupt =
+      d.analytics.avgLossAbsUsd && d.analytics.avgLossAbsUsd > 0 && (d.account.balanceUsd ?? 0) > 0
+        ? Math.floor((d.account.balanceUsd ?? 0) / d.analytics.avgLossAbsUsd)
+        : null;
 
     return [
       { label: 'Edge Gap', value: edgeGap, format: 'pct' },
@@ -614,6 +691,7 @@ export class App implements OnDestroy {
       { label: 'Stop-Loss % Bankroll', value: stopLossPct, format: 'pct' },
       { label: 'Recovery Queue %', value: recoveryQueuePct, format: 'pct' },
       { label: 'Avg Losses To Stop', value: lossesToStop, format: 'num' },
+      { label: 'Avg Losses To Bankrupt', value: lossesToBankrupt, format: 'num' },
     ];
   });
 
@@ -731,16 +809,23 @@ export class App implements OnDestroy {
     const nowTs = this.now().getTime();
     let fromTs = 0;
 
+    if (range === 'LIVE') {
+      const start = new Date(nowTs);
+      start.setHours(0, 0, 0, 0);
+      fromTs = start.getTime();
+    }
     if (range === '1H') fromTs = nowTs - 1 * 60 * 60 * 1000;
     if (range === '3H') fromTs = nowTs - 3 * 60 * 60 * 1000;
     if (range === '6H') fromTs = nowTs - 6 * 60 * 60 * 1000;
     if (range === '12H') fromTs = nowTs - 12 * 60 * 60 * 1000;
-    if (range === 'LIVE') fromTs = nowTs - 6 * 60 * 60 * 1000;
     if (range === '1D') fromTs = nowTs - 24 * 60 * 60 * 1000;
     if (range === '1W') fromTs = nowTs - 7 * 24 * 60 * 60 * 1000;
     if (range === '1M') fromTs = nowTs - 30 * 24 * 60 * 60 * 1000;
     if (range === '3M') fromTs = nowTs - 90 * 24 * 60 * 60 * 1000;
+    if (range === '6M') fromTs = nowTs - 182 * 24 * 60 * 60 * 1000;
     if (range === '1Y') fromTs = nowTs - 365 * 24 * 60 * 60 * 1000;
+    if (range === '3Y') fromTs = nowTs - 3 * 365 * 24 * 60 * 60 * 1000;
+    if (range === '5Y') fromTs = nowTs - 5 * 365 * 24 * 60 * 60 * 1000;
     if (range === 'YTD') {
       const d = new Date(nowTs);
       fromTs = new Date(d.getFullYear(), 0, 1).getTime();
@@ -768,21 +853,43 @@ export class App implements OnDestroy {
 
   readonly chartStats = computed(() => {
     const points = this.rangeFilteredSeries();
-    const first = points[0]?.pnl ?? 0;
     const last = points[points.length - 1]?.pnl ?? 0;
-    const delta = Number((last - first).toFixed(4));
     const investedCapital = this.investedCapital();
-    const deltaPct = investedCapital && investedCapital > 0 ? delta / investedCapital : null;
+    const selectedPoints = this.selectedChartPoints();
     const hovered = this.hoveredPoint();
-    const currentValue = hovered?.pnl ?? last;
+    const comparisonPoints = [...selectedPoints].sort((a, b) => a.ts - b.ts);
+    const currentPoint = selectedPoints[selectedPoints.length - 1] || hovered || points[points.length - 1] || null;
+    const startPoint = comparisonPoints.length >= 2 ? comparisonPoints[0] : points[0] || null;
+    const endPoint = comparisonPoints.length >= 2 ? comparisonPoints[1] : currentPoint;
+    const currentValue = currentPoint?.pnl ?? last;
     const currentPct = investedCapital && investedCapital > 0 ? currentValue / investedCapital : null;
+    const delta = Number((((endPoint?.pnl ?? currentValue) - (startPoint?.pnl ?? 0)).toFixed(4)));
+    const deltaPct = investedCapital && investedCapital > 0 ? delta / investedCapital : null;
 
     return {
       currentValue,
       currentPct,
       delta,
       deltaPct,
-      currentTs: hovered?.ts ?? points[points.length - 1]?.ts ?? null,
+      currentTs: currentPoint?.ts ?? null,
+      startTs: startPoint?.ts ?? null,
+      endTs: endPoint?.ts ?? null,
+      hasSelection: selectedPoints.length > 0,
+      selectionCount: selectedPoints.length,
+    };
+  });
+  readonly chartReadout = computed(() => {
+    const stats = this.chartStats();
+    if (stats.selectionCount >= 2) {
+      return {
+        value: stats.delta,
+        pct: stats.deltaPct,
+      };
+    }
+
+    return {
+      value: stats.currentValue,
+      pct: stats.currentPct,
     };
   });
   readonly chartNetAccountValue = computed(() => {
@@ -852,6 +959,19 @@ export class App implements OnDestroy {
   setChartRange(range: ChartRange): void {
     this.chartRange.set(range);
     this.hoveredPoint.set(null);
+    this.selectedChartPoints.set([]);
+  }
+
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    const target = event.target as Node | null;
+    const chartWrapEl = this.chartWrap?.nativeElement;
+    if (!target || !chartWrapEl) return;
+    if (chartWrapEl.contains(target)) return;
+    if (this.selectedChartPoints().length) {
+      this.selectedChartPoints.set([]);
+      this.hoveredPoint.set(null);
+    }
   }
 
   setLogViewMode(mode: LogViewMode): void {
@@ -865,19 +985,28 @@ export class App implements OnDestroy {
   setTableSort(table: TableId, key: string): void {
     this.tableSort.update((current) => {
       const existing = current[table];
-      const direction: SortDirection =
-        existing.key === key ? (existing.direction === 'asc' ? 'desc' : 'asc') : 'desc';
+      const defaultSort = DEFAULT_TABLE_SORT[table];
+      let nextSort: TableSortState;
+      if (existing.key !== key) {
+        nextSort = { key, direction: 'desc' };
+      } else if (existing.direction === 'desc') {
+        nextSort = { key, direction: 'asc' };
+      } else {
+        nextSort = { ...defaultSort };
+      }
       return {
         ...current,
-        [table]: { key, direction },
+        [table]: nextSort,
       };
     });
   }
 
   sortIndicator(table: TableId, key: string): string {
     const current = this.tableSort()[table];
-    if (current.key !== key) return '';
-    return current.direction === 'asc' ? '^' : 'v';
+    if (current.key !== key) return '↕';
+    const defaultSort = DEFAULT_TABLE_SORT[table];
+    if (current.key === defaultSort.key && current.direction === defaultSort.direction) return '↕';
+    return current.direction === 'asc' ? '↑' : '↓';
   }
 
   private formatChartTs(ts: number, range: ChartRange): string {
@@ -890,18 +1019,34 @@ export class App implements OnDestroy {
     return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
   }
 
+  private formatReadoutTs(ts: number): string {
+    return new Date(ts).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
   private rangeStartTs(nowTs: number, range: ChartRange): number | null {
     if (range === 'ALL') return null;
+    if (range === 'LIVE') {
+      const start = new Date(nowTs);
+      start.setHours(0, 0, 0, 0);
+      return start.getTime();
+    }
     if (range === '1H') return nowTs - 1 * 60 * 60 * 1000;
     if (range === '3H') return nowTs - 3 * 60 * 60 * 1000;
     if (range === '6H') return nowTs - 6 * 60 * 60 * 1000;
     if (range === '12H') return nowTs - 12 * 60 * 60 * 1000;
-    if (range === 'LIVE') return nowTs - 6 * 60 * 60 * 1000;
     if (range === '1D') return nowTs - 24 * 60 * 60 * 1000;
     if (range === '1W') return nowTs - 7 * 24 * 60 * 60 * 1000;
     if (range === '1M') return nowTs - 30 * 24 * 60 * 60 * 1000;
     if (range === '3M') return nowTs - 90 * 24 * 60 * 60 * 1000;
+    if (range === '6M') return nowTs - 182 * 24 * 60 * 60 * 1000;
     if (range === '1Y') return nowTs - 365 * 24 * 60 * 60 * 1000;
+    if (range === '3Y') return nowTs - 3 * 365 * 24 * 60 * 60 * 1000;
+    if (range === '5Y') return nowTs - 5 * 365 * 24 * 60 * 60 * 1000;
     if (range === 'YTD') {
       const d = new Date(nowTs);
       return new Date(d.getFullYear(), 0, 1).getTime();
@@ -1090,6 +1235,11 @@ export class App implements OnDestroy {
     if (!canvas) return;
     canvas.onmouseleave = () => this.hoveredPoint.set(null);
 
+    if (this.chartInstance && this.chartInstance.canvas !== canvas) {
+      this.chartInstance.destroy();
+      this.chartInstance = null;
+    }
+
     const points = this.rangeFilteredSeries();
     this.chartPoints = points;
     const delta = this.chartStats().delta;
@@ -1104,6 +1254,7 @@ export class App implements OnDestroy {
     if (!this.chartInstance) {
       const config: ChartConfiguration<'line'> = {
         type: 'line',
+        plugins: [this.chartSelectionPlugin],
         data: {
           labels,
           datasets: [
@@ -1134,12 +1285,24 @@ export class App implements OnDestroy {
             tooltip: { enabled: false },
           },
           onHover: (_event, activeElements) => {
+            if (this.selectedChartPoints().length) return;
             if (!activeElements.length) {
               this.hoveredPoint.set(null);
               return;
             }
             const idx = activeElements[0].index;
             this.hoveredPoint.set(this.chartPoints[idx] || null);
+          },
+          onClick: (_event, activeElements) => {
+            if (!activeElements.length) return;
+            const idx = activeElements[0].index;
+            const point = this.chartPoints[idx];
+            if (!point) return;
+            this.selectedChartPoints.update((current) => {
+              if (current.length < 2) return [...current, point];
+              return [current[1], point];
+            });
+            this.hoveredPoint.set(point);
           },
           scales: {
             x: {
@@ -1149,15 +1312,11 @@ export class App implements OnDestroy {
                 maxTicksLimit: 6,
               },
             },
-              y: {
-                border: { display: false },
-                grid: {
-                  color: colors.grid,
-                },
-                ticks: {
-                  color: colors.text,
-                  callback: (value) => currency.format(Number(value)),
-              },
+            y: {
+              display: false,
+              border: { display: false },
+              grid: { display: false },
+              ticks: { display: false },
             },
           },
         },
@@ -1179,15 +1338,31 @@ export class App implements OnDestroy {
         },
       },
       y: {
+        display: false,
         border: { display: false },
-        grid: {
-          color: colors.grid,
-        },
-        ticks: {
-          color: colors.text,
-          callback: (value) => currency.format(Number(value)),
-        },
+        grid: { display: false },
+        ticks: { display: false },
       },
+    };
+    this.chartInstance.options.onHover = (_event, activeElements) => {
+      if (this.selectedChartPoints().length) return;
+      if (!activeElements.length) {
+        this.hoveredPoint.set(null);
+        return;
+      }
+      const idx = activeElements[0].index;
+      this.hoveredPoint.set(this.chartPoints[idx] || null);
+    };
+    this.chartInstance.options.onClick = (_event, activeElements) => {
+      if (!activeElements.length) return;
+      const idx = activeElements[0].index;
+      const point = this.chartPoints[idx];
+      if (!point) return;
+      this.selectedChartPoints.update((current) => {
+        if (current.length < 2) return [...current, point];
+        return [current[1], point];
+      });
+      this.hoveredPoint.set(point);
     };
     this.chartInstance.update('none');
   }

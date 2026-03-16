@@ -25,7 +25,22 @@
               <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
             </article>
             <button class="nav-toggle nav-toggle--theme" type="button" (click)="toggleTheme()">
-              <span class="nav-toggle__icon" aria-hidden="true">{{ theme() === 'dark' ? '☀' : '☾' }}</span>
+              <span class="nav-toggle__icon" aria-hidden="true">
+                @if (theme() === 'dark') {
+                  <svg viewBox="0 0 24 24" class="bulb-icon bulb-icon--on">
+                    <path class="bulb-icon__glow" d="M12 1.8c-4.5 0-8.2 3.5-8.2 7.9 0 2.8 1.4 4.7 3 6.4 1 1.1 1.7 2 2 3.2h6.5c.3-1.2 1-2.1 2-3.2 1.6-1.7 3-3.6 3-6.4 0-4.4-3.7-7.9-8.3-7.9Z"/>
+                    <path class="bulb-icon__glass" d="M12 3.1c-3.8 0-6.8 2.9-6.8 6.5 0 2.2 1 3.8 2.5 5.3 1.2 1.2 2 2.3 2.3 3.8h4c.3-1.5 1.1-2.6 2.3-3.8 1.4-1.5 2.5-3.1 2.5-5.3 0-3.6-3.1-6.5-6.8-6.5Z"/>
+                    <path class="bulb-icon__filament" d="M9.4 10.2c.5-1.2 1.5-1.9 2.6-1.9s2.1.7 2.6 1.9M9.6 12.4h4.8"/>
+                    <path class="bulb-icon__base" d="M9.2 18.8h5.6M9.7 21h4.6"/>
+                  </svg>
+                } @else {
+                  <svg viewBox="0 0 24 24" class="bulb-icon bulb-icon--off">
+                    <path class="bulb-icon__glass" d="M12 3.1c-3.8 0-6.8 2.9-6.8 6.5 0 2.2 1 3.8 2.5 5.3 1.2 1.2 2 2.3 2.3 3.8h4c.3-1.5 1.1-2.6 2.3-3.8 1.4-1.5 2.5-3.1 2.5-5.3 0-3.6-3.1-6.5-6.8-6.5Z"/>
+                    <path class="bulb-icon__filament" d="M9.7 11.2 11 10l1 1.1L13 10l1.3 1.2M9.9 12.9h4.2"/>
+                    <path class="bulb-icon__base" d="M9.2 18.8h5.6M9.7 21h4.6"/>
+                  </svg>
+                }
+              </span>
               <span>{{ theme() === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
             </button>
           </div>
@@ -59,15 +74,10 @@
       <div class="hero-head">
         <div>
           <h2>{{ chartNetAccountValue() === null ? '-' : (chartNetAccountValue() | currency:'USD':'symbol':'1.2-2') }}</h2>
-          <p class="delta" [class.pos]="chartStats().currentValue >= 0" [class.neg]="chartStats().currentValue < 0">
-            {{ chartStats().currentValue >= 0 ? '+' : '' }}{{ chartStats().currentValue | currency:'USD':'symbol':'1.2-2' }}
-            @if (chartStats().currentPct !== null) {
-              ({{ (chartStats().currentPct ?? 0) >= 0 ? '+' : '' }}{{ (chartStats().currentPct ?? 0) | percent:'1.1-2' }})
-            }
-            @if (chartStats().currentTs) {
-              <span class="hover-readout">
-                {{ chartStats().currentTs | date:'MMM d, h:mm a' }}
-              </span>
+          <p class="delta" [class.pos]="chartReadout().value >= 0" [class.neg]="chartReadout().value < 0">
+            {{ chartReadout().value >= 0 ? '+' : '' }}{{ chartReadout().value | currency:'USD':'symbol':'1.2-2' }}
+            @if (chartReadout().pct !== null) {
+              ({{ (chartReadout().pct ?? 0) >= 0 ? '+' : '' }}{{ (chartReadout().pct ?? 0) | percent:'1.1-2' }})
             }
           </p>
         </div>
@@ -77,7 +87,7 @@
         </div>
       </div>
 
-      <div class="chart-wrap">
+      <div class="chart-wrap" #chartWrap>
         <canvas #pnlChart></canvas>
       </div>
 
@@ -136,7 +146,6 @@
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'homeYesPrice')">Home YES <span>{{ sortIndicator('monitoredGames', 'homeYesPrice') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'awayYesPrice')">Away YES <span>{{ sortIndicator('monitoredGames', 'awayYesPrice') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'redCards')">Red (H-A) <span>{{ sortIndicator('monitoredGames', 'redCards') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingVsTrailingRedCards')">Red (L-T) <span>{{ sortIndicator('monitoredGames', 'leadingVsTrailingRedCards') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingTeam')">Leader <span>{{ sortIndicator('monitoredGames', 'leadingTeam') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'goalDiff')">Diff <span>{{ sortIndicator('monitoredGames', 'goalDiff') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'status')">Status <span>{{ sortIndicator('monitoredGames', 'status') }}</span></button></th>
@@ -145,7 +154,7 @@
                 </thead>
                 <tbody>
                   @if (!d.monitoredGames.length) {
-                    <tr><td colspan="12" class="muted">No live tracked games right now</td></tr>
+                    <tr><td colspan="11" class="muted">No live tracked games right now</td></tr>
                   }
                   @for (g of sortedMonitoredGames().slice(0, 120); track g.eventTicker) {
                     <tr>
@@ -156,7 +165,6 @@
                       <td>{{ g.homeYesPrice === null || g.homeYesPrice === undefined ? '-' : (g.homeYesPrice | percent:'1.0-0') }}</td>
                       <td>{{ g.awayYesPrice === null || g.awayYesPrice === undefined ? '-' : (g.awayYesPrice | percent:'1.0-0') }}</td>
                       <td>{{ g.redCards || '-' }}</td>
-                      <td>{{ g.leadingVsTrailingRedCards || '-' }}</td>
                       <td>{{ g.leadingTeam }}</td>
                       <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
                       <td><span class="chip">{{ g.status }}</span></td>
@@ -178,14 +186,14 @@
                   <tr>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'ticker')">Ticker <span>{{ sortIndicator('openTrades', 'ticker') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'eventTitle')">Game <span>{{ sortIndicator('openTrades', 'eventTitle') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'currentScore')">Score <span>{{ sortIndicator('openTrades', 'currentScore') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'selectionLabel')">Bet <span>{{ sortIndicator('openTrades', 'selectionLabel') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'marketStatus')">Mkt <span>{{ sortIndicator('openTrades', 'marketStatus') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'quantity')">Qty <span>{{ sortIndicator('openTrades', 'quantity') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'currentContractCostUsd')">Current Cost <span>{{ sortIndicator('openTrades', 'currentContractCostUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'entryPx')">Entry Cost <span>{{ sortIndicator('openTrades', 'entryPx') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'quantity')"># Contracts <span>{{ sortIndicator('openTrades', 'quantity') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('openTrades', 'amountBetUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'entryPx')">Entry Px <span>{{ sortIndicator('openTrades', 'entryPx') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('openTrades', 'totalReturnUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'costBasisUsd')">Cost <span>{{ sortIndicator('openTrades', 'costBasisUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'markPrice')">Mark <span>{{ sortIndicator('openTrades', 'markPrice') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedPnlUsd')">PnL <span>{{ sortIndicator('openTrades', 'unrealizedPnlUsd') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedRoiPct')">ROI <span>{{ sortIndicator('openTrades', 'unrealizedRoiPct') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'condition')">Condition <span>{{ sortIndicator('openTrades', 'condition') }}</span></button></th>
@@ -195,20 +203,20 @@
                 </thead>
                 <tbody>
                   @if (!d.openTrades.length) {
-                    <tr><td colspan="15" class="muted">No open positions</td></tr>
+                    <tr><td colspan="17" class="muted">No open positions</td></tr>
                   }
                   @for (t of sortedOpenTrades(); track trackByTicker($index, t)) {
                     <tr>
                       <td>{{ t.ticker }}</td>
                       <td>{{ t.event_title || t.event_ticker || '-' }}</td>
+                      <td>{{ t.current_score || '-' }}</td>
                       <td>{{ t.selection_label || t.market_title || '-' }}</td>
                       <td>{{ t.market_status || '-' }}</td>
+                      <td>{{ t.current_contract_cost_usd === null || t.current_contract_cost_usd === undefined ? '-' : (t.current_contract_cost_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                      <td>{{ t.placed_context?.yesPrice === null || t.placed_context?.yesPrice === undefined ? '-' : (t.placed_context?.yesPrice | currency:'USD':'symbol':'1.2-2') }}</td>
                       <td>{{ t.quantity ?? '-' }}</td>
                       <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.placed_context?.yesPrice === null || t.placed_context?.yesPrice === undefined ? '-' : (t.placed_context?.yesPrice | percent:'1.0-0') }}</td>
                       <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
                       <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
                         {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd === undefined ? '-' : (t.unrealized_pnl_usd | currency:'USD':'symbol':'1.2-2') }}
                       </td>
@@ -218,13 +226,13 @@
                       <td>
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
-                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red {{ t.placed_context.placedCards || '-' }} | L-T {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red (H-A) {{ t.placed_context.placedCards || '-' }}
                         }
                       </td>
                       <td>
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
-                          {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                          {{ t.placed_context.placedCards || '-' }}
                         }
                       </td>
                       <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
@@ -503,7 +511,7 @@
       </div>
       </section>
 
-      <section class="panel">
+      <section class="panel panel--action-logs">
         <div class="panel-title-row">
           <h2>Action Logs</h2>
           <div class="log-toolbar">
@@ -613,13 +621,13 @@
                 <td>
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
-                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red {{ t.placed_context.placedCards || '-' }} | L-T {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red (H-A) {{ t.placed_context.placedCards || '-' }}
                   }
                 </td>
                 <td>
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
-                    {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                    {{ t.placed_context.placedCards || '-' }}
                   }
                 </td>
               </tr>

@@ -19,6 +19,7 @@
   background: var(--bg);
   min-height: 100dvh;
   padding: 0 1.2rem 1.2rem;
+  overflow-x: clip;
 }
 
 .theme-dark {
@@ -57,20 +58,21 @@
   margin: 0 0 1rem;
   width: 100vw;
   margin-left: calc(50% - 50vw);
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--line);
-  border-top: 0;
-  border-radius: 0 0 18px 18px;
-  background: color-mix(in oklab, var(--panel) 92%, var(--chip));
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
-  overflow: hidden;
+  box-sizing: border-box;
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--panel) 96%, var(--bg));
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+  overflow: clip;
 }
 
 .account-strip__row {
   display: flex;
-  gap: 0.35rem;
-  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  align-items: center;
   min-width: 0;
 }
 
@@ -81,18 +83,19 @@
 }
 
 .account-strip__metrics {
-  flex: 1 1 auto;
+  flex: 5 1 0;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 0.35rem;
 }
 
 .account-strip__actions {
-  flex: 0 1 40%;
+  flex: 2.5 1 0;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-left: auto;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 0.35rem;
   justify-content: end;
 }
@@ -102,47 +105,109 @@
   align-items: center;
   justify-content: center;
   gap: 0.32rem;
-  min-height: clamp(34px, 2.8vw, 40px);
+  min-height: 36px;
   align-self: center;
-  padding: 0 clamp(0.5rem, 0.25rem + 0.35vw, 0.8rem);
-  border-radius: 999px;
+  padding: 0 0.8rem;
+  border-radius: 8px;
   border: 1px solid var(--line);
-  font-size: clamp(0.54rem, 0.36rem + 0.3vw, 0.76rem);
+  font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0.6 1 0;
 }
 
 .nav-toggle {
-  background: linear-gradient(180deg, color-mix(in oklab, #7d8cff 72%, white 12%), color-mix(in oklab, #5e72ff 68%, var(--panel)));
+  background: color-mix(in oklab, var(--panel) 84%, var(--chip));
   color: var(--ink);
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(93, 114, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.28);
-  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 18%, transparent);
 }
 
 .theme-light .nav-toggle {
-  background: linear-gradient(180deg, #8ea2ff, #6b80ff);
-  color: #ffffff;
-  border-color: color-mix(in oklab, #5e72ff 55%, var(--line));
-  box-shadow: 0 10px 24px rgba(93, 114, 255, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  background: color-mix(in oklab, var(--panel) 92%, #eef4ea);
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--accent) 24%, var(--line));
 }
 
 .nav-toggle__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1rem;
-  font-size: 0.8rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+}
+
+.bulb-icon {
+  width: 1.4rem;
+  height: 1.4rem;
+  overflow: visible;
+}
+
+.bulb-icon__glass,
+.bulb-icon__filament,
+.bulb-icon__base,
+.bulb-icon__glow {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bulb-icon__glass {
+  stroke-width: 1.5;
+}
+
+.bulb-icon__filament {
+  stroke-width: 1.45;
+}
+
+.bulb-icon__base {
+  stroke-width: 1.6;
+}
+
+.bulb-icon--on .bulb-icon__glow {
+  fill: color-mix(in oklab, #fff3a3 66%, transparent);
+  stroke: none;
+  filter: drop-shadow(0 0 5px rgba(255, 231, 122, 0.9)) drop-shadow(0 0 10px rgba(255, 221, 87, 0.55));
+}
+
+.bulb-icon--on .bulb-icon__glass {
+  stroke: #ffe57a;
+  fill: color-mix(in oklab, #fff3a3 32%, transparent);
+}
+
+.bulb-icon--on .bulb-icon__filament {
+  stroke: #ffd54f;
+  filter: drop-shadow(0 0 2px rgba(255, 213, 79, 0.95));
+}
+
+.bulb-icon--on .bulb-icon__base {
+  stroke: color-mix(in oklab, #ffd54f 72%, var(--ink));
+}
+
+.bulb-icon--off .bulb-icon__glass {
+  stroke: color-mix(in oklab, var(--muted) 78%, var(--line));
+  fill: color-mix(in oklab, var(--panel) 78%, transparent);
+}
+
+.bulb-icon--off .bulb-icon__filament {
+  stroke: color-mix(in oklab, #f0a54b 72%, var(--muted));
+  filter: drop-shadow(0 0 1.5px rgba(240, 165, 75, 0.35));
+}
+
+.bulb-icon--off .bulb-icon__base {
+  stroke: color-mix(in oklab, var(--muted) 82%, var(--line));
 }
 
 .account-metric {
+  flex: 1 1 0;
   min-width: 0;
-  padding: clamp(0.34rem, 0.2rem + 0.24vw, 0.5rem) clamp(0.38rem, 0.18rem + 0.25vw, 0.6rem);
+  padding: 0.38rem 0.5rem;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 8px;
   background: color-mix(in oklab, var(--panel) 86%, var(--chip));
   overflow: hidden;
 
@@ -150,7 +215,7 @@
     display: block;
     margin-bottom: 0.16rem;
     color: var(--muted);
-    font-size: clamp(0.42rem, 0.3rem + 0.16vw, 0.56rem);
+    font-size: clamp(0.48rem, 0.38rem + 0.12vw, 0.58rem);
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -161,8 +226,9 @@
 
   strong {
     display: block;
-    font-size: clamp(0.6rem, 0.42rem + 0.28vw, 0.82rem);
+    font-size: clamp(1.04rem, 0.86rem + 0.28vw, 1.28rem);
     line-height: 1.1;
+    font-weight: 900;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -171,6 +237,13 @@
 
 .account-metric--status {
   background: color-mix(in oklab, var(--panel) 78%, var(--chip));
+  flex: 0.8 1 0;
+}
+
+.account-metric--status strong,
+.account-metric--time strong,
+.account-metric--stop strong {
+  font-size: clamp(0.9rem, 0.76rem + 0.18vw, 1.05rem);
 }
 
 .account-metric--time {
@@ -274,23 +347,29 @@
 }
 
 @media (max-width: 720px) {
+  .account-strip__row {
+    flex-wrap: wrap;
+  }
+
+  .account-strip__metrics,
+  .account-strip__actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .account-metric,
+  .account-metric--status,
+  .nav-toggle {
+    flex: 1 1 140px;
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
   }
 
   .account-strip {
-    padding: 0.55rem 0.6rem;
-  }
-}
-
-@media (max-width: 1200px) {
-  .account-strip__metrics {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-
-  .account-strip__actions {
-    flex-basis: 42%;
+    padding: 0.45rem 0.6rem;
   }
 }
 
@@ -376,14 +455,13 @@
 
 .chart-wrap {
   margin-top: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
   background: transparent;
+  position: relative;
+  height: 320px;
 
   canvas {
-    width: 100%;
-    height: 320px;
+    width: 100% !important;
+    height: 100% !important;
     display: block;
   }
 }
@@ -622,6 +700,16 @@ table {
   cursor: pointer;
 }
 
+.sort-button span:last-child {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .pos {
   color: var(--accent);
   font-weight: 700;
@@ -641,6 +729,21 @@ table {
   overflow: auto;
   display: grid;
   gap: 0.45rem;
+}
+
+.panel--action-logs {
+  contain: size layout;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel--action-logs .log-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
 }
 
 .log-toolbar {
