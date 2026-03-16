@@ -1,9 +1,10 @@
 import { CommonModule, CurrencyPipe, DatePipe, PercentPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Component, computed, effect, ElementRef, inject, OnDestroy, signal, ViewChild } from '@angular/core';
+import { Component, computed, effect, ElementRef, HostListener, inject, OnDestroy, signal, ViewChild } from '@angular/core';
 import {
   CategoryScale,
   Chart,
+  type Chart as ChartInstance,
   Filler,
   Legend,
   LineController,
@@ -39,6 +40,9 @@ interface DashboardPayload {
   account: {
     balanceUsd: number | null;
     portfolioValueUsd: number | null;
+    investedCapitalUsd: number | null;
+    investedCapitalStartDate?: string | null;
+    investedCapitalSource?: string | null;
     openPositionsCount: number;
     pnlTodayUsd: number;
     pnl14dUsd: number;
@@ -92,6 +96,7 @@ interface TradeRecord {
   ticker: string;
   event_ticker?: string;
   event_title?: string | null;
+  current_score?: string | null;
   selection_label?: string | null;
   market_title?: string | null;
   market_status?: string | null;
@@ -100,6 +105,7 @@ interface TradeRecord {
   quantity?: number;
   cost_basis_usd?: number;
   amount_bet_usd?: number;
+  current_contract_cost_usd?: number | null;
   mark_price?: number | null;
   mark_value_usd?: number | null;
   total_return_usd?: number | null;
@@ -114,10 +120,20 @@ interface TradeRecord {
     placedScore?: string;
     placedCards?: string | null;
     placedLeaderVsTrailingCards?: string | null;
+    stakeUsdTarget?: number | null;
+    targetProfitUsd?: number | null;
+    recoveryQueueId?: string | null;
+    recoveryRemainingUsd?: number | null;
+    recoverySourceLossUsd?: number | null;
+    recoverySourceEventTitle?: string | null;
+    sizingMode?: string | null;
     leadingTeam?: string | null;
+    leadingTeamMaxLead?: number | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
+    yesPrice?: number | null;
+    fillCount?: number | null;
   } | null;
 }
 
@@ -140,10 +156,20 @@ interface ClosedTradeRecord {
     placedScore?: string;
     placedCards?: string | null;
     placedLeaderVsTrailingCards?: string | null;
+    stakeUsdTarget?: number | null;
+    targetProfitUsd?: number | null;
+    recoveryQueueId?: string | null;
+    recoveryRemainingUsd?: number | null;
+    recoverySourceLossUsd?: number | null;
+    recoverySourceEventTitle?: string | null;
+    sizingMode?: string | null;
     leadingTeam?: string | null;
+    leadingTeamMaxLead?: number | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
+    yesPrice?: number | null;
+    fillCount?: number | null;
   } | null;
 }
 
@@ -173,31 +199,47 @@ interface TradeAnalytics {
   longestLossStreak: number;
 }
 
-interface RecoveryLadderRow {
-  stakeUsd: number;
-  trades: number;
-  wins: number;
-  losses: number;
-  pushes: number;
-  lossUsdAbs: number;
-  winUsd: number;
-  netPnlUsd: number;
-  avgWinUsd: number | null;
-  prevTierStakeUsd: number | null;
-  prevTierLossUsd: number;
-  remainingLossUsd?: number;
-  winsNeededToOffsetPrevTierLosses: number | null;
+interface RecoveryTradeLink {
+  tradeKey: string;
+  eventTitle: string;
+  competition: string;
+  settledTime: string;
+  pnlUsd: number;
+  amountBetUsd: number | null;
+  stakeUsdTarget: number | null;
+  yesPrice: number | null;
+  contracts: number | null;
+  targetedRemainingUsdBefore?: number;
+  allocatedRecoveryUsd?: number;
+}
+
+interface RecoveryQueueRow {
+  queueId: string;
+  sourceTradeKey: string;
+  sourceTicker: string;
+  sourceEventTicker: string | null;
+  sourceEventTitle: string;
+  competition: string;
+  lossSettledTime: string;
+  lossUsd: number;
+  recoveredUsd: number;
+  remainingTargetUsd: number;
+  status: string;
+  resolvedAt: string | null;
+  recoveryBet: RecoveryTradeLink | null;
+  recoveryBetResultUsd: number | null;
+  resolutionTrade: RecoveryTradeLink | null;
 }
 
 interface RecoveryAnalytics {
   enabled: boolean;
+  strategy?: string;
   baseStakeUsd: number;
-  recoveryStakeUsd: number;
-  recoveryMaxStakeUsd?: number;
   currentLossStreak: number;
   recoveryLossBalanceUsd: number;
-  nextStakeUsd: number;
-  ladder: RecoveryLadderRow[];
+  nextTargetProfitUsd: number;
+  unresolvedLossCount: number;
+  queue: RecoveryQueueRow[];
 }
 
 interface LeagueLeaderboardRow {
@@ -217,18 +259,37 @@ interface MonitoredGameRecord {
   competition: string;
   minute: number | null;
   score: string;
+  homeTeam?: string | null;
+  awayTeam?: string | null;
+  homeYesPrice?: number | null;
+  awayYesPrice?: number | null;
   redCards: string | null;
   leadingVsTrailingRedCards: string | null;
   leadingTeam: string;
   goalDiff: number | null;
-  status: 'ELIGIBLE_NOW' | 'ALREADY_BET' | 'WATCHING' | 'FILTERED' | 'NO_LIVE_DATA';
+  status: 'ELIGIBLE_NOW' | 'ELIGIBLE_NO_CAPACITY' | 'ALREADY_BET' | 'WATCHING' | 'FILTERED' | 'NO_LIVE_DATA';
   reason: string;
 }
 
 type ThemeMode = 'light' | 'dark';
-type ChartRange = '1H' | '3H' | '6H' | '12H' | 'LIVE' | '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL';
+type ChartRange = 'LIVE' | '1H' | '3H' | '6H' | '12H' | '1D' | '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y' | '3Y' | '5Y' | 'ALL';
 type LogViewMode = 'important' | 'verbose';
 type LogTimeRange = 'TODAY' | '24H' | '7D' | 'ALL';
+type SortDirection = 'asc' | 'desc';
+type TableId = 'monitoredGames' | 'openTrades' | 'recoveryQueue' | 'leagueLeaderboard' | 'closedTrades';
+
+interface TableSortState {
+  key: string;
+  direction: SortDirection;
+}
+
+const DEFAULT_TABLE_SORT: Record<TableId, TableSortState> = {
+  monitoredGames: { key: 'minute', direction: 'desc' },
+  openTrades: { key: 'lastUpdated', direction: 'desc' },
+  recoveryQueue: { key: 'remainingTargetUsd', direction: 'desc' },
+  leagueLeaderboard: { key: 'avgRoiPct', direction: 'desc' },
+  closedTrades: { key: 'settledTime', direction: 'desc' },
+};
 
 interface PnlPoint {
   ts: number;
@@ -239,6 +300,13 @@ interface MetricCard {
   label: string;
   value: number | null;
   format: 'usd' | 'pct' | 'num';
+  secondaryPct?: number | null;
+}
+
+interface HeaderMetric {
+  label: string;
+  value: string;
+  tone?: 'pos' | 'neg' | '';
 }
 
 interface MetricSection {
@@ -272,8 +340,74 @@ export class App implements OnDestroy {
     }
   }
   private chartCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('chartWrap') private chartWrap?: ElementRef<HTMLElement>;
   private chartInstance: Chart<'line'> | null = null;
   private chartPoints: PnlPoint[] = [];
+  private readonly chartSelectionPlugin = {
+    id: 'selectionGuides',
+    afterDatasetsDraw: (chart: ChartInstance<'line'>) => {
+      const ctx = chart.ctx;
+      const top = chart.chartArea.top;
+      const bottom = chart.chartArea.bottom;
+      const left = chart.chartArea.left;
+      const right = chart.chartArea.right;
+      const yScale = chart.scales['y'];
+
+      if (yScale && Number.isFinite(yScale.min) && Number.isFinite(yScale.max) && yScale.min <= 0 && yScale.max >= 0) {
+        const zeroY = yScale.getPixelForValue(0);
+        ctx.save();
+        ctx.strokeStyle = this.theme() === 'dark' ? 'rgba(154, 165, 177, 0.4)' : 'rgba(111, 114, 119, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(left, zeroY);
+        ctx.lineTo(right, zeroY);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      const selected = [...this.selectedChartPoints()].sort((a, b) => a.ts - b.ts);
+      const hovered = selected.length ? null : this.hoveredPoint();
+      const targets = selected.length ? selected : hovered ? [hovered] : [];
+      if (!targets.length) return;
+      const datasetMeta = chart.getDatasetMeta(0);
+
+      ctx.save();
+      ctx.strokeStyle = this.theme() === 'dark' ? 'rgba(154, 165, 177, 0.55)' : 'rgba(111, 114, 119, 0.55)';
+      ctx.lineWidth = 1;
+
+      const xs = [];
+      for (const point of targets) {
+        const idx = this.chartPoints.findIndex((candidate) => candidate.ts === point.ts && candidate.pnl === point.pnl);
+        const element = idx >= 0 ? datasetMeta.data[idx] : null;
+        const x = element?.x;
+        if (typeof x !== 'number') continue;
+        xs.push(x);
+        ctx.beginPath();
+        ctx.moveTo(x, top);
+        ctx.lineTo(x, bottom);
+        ctx.stroke();
+      }
+
+      const label = selected.length >= 2
+        ? `${this.formatReadoutTs(selected[0].ts)} - ${this.formatReadoutTs(selected[1].ts)}`
+        : this.formatReadoutTs((targets[0] || hovered).ts);
+
+      if (label && xs.length) {
+        const centerX = selected.length >= 2
+          ? (Math.min(...xs) + Math.max(...xs)) / 2
+          : xs[0];
+        const clampedX = Math.min(right - 8, Math.max(left + 8, centerX));
+        const labelY = selected.length >= 2 ? top + 8 : Math.max(8, top - 18);
+        ctx.fillStyle = this.theme() === 'dark' ? '#c7d0d9' : '#5b6470';
+        ctx.font = '600 12px Space Grotesk, Manrope, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, clampedX, labelY);
+      }
+
+      ctx.restore();
+    },
+  };
   private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -285,9 +419,11 @@ export class App implements OnDestroy {
   readonly chartRange = signal<ChartRange>('ALL');
   readonly logViewMode = signal<LogViewMode>('important');
   readonly logTimeRange = signal<LogTimeRange>('TODAY');
-  readonly chartRanges: ChartRange[] = ['1H', '3H', '6H', '12H', 'LIVE', '1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL'];
+  readonly tableSort = signal<Record<TableId, TableSortState>>({ ...DEFAULT_TABLE_SORT });
+  readonly chartRanges: ChartRange[] = ['LIVE', '1H', '3H', '6H', '12H', '1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'ALL'];
   readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
+  readonly selectedChartPoints = signal<PnlPoint[]>([]);
   readonly visibleLogs = computed(() => {
     const d = this.data();
     if (!d) return [] as LogRecord[];
@@ -311,6 +447,93 @@ export class App implements OnDestroy {
       return Number.isFinite(ts) ? ts >= fromTs : false;
     });
   });
+  readonly sortedMonitoredGames = computed<MonitoredGameRecord[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.monitoredGames || [], this.tableSort().monitoredGames, {
+      minute: (row) => row.minute,
+      competition: (row) => row.competition,
+      title: (row) => row.title,
+      score: (row) => row.score,
+      homeYesPrice: (row) => row.homeYesPrice,
+      awayYesPrice: (row) => row.awayYesPrice,
+      redCards: (row) => row.redCards,
+      leadingTeam: (row) => row.leadingTeam,
+      goalDiff: (row) => row.goalDiff,
+      status: (row) => row.status,
+      reason: (row) => row.reason,
+    });
+  });
+  readonly sortedOpenTrades = computed<TradeRecord[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.openTrades || [], this.tableSort().openTrades, {
+      ticker: (row) => row.ticker,
+      eventTitle: (row) => row.event_title || row.event_ticker,
+      currentScore: (row) => row.current_score,
+      selectionLabel: (row) => row.selection_label || row.market_title,
+      marketStatus: (row) => row.market_status,
+      quantity: (row) => row.quantity,
+      amountBetUsd: (row) => row.amount_bet_usd,
+      entryPx: (row) => row.placed_context?.yesPrice,
+      totalReturnUsd: (row) => row.total_return_usd,
+      costBasisUsd: (row) => row.cost_basis_usd,
+      currentContractCostUsd: (row) => row.current_contract_cost_usd,
+      markPrice: (row) => row.mark_price,
+      unrealizedPnlUsd: (row) => row.unrealized_pnl_usd,
+      unrealizedRoiPct: (row) => row.unrealized_roi_pct,
+      condition: (row) => row.placed_context?.triggerRule,
+      cards: (row) => row.placed_context?.placedCards,
+      lastUpdated: (row) => this.toTimestamp(row.last_updated_ts),
+    });
+  });
+  readonly sortedRecoveryQueue = computed<RecoveryQueueRow[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.recovery?.queue || [], this.tableSort().recoveryQueue, {
+      queueId: (row) => row.queueId,
+      sourceEventTitle: (row) => row.sourceEventTitle,
+      competition: (row) => row.competition,
+      lossUsd: (row) => row.lossUsd,
+      recoveredUsd: (row) => row.recoveredUsd,
+      remainingTargetUsd: (row) => row.remainingTargetUsd,
+      recoveryBet: (row) => row.recoveryBet?.eventTitle,
+      stakeUsdTarget: (row) => row.recoveryBet?.stakeUsdTarget,
+      yesPrice: (row) => row.recoveryBet?.yesPrice,
+      recoveryBetResultUsd: (row) => row.recoveryBetResultUsd,
+      status: (row) => row.status,
+    });
+  });
+  readonly sortedLeagueLeaderboard = computed<LeagueLeaderboardRow[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.leagueLeaderboard || [], this.tableSort().leagueLeaderboard, {
+      league: (row) => row.league,
+      trades: (row) => row.trades,
+      wins: (row) => row.wins,
+      losses: (row) => row.losses,
+      winRate: (row) => row.winRate,
+      avgRoiPct: (row) => row.avgRoiPct,
+      totalPnlUsd: (row) => row.totalPnlUsd,
+    });
+  });
+  readonly sortedClosedTrades = computed<ClosedTradeRecord[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.closedTrades || [], this.tableSort().closedTrades, {
+      settledTime: (row) => this.toTimestamp(row.settled_time),
+      ticker: (row) => row.ticker,
+      eventTitle: (row) => row.placed_context?.eventTitle || row.event_ticker,
+      marketResult: (row) => row.market_result,
+      amountBetUsd: (row) => row.amount_bet_usd,
+      totalReturnUsd: (row) => row.total_return_usd,
+      pnlUsd: (row) => row.pnl_usd,
+      roiPct: (row) => row.roi_pct,
+      winsToRecover: (row) => row.wins_to_recover_at_avg_win,
+      placedCondition: (row) => row.placed_context?.triggerRule,
+      cards: (row) => row.placed_context?.placedCards,
+    });
+  });
 
   readonly liveDeskMetrics = computed<MetricCard[]>(() => {
     const d = this.data();
@@ -324,10 +547,64 @@ export class App implements OnDestroy {
       { label: 'Fill Rate', value: d.metrics.fillRate, format: 'pct' },
     ];
   });
+  readonly netAccountValue = computed(() => {
+    const d = this.data();
+    if (!d) return null;
+    if (d.account.balanceUsd === null && d.account.portfolioValueUsd === null) return null;
+    return Number(((d.account.balanceUsd ?? 0) + (d.account.portfolioValueUsd ?? 0)).toFixed(2));
+  });
+  readonly headerMetrics = computed<HeaderMetric[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    const allTimePnl = this.allTimePnlStats();
+
+    const netAccountValue = this.netAccountValue();
+    const totalInvested =
+      d.account.investedCapitalUsd === null || d.account.investedCapitalUsd === undefined
+        ? null
+        : Number(d.account.investedCapitalUsd.toFixed(2));
+    const allTimePnlPct = totalInvested && totalInvested > 0 ? (allTimePnl.value / totalInvested) : null;
+
+    return [
+      {
+        label: 'Net Account Value',
+        value: netAccountValue === null ? '-' : `$${netAccountValue.toFixed(2)}`,
+        tone: this.numberTone(netAccountValue),
+      },
+      {
+        label: 'Available Balance',
+        value: d.account.balanceUsd === null ? '-' : `$${Number(d.account.balanceUsd).toFixed(2)}`,
+        tone: this.numberTone(d.account.balanceUsd),
+      },
+      {
+        label: 'All-Time PnL',
+        value:
+          allTimePnlPct === null
+            ? `${allTimePnl.value >= 0 ? '+' : ''}$${allTimePnl.value.toFixed(2)}`
+            : `${allTimePnl.value >= 0 ? '+' : ''}$${allTimePnl.value.toFixed(2)} (${allTimePnlPct >= 0 ? '+' : ''}${(allTimePnlPct * 100).toFixed(2)}%)`,
+        tone: this.numberTone(allTimePnl.value),
+      },
+      {
+        label: 'Open Position Value',
+        value: d.account.portfolioValueUsd === null ? '-' : `$${Number(d.account.portfolioValueUsd).toFixed(2)}`,
+        tone: this.numberTone(d.account.portfolioValueUsd),
+      },
+      {
+        label: 'Total Amount Invested',
+        value: totalInvested === null ? '-' : `$${totalInvested.toFixed(2)}`,
+        tone: this.numberTone(totalInvested),
+      },
+    ];
+  });
 
   readonly botPerformanceMetrics = computed<MetricCard[]>(() => {
     const d = this.data();
     if (!d) return [];
+    const investedCapital = this.investedCapital();
+    const pctOfInvested = (value: number | null) =>
+      investedCapital && investedCapital > 0 && value !== null && value !== undefined
+        ? value / investedCapital
+        : null;
     return [
       { label: 'Available Balance', value: d.account.balanceUsd, format: 'usd' },
       { label: 'Open Position Value', value: d.account.portfolioValueUsd, format: 'usd' },
@@ -339,9 +616,14 @@ export class App implements OnDestroy {
             : Number(((d.account.balanceUsd ?? 0) + (d.account.portfolioValueUsd ?? 0)).toFixed(2)),
         format: 'usd',
       },
-      { label: 'Today PnL', value: d.account.pnlTodayUsd, format: 'usd' },
-      { label: 'Realized PnL', value: d.account.pnl14dUsd, format: 'usd' },
-      { label: 'Open ROI PnL', value: d.account.openUnrealizedPnlUsd, format: 'usd' },
+      { label: 'Today PnL', value: d.account.pnlTodayUsd, format: 'usd', secondaryPct: pctOfInvested(d.account.pnlTodayUsd) },
+      { label: 'Realized PnL', value: d.account.pnl14dUsd, format: 'usd', secondaryPct: pctOfInvested(d.account.pnl14dUsd) },
+      {
+        label: 'Open ROI PnL',
+        value: d.account.openUnrealizedPnlUsd,
+        format: 'usd',
+        secondaryPct: pctOfInvested(d.account.openUnrealizedPnlUsd),
+      },
       { label: 'Open ROI %', value: d.account.openRoiPct, format: 'pct' },
     ];
   });
@@ -362,16 +644,108 @@ export class App implements OnDestroy {
     ];
   });
 
+  readonly riskMetrics = computed<MetricCard[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    const netAccountValue =
+      (d.account.balanceUsd ?? 0) +
+      (d.account.portfolioValueUsd ?? 0);
+    const edgeGap =
+      d.analytics.winRate !== null && d.analytics.breakevenWinRate !== null
+        ? d.analytics.winRate - d.analytics.breakevenWinRate
+        : null;
+    const avgLossToWin =
+      d.analytics.avgLossAbsUsd && d.analytics.avgWinUsd
+        ? d.analytics.avgLossAbsUsd / d.analytics.avgWinUsd
+        : null;
+    const avgBetPct =
+      netAccountValue > 0 && d.analytics.avgTotalCostUsd !== null
+        ? d.analytics.avgTotalCostUsd / netAccountValue
+        : null;
+    const maxDrawdownPct =
+      netAccountValue > 0 && d.analytics.maxDrawdownUsd !== null
+        ? d.analytics.maxDrawdownUsd / netAccountValue
+        : null;
+    const stopLossPct =
+      netAccountValue > 0 && d.config.maxDailyLossUsd !== null && d.config.maxDailyLossUsd !== undefined
+        ? d.config.maxDailyLossUsd / netAccountValue
+        : null;
+    const recoveryQueuePct =
+      netAccountValue > 0 && d.recovery?.recoveryLossBalanceUsd !== undefined
+        ? d.recovery.recoveryLossBalanceUsd / netAccountValue
+        : null;
+    const lossesToStop =
+      d.analytics.avgLossAbsUsd && d.analytics.avgLossAbsUsd > 0
+        ? Math.floor(d.config.maxDailyLossUsd / d.analytics.avgLossAbsUsd)
+        : null;
+    const lossesToBankrupt =
+      d.analytics.avgLossAbsUsd && d.analytics.avgLossAbsUsd > 0 && (d.account.balanceUsd ?? 0) > 0
+        ? Math.floor((d.account.balanceUsd ?? 0) / d.analytics.avgLossAbsUsd)
+        : null;
+
+    return [
+      { label: 'Edge Gap', value: edgeGap, format: 'pct' },
+      { label: 'Loss / Win Ratio', value: avgLossToWin, format: 'num' },
+      { label: 'Avg Bet % Bankroll', value: avgBetPct, format: 'pct' },
+      { label: 'Max Drawdown %', value: maxDrawdownPct, format: 'pct' },
+      { label: 'Stop-Loss % Bankroll', value: stopLossPct, format: 'pct' },
+      { label: 'Recovery Queue %', value: recoveryQueuePct, format: 'pct' },
+      { label: 'Avg Losses To Stop', value: lossesToStop, format: 'num' },
+      { label: 'Avg Losses To Bankrupt', value: lossesToBankrupt, format: 'num' },
+    ];
+  });
+
+  readonly riskStatus = computed(() => {
+    const d = this.data();
+    if (!d) {
+      return {
+        edge: 'Unknown',
+        ruinRisk: 'Unknown',
+        note: 'No dashboard data loaded',
+      };
+    }
+    const expectancy = d.analytics.expectancyPerTradeUsd;
+    const edgeGap =
+      d.analytics.winRate !== null && d.analytics.breakevenWinRate !== null
+        ? d.analytics.winRate - d.analytics.breakevenWinRate
+        : null;
+    const queueBurden = d.recovery?.recoveryLossBalanceUsd ?? 0;
+    const balance = d.account.balanceUsd ?? 0;
+
+    if ((expectancy ?? 0) < 0 || (edgeGap ?? 0) < 0) {
+      return {
+        edge: 'Negative',
+        ruinRisk: 'High',
+        note: 'Current win rate is below breakeven for the current payoff profile.',
+      };
+    }
+
+    if (queueBurden > balance * 0.15) {
+      return {
+        edge: 'Thin',
+        ruinRisk: 'Elevated',
+        note: 'Recovery burden is large relative to available balance.',
+      };
+    }
+
+    return {
+      edge: 'Positive',
+      ruinRisk: 'Controlled',
+      note: 'Sustainability still depends on keeping stake size small relative to bankroll.',
+    };
+  });
+
   readonly recoveryMetrics = computed<MetricCard[]>(() => {
     const d = this.data();
     if (!d) return [];
     return [
-      { label: 'Next Stake', value: d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? null, format: 'usd' },
+      { label: 'Next Recovery Target', value: d.recovery?.nextTargetProfitUsd ?? 0, format: 'usd' },
+      { label: 'Unresolved Losses', value: d.recovery?.unresolvedLossCount ?? 0, format: 'num' },
       { label: 'Loss Streak', value: d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0, format: 'num' },
       { label: 'Recovery Loss $', value: d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0, format: 'usd' },
       { label: 'Wins / Single Loss', value: d.analytics.winsRequiredToRecoverSingleLoss, format: 'num' },
       { label: 'Wins To Breakeven', value: d.analytics.winsRequiredToBreakeven, format: 'num' },
-      { label: 'Settled Trades', value: d.analytics.settledTrades, format: 'num' },
+      { label: 'Base Stake', value: d.recovery?.baseStakeUsd ?? d.config.stakeUsd ?? null, format: 'usd' },
     ];
   });
 
@@ -385,6 +759,14 @@ export class App implements OnDestroy {
 
     const points: PnlPoint[] = [];
     let cumulative = 0;
+    const firstSettledTs = sorted.length ? new Date(sorted[0].settled_time).getTime() : null;
+
+    if (firstSettledTs !== null && Number.isFinite(firstSettledTs)) {
+      points.push({
+        ts: firstSettledTs - 1,
+        pnl: 0,
+      });
+    }
 
     for (const t of sorted) {
       cumulative += Number(t.pnl_usd || 0);
@@ -400,6 +782,23 @@ export class App implements OnDestroy {
 
     return points.length ? points : [{ ts: nowTs, pnl: 0 }];
   });
+  readonly allTimePnlStats = computed(() => {
+    const points = this.pnlSeries();
+    const value = points[points.length - 1]?.pnl ?? 0;
+    const investedCapital = this.investedCapital();
+    return {
+      value,
+      pct: investedCapital && investedCapital > 0 ? value / investedCapital : null,
+    };
+  });
+  readonly investedCapital = computed(() => {
+    const d = this.data();
+    if (!d) return null;
+    const investedCapitalUsd = d.account.investedCapitalUsd;
+    return investedCapitalUsd !== null && investedCapitalUsd !== undefined && investedCapitalUsd > 0
+      ? Number(investedCapitalUsd.toFixed(4))
+      : null;
+  });
 
   readonly rangeFilteredSeries = computed(() => {
     const series = this.pnlSeries();
@@ -410,16 +809,23 @@ export class App implements OnDestroy {
     const nowTs = this.now().getTime();
     let fromTs = 0;
 
+    if (range === 'LIVE') {
+      const start = new Date(nowTs);
+      start.setHours(0, 0, 0, 0);
+      fromTs = start.getTime();
+    }
     if (range === '1H') fromTs = nowTs - 1 * 60 * 60 * 1000;
     if (range === '3H') fromTs = nowTs - 3 * 60 * 60 * 1000;
     if (range === '6H') fromTs = nowTs - 6 * 60 * 60 * 1000;
     if (range === '12H') fromTs = nowTs - 12 * 60 * 60 * 1000;
-    if (range === 'LIVE') fromTs = nowTs - 6 * 60 * 60 * 1000;
     if (range === '1D') fromTs = nowTs - 24 * 60 * 60 * 1000;
     if (range === '1W') fromTs = nowTs - 7 * 24 * 60 * 60 * 1000;
     if (range === '1M') fromTs = nowTs - 30 * 24 * 60 * 60 * 1000;
     if (range === '3M') fromTs = nowTs - 90 * 24 * 60 * 60 * 1000;
+    if (range === '6M') fromTs = nowTs - 182 * 24 * 60 * 60 * 1000;
     if (range === '1Y') fromTs = nowTs - 365 * 24 * 60 * 60 * 1000;
+    if (range === '3Y') fromTs = nowTs - 3 * 365 * 24 * 60 * 60 * 1000;
+    if (range === '5Y') fromTs = nowTs - 5 * 365 * 24 * 60 * 60 * 1000;
     if (range === 'YTD') {
       const d = new Date(nowTs);
       fromTs = new Date(d.getFullYear(), 0, 1).getTime();
@@ -447,18 +853,52 @@ export class App implements OnDestroy {
 
   readonly chartStats = computed(() => {
     const points = this.rangeFilteredSeries();
-    const first = points[0]?.pnl ?? 0;
     const last = points[points.length - 1]?.pnl ?? 0;
-    const delta = Number((last - first).toFixed(4));
-    const deltaPct = Math.abs(first) > 0 ? delta / Math.abs(first) : null;
+    const investedCapital = this.investedCapital();
+    const selectedPoints = this.selectedChartPoints();
     const hovered = this.hoveredPoint();
+    const comparisonPoints = [...selectedPoints].sort((a, b) => a.ts - b.ts);
+    const currentPoint = selectedPoints[selectedPoints.length - 1] || hovered || points[points.length - 1] || null;
+    const startPoint = comparisonPoints.length >= 2 ? comparisonPoints[0] : points[0] || null;
+    const endPoint = comparisonPoints.length >= 2 ? comparisonPoints[1] : currentPoint;
+    const currentValue = currentPoint?.pnl ?? last;
+    const currentPct = investedCapital && investedCapital > 0 ? currentValue / investedCapital : null;
+    const delta = Number((((endPoint?.pnl ?? currentValue) - (startPoint?.pnl ?? 0)).toFixed(4)));
+    const deltaPct = investedCapital && investedCapital > 0 ? delta / investedCapital : null;
 
     return {
-      currentValue: hovered?.pnl ?? last,
+      currentValue,
+      currentPct,
       delta,
       deltaPct,
-      currentTs: hovered?.ts ?? points[points.length - 1]?.ts ?? null,
+      currentTs: currentPoint?.ts ?? null,
+      startTs: startPoint?.ts ?? null,
+      endTs: endPoint?.ts ?? null,
+      hasSelection: selectedPoints.length > 0,
+      selectionCount: selectedPoints.length,
     };
+  });
+  readonly chartReadout = computed(() => {
+    const stats = this.chartStats();
+    if (stats.selectionCount >= 2) {
+      return {
+        value: stats.delta,
+        pct: stats.deltaPct,
+      };
+    }
+
+    return {
+      value: stats.currentValue,
+      pct: stats.currentPct,
+    };
+  });
+  readonly chartNetAccountValue = computed(() => {
+    const d = this.data();
+    if (!d) return null;
+    const currentNetAccountValue = this.netAccountValue();
+    if (currentNetAccountValue === null) return null;
+    const allTimePnl = this.allTimePnlStats().value;
+    return Number((currentNetAccountValue - allTimePnl + this.chartStats().currentValue).toFixed(2));
   });
 
   constructor() {
@@ -519,6 +959,19 @@ export class App implements OnDestroy {
   setChartRange(range: ChartRange): void {
     this.chartRange.set(range);
     this.hoveredPoint.set(null);
+    this.selectedChartPoints.set([]);
+  }
+
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    const target = event.target as Node | null;
+    const chartWrapEl = this.chartWrap?.nativeElement;
+    if (!target || !chartWrapEl) return;
+    if (chartWrapEl.contains(target)) return;
+    if (this.selectedChartPoints().length) {
+      this.selectedChartPoints.set([]);
+      this.hoveredPoint.set(null);
+    }
   }
 
   setLogViewMode(mode: LogViewMode): void {
@@ -529,6 +982,33 @@ export class App implements OnDestroy {
     this.logTimeRange.set(range);
   }
 
+  setTableSort(table: TableId, key: string): void {
+    this.tableSort.update((current) => {
+      const existing = current[table];
+      const defaultSort = DEFAULT_TABLE_SORT[table];
+      let nextSort: TableSortState;
+      if (existing.key !== key) {
+        nextSort = { key, direction: 'desc' };
+      } else if (existing.direction === 'desc') {
+        nextSort = { key, direction: 'asc' };
+      } else {
+        nextSort = { ...defaultSort };
+      }
+      return {
+        ...current,
+        [table]: nextSort,
+      };
+    });
+  }
+
+  sortIndicator(table: TableId, key: string): string {
+    const current = this.tableSort()[table];
+    if (current.key !== key) return '↕';
+    const defaultSort = DEFAULT_TABLE_SORT[table];
+    if (current.key === defaultSort.key && current.direction === defaultSort.direction) return '↕';
+    return current.direction === 'asc' ? '↑' : '↓';
+  }
+
   private formatChartTs(ts: number, range: ChartRange): string {
     const d = new Date(ts);
     if (range === '1H' || range === '3H' || range === '6H' || range === '12H' || range === 'LIVE') {
@@ -537,6 +1017,41 @@ export class App implements OnDestroy {
     if (range === '1D') return d.toLocaleTimeString([], { hour: 'numeric' });
     if (range === '1W' || range === '1M') return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     return d.toLocaleDateString([], { month: 'short', year: '2-digit' });
+  }
+
+  private formatReadoutTs(ts: number): string {
+    return new Date(ts).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
+  private rangeStartTs(nowTs: number, range: ChartRange): number | null {
+    if (range === 'ALL') return null;
+    if (range === 'LIVE') {
+      const start = new Date(nowTs);
+      start.setHours(0, 0, 0, 0);
+      return start.getTime();
+    }
+    if (range === '1H') return nowTs - 1 * 60 * 60 * 1000;
+    if (range === '3H') return nowTs - 3 * 60 * 60 * 1000;
+    if (range === '6H') return nowTs - 6 * 60 * 60 * 1000;
+    if (range === '12H') return nowTs - 12 * 60 * 60 * 1000;
+    if (range === '1D') return nowTs - 24 * 60 * 60 * 1000;
+    if (range === '1W') return nowTs - 7 * 24 * 60 * 60 * 1000;
+    if (range === '1M') return nowTs - 30 * 24 * 60 * 60 * 1000;
+    if (range === '3M') return nowTs - 90 * 24 * 60 * 60 * 1000;
+    if (range === '6M') return nowTs - 182 * 24 * 60 * 60 * 1000;
+    if (range === '1Y') return nowTs - 365 * 24 * 60 * 60 * 1000;
+    if (range === '3Y') return nowTs - 3 * 365 * 24 * 60 * 60 * 1000;
+    if (range === '5Y') return nowTs - 5 * 365 * 24 * 60 * 60 * 1000;
+    if (range === 'YTD') {
+      const d = new Date(nowTs);
+      return new Date(d.getFullYear(), 0, 1).getTime();
+    }
+    return null;
   }
 
   fetchDashboard(): void {
@@ -625,6 +1140,36 @@ export class App implements OnDestroy {
       }));
   }
 
+  private sortRows<T>(
+    rows: T[],
+    sort: TableSortState,
+    accessors: Record<string, (row: T) => unknown>,
+  ): T[] {
+    const accessor = accessors[sort.key];
+    if (!accessor) return [...rows];
+    const multiplier = sort.direction === 'asc' ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const primary = this.compareValues(accessor(left), accessor(right)) * multiplier;
+      if (primary !== 0) return primary;
+      return this.compareValues(JSON.stringify(left), JSON.stringify(right));
+    });
+  }
+
+  private compareValues(left: unknown, right: unknown): number {
+    if (left === right) return 0;
+    if (left === null || left === undefined || left === '') return 1;
+    if (right === null || right === undefined || right === '') return -1;
+    if (typeof left === 'number' && typeof right === 'number') return left - right;
+    if (typeof left === 'boolean' && typeof right === 'boolean') return Number(left) - Number(right);
+    return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  private toTimestamp(value: string | null | undefined): number | null {
+    if (!value) return null;
+    const ts = new Date(value).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  }
+
   logPrimaryFields(item: LogRecord): LogField[] {
     const priority = [
       'eventTitle',
@@ -666,9 +1211,34 @@ export class App implements OnDestroy {
     }
   }
 
+  agentStatusLabel(status: string | undefined): string {
+    switch (status) {
+      case 'UP_TRADING':
+        return 'Live Trading';
+      case 'UP_DRY_RUN':
+        return 'Paper Trading';
+      case 'UP_BLOCKED_STOP_LOSS':
+        return 'Paused for Stop-Loss';
+      case 'UP_DEGRADED':
+        return 'Running with Issues';
+      case 'DOWN':
+        return 'Offline';
+      case 'STARTING':
+        return 'Starting Up';
+      default:
+        return 'Checking Status';
+    }
+  }
+
   private renderChart(): void {
     const canvas = this.chartCanvas?.nativeElement;
     if (!canvas) return;
+    canvas.onmouseleave = () => this.hoveredPoint.set(null);
+
+    if (this.chartInstance && this.chartInstance.canvas !== canvas) {
+      this.chartInstance.destroy();
+      this.chartInstance = null;
+    }
 
     const points = this.rangeFilteredSeries();
     this.chartPoints = points;
@@ -684,6 +1254,7 @@ export class App implements OnDestroy {
     if (!this.chartInstance) {
       const config: ChartConfiguration<'line'> = {
         type: 'line',
+        plugins: [this.chartSelectionPlugin],
         data: {
           labels,
           datasets: [
@@ -714,12 +1285,24 @@ export class App implements OnDestroy {
             tooltip: { enabled: false },
           },
           onHover: (_event, activeElements) => {
+            if (this.selectedChartPoints().length) return;
             if (!activeElements.length) {
               this.hoveredPoint.set(null);
               return;
             }
             const idx = activeElements[0].index;
             this.hoveredPoint.set(this.chartPoints[idx] || null);
+          },
+          onClick: (_event, activeElements) => {
+            if (!activeElements.length) return;
+            const idx = activeElements[0].index;
+            const point = this.chartPoints[idx];
+            if (!point) return;
+            this.selectedChartPoints.update((current) => {
+              if (current.length < 2) return [...current, point];
+              return [current[1], point];
+            });
+            this.hoveredPoint.set(point);
           },
           scales: {
             x: {
@@ -729,15 +1312,11 @@ export class App implements OnDestroy {
                 maxTicksLimit: 6,
               },
             },
-              y: {
-                border: { display: false },
-                grid: {
-                  color: colors.grid,
-                },
-                ticks: {
-                  color: colors.text,
-                  callback: (value) => currency.format(Number(value)),
-              },
+            y: {
+              display: false,
+              border: { display: false },
+              grid: { display: false },
+              ticks: { display: false },
             },
           },
         },
@@ -759,15 +1338,31 @@ export class App implements OnDestroy {
         },
       },
       y: {
+        display: false,
         border: { display: false },
-        grid: {
-          color: colors.grid,
-        },
-        ticks: {
-          color: colors.text,
-          callback: (value) => currency.format(Number(value)),
-        },
+        grid: { display: false },
+        ticks: { display: false },
       },
+    };
+    this.chartInstance.options.onHover = (_event, activeElements) => {
+      if (this.selectedChartPoints().length) return;
+      if (!activeElements.length) {
+        this.hoveredPoint.set(null);
+        return;
+      }
+      const idx = activeElements[0].index;
+      this.hoveredPoint.set(this.chartPoints[idx] || null);
+    };
+    this.chartInstance.options.onClick = (_event, activeElements) => {
+      if (!activeElements.length) return;
+      const idx = activeElements[0].index;
+      const point = this.chartPoints[idx];
+      if (!point) return;
+      this.selectedChartPoints.update((current) => {
+        if (current.length < 2) return [...current, point];
+        return [current[1], point];
+      });
+      this.hoveredPoint.set(point);
     };
     this.chartInstance.update('none');
   }

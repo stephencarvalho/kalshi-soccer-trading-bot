@@ -9,14 +9,17 @@ const { config } = require('./config');
 const { createLogger } = require('./logger');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
+const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
 const { getRuntimeConfig, readOverrides, OVERRIDES_PATH } = require('./runtimeConfig');
-const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule } = require('./strategy');
+const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice } = require('./strategy');
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
+  eventLooksLikeSoccer,
   resolveSoccerCompetitionScope,
 } = require('./kalshiLiveSoccer');
+const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy } = require('./recoveryQueue');
 
 const app = express();
 app.use(cors());
@@ -298,133 +301,56 @@ function computeTradeAnalytics(closedTrades) {
   };
 }
 
-function roundToLadderStake(stakeUsd, ladder) {
-  if (!Number.isFinite(stakeUsd) || stakeUsd <= 0 || !ladder.length) return null;
-  let nearest = ladder[0];
-  for (const s of ladder) {
-    if (Math.abs(s - stakeUsd) < Math.abs(nearest - stakeUsd)) nearest = s;
-  }
-  return nearest;
-}
-
-function computeRecoveryAnalytics(closedTrades, openTrades, runtime) {
+function computeRecoveryAnalytics(closedTrades, runtime) {
   const baseStake = Number(runtime.stakeUsd || 1);
-  const recoveryStake = Math.max(baseStake, Number(runtime.recoveryStakeUsd || 2));
-  const maxStake = Math.max(recoveryStake, Number(runtime.recoveryMaxStakeUsd || 16));
-  const ladder = [baseStake];
-  let next = recoveryStake;
-  while (next <= maxStake + 1e-9) {
-    if (!ladder.includes(Number(next.toFixed(2)))) ladder.push(Number(next.toFixed(2)));
-    next *= 2;
-  }
-
-  const byStake = new Map(
-    ladder.map((s) => [
-      s,
-      {
-        stakeUsd: s,
-        trades: 0,
-        wins: 0,
-        losses: 0,
-        pushes: 0,
-        winUsd: 0,
-        lossUsdAbs: 0,
-        openWinUsd: 0,
-        openLossUsdAbs: 0,
-        netPnlUsd: 0,
-      },
-    ]),
-  );
-
-  const ordered = [...(closedTrades || [])].sort((a, b) => new Date(a.settled_time).getTime() - new Date(b.settled_time).getTime());
-  let lossStreak = 0;
-  for (const t of ordered) {
-    const rawStake = Number(t.placed_context?.stakeUsdTarget ?? t.total_cost_usd ?? 0);
-    const stake = roundToLadderStake(rawStake, ladder);
-    if (!stake || !byStake.has(stake)) continue;
-    const row = byStake.get(stake);
-    row.trades += 1;
-    row.netPnlUsd += Number(t.pnl_usd || 0);
-    if (t.pnl_usd > 0) {
-      row.wins += 1;
-      row.winUsd += Number(t.pnl_usd || 0);
-      lossStreak = 0;
-    } else if (t.pnl_usd < 0) {
-      row.losses += 1;
-      row.lossUsdAbs += Math.abs(Number(t.pnl_usd || 0));
-      lossStreak += 1;
-    } else {
-      row.pushes += 1;
-      lossStreak = 0;
-    }
-  }
-
-  for (const t of openTrades || []) {
-    const rawStake = Number(t.placed_context?.stakeUsdTarget ?? t.amount_bet_usd ?? 0);
-    const stake = roundToLadderStake(rawStake, ladder);
-    if (!stake || !byStake.has(stake)) continue;
-    const row = byStake.get(stake);
-    const pnl = Number(t.unrealized_pnl_usd || 0);
-    row.netPnlUsd += pnl;
-    if (pnl > 0) row.openWinUsd += pnl;
-    if (pnl < 0) row.openLossUsdAbs += Math.abs(pnl);
-  }
-
-  const remainingByTier = {};
-  for (let i = 0; i < ladder.length - 1; i += 1) {
-    const source = byStake.get(ladder[i]);
-    const offset = byStake.get(ladder[i + 1]);
-    const sourceLoss = source.lossUsdAbs + source.openLossUsdAbs;
-    const nextGain = offset.winUsd + offset.openWinUsd;
-    remainingByTier[ladder[i]] = Math.max(0, sourceLoss - nextGain);
-  }
-  const last = byStake.get(ladder[ladder.length - 1]);
-  remainingByTier[ladder[ladder.length - 1]] = Math.max(0, last.lossUsdAbs + last.openLossUsdAbs);
-
-  const recoveryLossBalanceUsd = Object.values(remainingByTier).reduce((acc, v) => acc + Number(v || 0), 0);
-  let nextStakeUsd = baseStake;
-  for (let i = ladder.length - 1; i >= 0; i -= 1) {
-    const tier = ladder[i];
-    const rem = remainingByTier[tier] || 0;
-    if (rem <= 0.0001) continue;
-    nextStakeUsd = i < ladder.length - 1 ? ladder[i + 1] : tier;
-    break;
-  }
-
-  const ladderRows = ladder.map((s, i) => {
-    const row = byStake.get(s);
-    const avgWinUsd = row.wins > 0 ? row.winUsd / row.wins : null;
-    const prev = i > 0 ? byStake.get(ladder[i - 1]) : null;
-    const prevLossUsd = prev ? prev.lossUsdAbs + prev.openLossUsdAbs : 0;
-    const winsNeededToOffsetPrevTierLosses =
-      i > 0 && avgWinUsd && avgWinUsd > 0 ? Math.ceil(prevLossUsd / avgWinUsd) : null;
-    return {
-      stakeUsd: s,
-      trades: row.trades,
-      wins: row.wins,
-      losses: row.losses,
-      pushes: row.pushes,
-      lossUsdAbs: Number((row.lossUsdAbs + row.openLossUsdAbs).toFixed(4)),
-      winUsd: Number((row.winUsd + row.openWinUsd).toFixed(4)),
-      netPnlUsd: Number(row.netPnlUsd.toFixed(4)),
-      avgWinUsd: avgWinUsd !== null ? Number(avgWinUsd.toFixed(4)) : null,
-      prevTierStakeUsd: i > 0 ? ladder[i - 1] : null,
-      prevTierLossUsd: Number(prevLossUsd.toFixed(4)),
-      remainingLossUsd: Number((remainingByTier[s] || 0).toFixed(4)),
-      winsNeededToOffsetPrevTierLosses,
-    };
-  });
-
+  const queueState = buildRecoveryQueue(closedTrades || []);
   return {
     enabled: Boolean(runtime.recoveryModeEnabled),
+    strategy: 'closed_loss_queue',
     baseStakeUsd: baseStake,
-    recoveryStakeUsd: recoveryStake,
-    recoveryMaxStakeUsd: maxStake,
-    currentLossStreak: lossStreak,
-    recoveryLossBalanceUsd: Number(recoveryLossBalanceUsd.toFixed(4)),
-    nextStakeUsd: Number(nextStakeUsd.toFixed(2)),
-    ladder: ladderRows,
+    currentLossStreak: queueState.currentLossStreak,
+    recoveryLossBalanceUsd: Number(queueState.recoveryLossBalanceUsd.toFixed(4)),
+    nextTargetProfitUsd: Number(queueState.nextTargetProfitUsd.toFixed(4)),
+    unresolvedLossCount: queueState.unresolvedLossCount,
+    queue: queueState.queue,
   };
+}
+
+function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
+  const budget = Number(maxSpendUsd || 0);
+  if (!Number.isFinite(budget) || budget <= 0) return null;
+
+  let candidateCount = 1;
+  let latestAffordable = null;
+  while (candidateCount <= 100000) {
+    const candidateCostUsd = totalCostForYesBuy(candidateCount, priceUsd);
+    if (candidateCostUsd === null || candidateCostUsd > budget + 1e-9) break;
+    latestAffordable = candidateCount;
+    candidateCount += 1;
+  }
+  return latestAffordable;
+}
+
+function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
+  if (!candidate || !Number.isFinite(Number(balanceUsd))) return true;
+  const ask = Number(candidate.ask || 0);
+  if (!Number.isFinite(ask) || ask <= 0 || ask >= 1) return false;
+
+  if (recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
+    const targetProfitUsd = Number(recovery.nextTargetProfitUsd || 0);
+    const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
+    const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
+    const maxSpendUsd =
+      Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
+        ? Math.min(maxRecoverySpendUsd, Number(balanceUsd))
+        : Number(balanceUsd);
+    if (sized && sized.totalCostUsd <= maxSpendUsd + 1e-9) return true;
+    return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
+  }
+
+  const stakeUsd = Number(runtime.stakeUsd || 0);
+  const maxSpendUsd = Math.min(stakeUsd, Number(balanceUsd));
+  return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
 }
 
 function markPriceForPosition(position, market) {
@@ -448,6 +374,47 @@ function markPriceForPosition(position, market) {
   return null;
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseTeamsFromEventTitle(title) {
+  const text = String(title || '');
+  const match = text.match(/^(.+?)\s+vs\.?\s+(.+?)(?:\?|$)/i) || text.match(/^(.+?)\s+v\.?\s+(.+?)(?:\?|$)/i);
+  if (!match) return { homeTeam: null, awayTeam: null };
+  return {
+    homeTeam: match[1].trim(),
+    awayTeam: match[2].trim(),
+  };
+}
+
+function buildMonitoredPrices(event) {
+  const { homeTeam, awayTeam } = event?.__live || parseTeamsFromEventTitle(event?.title);
+  const markets = (event?.markets || []).filter((market) => String(market?.status || '').toLowerCase() === 'active');
+  const homeKey = normalizeText(homeTeam);
+  const awayKey = normalizeText(awayTeam);
+  const prices = {
+    homeTeam: homeTeam || null,
+    awayTeam: awayTeam || null,
+    homeYesPrice: null,
+    awayYesPrice: null,
+  };
+
+  for (const market of markets) {
+    const subtitle = normalizeText(market?.yes_sub_title);
+    const ask = marketAskPrice(market);
+    if (!Number.isFinite(ask)) continue;
+    if (homeKey && subtitle === homeKey) prices.homeYesPrice = ask;
+    if (awayKey && subtitle === awayKey) prices.awayYesPrice = ask;
+  }
+
+  return prices;
+}
+
 function splitLogs(actionLogs) {
   const noisyActions = new Set(['cycle_started', 'cycle_evaluated']);
   const verbose = actionLogs.filter((x) => noisyActions.has(x.action));
@@ -459,7 +426,7 @@ function deriveRuleFromMinute(minute, runtime) {
   if (!Number.isFinite(Number(minute))) return 'UNKNOWN_RULE';
   return Number(minute) >= Number(runtime.post80StartMinute)
     ? `POST_${runtime.post80StartMinute}_LEAD_${runtime.post80MinGoalLead}`
-    : `POST_${runtime.minTriggerMinute}_LEAD_${runtime.minGoalLead}`;
+    : `CURRENT_LEAD_${runtime.minGoalLead}`;
 }
 
 function inferCompetitionFromTicker(ticker) {
@@ -493,11 +460,20 @@ function buildPlacementContextByEvent(actionLogs, runtime) {
       placedCards: log.cards ?? null,
       placedLeaderVsTrailingCards: log.leaderVsTrailingCards ?? null,
       stakeUsdTarget: Number.isFinite(Number(log.stakeUsd)) ? Number(log.stakeUsd) : null,
+      targetProfitUsd: Number.isFinite(Number(log.targetProfitUsd)) ? Number(log.targetProfitUsd) : null,
+      recoveryQueueId: log.recoveryQueueId || null,
+      recoveryRemainingUsd: Number.isFinite(Number(log.recoveryRemainingUsd)) ? Number(log.recoveryRemainingUsd) : null,
+      recoverySourceLossUsd: Number.isFinite(Number(log.recoverySourceLossUsd)) ? Number(log.recoverySourceLossUsd) : null,
+      recoverySourceEventTitle: log.recoverySourceEventTitle || null,
+      sizingMode: log.sizingMode || null,
       leadingTeam: log.leadingTeam ?? null,
+      leadingTeamMaxLead: Number.isFinite(Number(log.leadingTeamMaxLead)) ? Number(log.leadingTeamMaxLead) : null,
       competition: log.competition ?? null,
       selectedOutcome: log.selectedOutcome || log.leadingTeam || null,
       markedAt: log.ts || null,
       marketTicker: log.marketTicker || null,
+      yesPrice: Number.isFinite(Number(log.ask)) ? Number(log.ask) : null,
+      fillCount: Number.isFinite(Number(log.count)) ? Number(log.count) : null,
     });
   }
   return byEvent;
@@ -515,16 +491,24 @@ function mergePlacementContext(stateCtx, logCtx) {
     placedLeaderVsTrailingCards:
       stateCtx?.placedLeaderVsTrailingCards || logCtx?.placedLeaderVsTrailingCards || null,
     stakeUsdTarget: stateCtx?.stakeUsdTarget ?? logCtx?.stakeUsdTarget ?? null,
+    targetProfitUsd: stateCtx?.targetProfitUsd ?? logCtx?.targetProfitUsd ?? null,
+    recoveryQueueId: stateCtx?.recoveryQueueId || logCtx?.recoveryQueueId || null,
+    recoveryRemainingUsd: stateCtx?.recoveryRemainingUsd ?? logCtx?.recoveryRemainingUsd ?? null,
+    recoverySourceLossUsd: stateCtx?.recoverySourceLossUsd ?? logCtx?.recoverySourceLossUsd ?? null,
+    recoverySourceEventTitle: stateCtx?.recoverySourceEventTitle || logCtx?.recoverySourceEventTitle || null,
+    sizingMode: stateCtx?.sizingMode || logCtx?.sizingMode || null,
     leadingTeam: stateCtx?.leadingTeam || logCtx?.leadingTeam || null,
+    leadingTeamMaxLead: stateCtx?.leadingTeamMaxLead ?? logCtx?.leadingTeamMaxLead ?? null,
     competition: stateCtx?.competition || logCtx?.competition || null,
     selectedOutcome: stateCtx?.selectedOutcome || logCtx?.selectedOutcome || null,
     markedAt: stateCtx?.markedAt || logCtx?.markedAt || null,
+    yesPrice: stateCtx?.yesPrice ?? logCtx?.yesPrice ?? null,
+    fillCount: stateCtx?.fillCount ?? logCtx?.fillCount ?? null,
   };
 }
 
 function isSoccerClosedTrade(trade) {
-  const competition = trade?.placed_context?.competition;
-  return Boolean(competition && competition !== 'Unknown');
+  return String(trade?.event_ticker || '').includes('GAME');
 }
 
 function computeAgentStatus({ actionLogs, state, runtime }) {
@@ -622,6 +606,48 @@ function getClient() {
   }
 }
 
+function getWebClient() {
+  const auth = resolveWebSessionAuth(config);
+  if (!auth) return null;
+  try {
+    return new KalshiWebClient({
+      userId: auth.userId,
+      sessionCookie: auth.sessionCookie,
+      csrfToken: auth.csrfToken,
+      logger,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function parseIsoMs(value) {
+  const ms = Date.parse(String(value || ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function computeInvestedCapital(deposits, startDate) {
+  const appliedFromMs = parseIsoMs(startDate);
+  const eligibleDeposits = (deposits || []).filter((deposit) => {
+    const createdMs = parseIsoMs(deposit.created_ts);
+    return appliedFromMs === null || (createdMs !== null && createdMs >= appliedFromMs);
+  });
+
+  let investedUsd = 0;
+  for (const deposit of eligibleDeposits) {
+    if (String(deposit.status || '').toLowerCase() === 'applied') {
+      investedUsd += Number(deposit.amount_cents || 0) / 100;
+      continue;
+    }
+
+    if (String(deposit.immediate_status || '').toLowerCase() === 'applied') {
+      investedUsd += Number(deposit.immediate_amount || 0) / 100;
+    }
+  }
+
+  return Number(investedUsd.toFixed(2));
+}
+
 app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
@@ -643,6 +669,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   let settlements = [];
   let events = [];
   let liveSoccerMap = new Map();
+  let investedCapitalUsd = null;
+  let investedCapitalStartDate = config.investedStartDate;
+  let investedCapitalSource = 'unavailable';
 
   if (client) {
     try {
@@ -662,6 +691,17 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       events = attachLiveDataToEvents(events, liveSoccerMap);
     } catch (error) {
       logger.warn({ err: error.message }, 'Dashboard API failed to fetch account data');
+    }
+  }
+
+  const webClient = getWebClient();
+  if (webClient) {
+    try {
+      const deposits = await webClient.getDeposits();
+      investedCapitalUsd = computeInvestedCapital(deposits, config.investedStartDate);
+      investedCapitalSource = 'kalshi_deposits';
+    } catch (error) {
+      logger.warn({ err: error.message }, 'Dashboard API failed to fetch Kalshi deposit history');
     }
   }
 
@@ -707,6 +747,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const marketBooks = client && marketTickers.length ? await client.getMarketsByTickers(marketTickers) : [];
   const marketMap = new Map(marketBooks.map((m) => [m.ticker, m]));
   const eventTitleMap = new Map((events || []).map((e) => [e.event_ticker, e.title]));
+  const eventMap = new Map((events || []).map((e) => [e.event_ticker, e]));
 
   const openTrades = (openPositions || [])
     .filter((p) => Math.abs(parseFp(p.position_fp)) > 0)
@@ -719,6 +760,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     const marketStatus = market?.status ? String(market.status).toLowerCase() : 'unknown';
     const eventTicker = p.event_ticker || market?.event_ticker || null;
     const eventTitle = eventTicker ? eventTitleMap.get(eventTicker) || null : null;
+    const event = eventTicker ? eventMap.get(eventTicker) || null : null;
+    const game = event ? extractGameState(event) : null;
     const markPrice = markPriceForPosition(p, market);
     const markValueUsd = markPrice !== null ? absQty * markPrice : null;
     const unrealizedPnlUsd = markValueUsd !== null ? markValueUsd - costBasisUsd : null;
@@ -745,6 +788,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       quantity: absQty,
       cost_basis_usd: Number(costBasisUsd.toFixed(4)),
       amount_bet_usd: Number(costBasisUsd.toFixed(4)),
+      current_score: game ? `${game.homeScore}-${game.awayScore}` : null,
+      current_contract_cost_usd: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_price: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_value_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
       total_return_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
@@ -764,10 +809,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     openTrades.reduce((acc, t) => acc + (t.cost_basis_usd || 0), 0).toFixed(4),
   );
   const openRoiPct = openCostBasisUsd > 0 ? Number((openUnrealizedPnlUsd / openCostBasisUsd).toFixed(6)) : null;
-  const soccerClosedTrades = closedTrades.filter(isSoccerClosedTrade);
-  const analytics = computeTradeAnalytics(soccerClosedTrades);
-  const soccerOpenTrades = openTrades.filter((t) => Boolean(t.placed_context?.competition && t.placed_context?.competition !== 'Unknown'));
-  const recovery = computeRecoveryAnalytics(soccerClosedTrades, soccerOpenTrades, runtime);
+  const strategyClosedTrades = closedTrades.filter(isSoccerClosedTrade);
+  const analytics = computeTradeAnalytics(strategyClosedTrades);
+  const recovery = computeRecoveryAnalytics(strategyClosedTrades, runtime);
 
   const closedTradesWithRecovery = closedTrades.map((t) => ({
     ...t,
@@ -778,49 +822,98 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   }));
 
   const tradedEventsMap = state.tradedEvents || {};
-  const monitoredGames = (events || [])
-    .map((event) => {
-      const competition = (event.product_metadata || {}).competition || null;
-      if (!isLeagueAllowed(competition, runtime)) return null;
-      if (!String(event.event_ticker || '').includes('GAME')) return null;
-      if (!event.__live?.isLive) return null;
+  const monitoredGames = Array.from(liveSoccerMap.entries())
+    .map(([eventTicker, live]) => {
+      if (!live?.isLive) return null;
 
-      const game = extractGameState(event);
-      if (!game) {
+      const event = eventMap.get(eventTicker) || null;
+      const competition = live.competition || event?.product_metadata?.competition || null;
+      if (!isLeagueAllowed(competition, runtime)) return null;
+      if (event && !eventLooksLikeSoccer(event, liveSoccerMap)) return null;
+
+      const title = event?.title || live.title || eventTicker;
+      const prices = event ? buildMonitoredPrices(event) : {
+        ...parseTeamsFromEventTitle(title),
+        homeYesPrice: null,
+        awayYesPrice: null,
+      };
+      const game = event ? extractGameState(event) : {
+        competition,
+        minute: live.minute,
+        homeScore: live.homeScore,
+        awayScore: live.awayScore,
+        homeRedCards: live.homeRedCards,
+        awayRedCards: live.awayRedCards,
+        homeTeam: prices.homeTeam,
+        awayTeam: prices.awayTeam,
+        leadingTeam:
+          live.homeScore > live.awayScore ? prices.homeTeam :
+          live.awayScore > live.homeScore ? prices.awayTeam :
+          null,
+        trailingTeam:
+          live.homeScore > live.awayScore ? prices.awayTeam :
+          live.awayScore > live.homeScore ? prices.homeTeam :
+          null,
+        goalDiff:
+          Number.isFinite(live.homeScore) && Number.isFinite(live.awayScore)
+            ? Math.abs(live.homeScore - live.awayScore)
+            : null,
+        leadingTeamRedCards:
+          live.homeScore > live.awayScore ? live.homeRedCards :
+          live.awayScore > live.homeScore ? live.awayRedCards :
+          null,
+        trailingTeamRedCards:
+          live.homeScore > live.awayScore ? live.awayRedCards :
+          live.awayScore > live.homeScore ? live.homeRedCards :
+          null,
+        leadingTeamMaxLead:
+          live.homeScore > live.awayScore ? live.homeMaxLead :
+          live.awayScore > live.homeScore ? live.awayMaxLead :
+          0,
+      };
+
+      if (!game || !Number.isFinite(game.minute) || game.homeScore === null || game.awayScore === null) {
         return {
-          eventTicker: event.event_ticker,
-          title: event.title,
+          eventTicker,
+          title,
           competition: competition || '-',
           minute: null,
           score: '-',
+          homeTeam: prices.homeTeam,
+          awayTeam: prices.awayTeam,
+          homeYesPrice: prices.homeYesPrice,
+          awayYesPrice: prices.awayYesPrice,
           redCards: null,
           leadingVsTrailingRedCards: null,
           leadingTeam: '-',
           goalDiff: null,
           status: 'NO_LIVE_DATA',
-          reason: 'Kalshi event payload currently has no live minute/score fields for this game',
+          reason: 'Kalshi live feed currently has no usable minute/score fields for this game',
         };
       }
 
-      const alreadyBet = Boolean(tradedEventsMap[event.event_ticker]);
-      const candidate = eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet });
-      const signalRule = deriveSignalRule(game, runtime);
+      const alreadyBet = Boolean(tradedEventsMap[eventTicker]);
+      const candidate = event ? eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet }) : null;
+      const hasOrderCapacity = candidate ? canSizeCandidate(candidate, balanceUsd, runtime, recovery) : false;
 
       let status = 'WATCHING';
       let reason = 'Tracking game conditions';
 
-      if (alreadyBet) {
+      if (!event) {
+        reason = 'Live soccer feed game found, but no open tradable Kalshi game market is attached yet';
+      } else if (alreadyBet) {
         status = 'ALREADY_BET';
         reason = 'Bot has already placed a filled trade on this event';
+      } else if (candidate && !hasOrderCapacity) {
+        status = 'ELIGIBLE_NO_CAPACITY';
+        reason = 'Signal passes, but current balance or stake cap cannot size a valid order';
       } else if (candidate) {
         status = 'ELIGIBLE_NOW';
         reason = 'Signal and market filters currently pass';
-      } else if (!signalRule && game.minute < runtime.minTriggerMinute) {
-        status = 'WATCHING';
-        reason = `Before trigger minute ${runtime.minTriggerMinute}`;
       } else if (!game.leadingTeam) {
-        status = 'WATCHING';
         reason = 'No leading team currently';
+      } else if (game.homeRedCards === null || game.awayRedCards === null) {
+        reason = 'Waiting for red-card data before allowing a trade';
       } else if (
         game.leadingTeamRedCards !== null &&
         game.trailingTeamRedCards !== null &&
@@ -828,28 +921,31 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       ) {
         status = 'FILTERED';
         reason = 'Leading team has more red cards than trailing team';
-      } else if (signalRule?.bypassMinute) {
-        status = 'FILTERED';
-        reason = `3+ goal lead override failed price/market cap ${Math.round(
-          Math.min(runtime.maxYesPrice, runtime.anytimeLargeLeadMaxYesPrice) * 100,
-        )}c`;
-      } else if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
-        status = 'WATCHING';
-        reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
-      } else if (game.minute < runtime.post80StartMinute && game.goalDiff < runtime.minGoalLead) {
-        status = 'WATCHING';
-        reason = `Need lead >= ${runtime.minGoalLead} before minute ${runtime.post80StartMinute}`;
+      } else if (game.goalDiff < runtime.minGoalLead) {
+        if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
+          reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
+        } else {
+          reason = `Need current leader to be ahead by at least ${runtime.minGoalLead} goals`;
+        }
+      } else if (!event) {
+        reason = 'Signal may qualify, but no open tradable Kalshi game market is attached yet';
       } else {
         status = 'FILTERED';
-        reason = 'Price cap not satisfied or no matching team-winner market';
+        reason = `Current ${runtime.minGoalLead}+ goal lead signal failed price/market cap ${Math.round(
+          Math.min(runtime.maxYesPrice, runtime.anytimeLargeLeadMaxYesPrice) * 100,
+        )}c or no matching team-winner market`;
       }
 
       return {
-        eventTicker: event.event_ticker,
-        title: event.title,
+        eventTicker,
+        title,
         competition: game.competition || competition || '-',
         minute: game.minute,
         score: `${game.homeScore}-${game.awayScore}`,
+        homeTeam: prices.homeTeam,
+        awayTeam: prices.awayTeam,
+        homeYesPrice: prices.homeYesPrice,
+        awayYesPrice: prices.awayYesPrice,
         redCards:
           game.homeRedCards !== null && game.awayRedCards !== null
             ? `${game.homeRedCards}-${game.awayRedCards}`
@@ -892,6 +988,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     account: {
       balanceUsd,
       portfolioValueUsd,
+      investedCapitalUsd,
+      investedCapitalStartDate,
+      investedCapitalSource,
       openPositionsCount: openTrades.length,
       pnlTodayUsd: Number(pnlToday.toFixed(2)),
       pnl14dUsd: Number(closedTrades.reduce((a, b) => a + b.pnl_usd, 0).toFixed(2)),
@@ -906,7 +1005,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       status: agentStatus.status,
       statusReason: agentStatus.reason,
       lastError: agentStatus.lastError,
-      currentStakeUsd: recovery.nextStakeUsd,
+      currentStakeUsd: runtime.stakeUsd,
       recoveryLossStreak: recovery.currentLossStreak,
       recoveryLossBalanceUsd: recovery.recoveryLossBalanceUsd,
       validStatuses: VALID_AGENT_STATUSES,

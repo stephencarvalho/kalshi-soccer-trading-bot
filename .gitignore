@@ -13,5 +13,6 @@ dashboard/node_modules/
 dashboard/dist/
 dashboard/.angular/
 .openclaw/
+.openclaw/*.json
 
 dashboard/public/runtime-config.js

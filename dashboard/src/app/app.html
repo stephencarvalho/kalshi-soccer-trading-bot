@@ -1,7 +1,55 @@
 <main class="terminal" [class.theme-dark]="theme() === 'dark'" [class.theme-light]="theme() === 'light'">
   <div class="page-shell">
-  <header class="topbar">
-    <div class="brand">
+    @if (data(); as d) {
+      <section class="account-strip">
+        <div class="account-strip__row">
+          <div class="account-strip__metrics">
+            @for (metric of headerMetrics(); track metric.label) {
+              <article class="account-metric">
+                <span>{{ metric.label }}</span>
+                <strong [ngClass]="metric.tone || ''">{{ metric.value }}</strong>
+              </article>
+            }
+          </div>
+          <div class="account-strip__actions">
+            <article class="account-metric account-metric--status account-metric--time">
+              <span>Last Updated</span>
+              <strong>{{ now() | date:'mediumTime' }}</strong>
+            </article>
+            <article class="account-metric account-metric--status" [ngClass]="statusClass(d.bot.status)">
+              <span>Agent Status</span>
+              <strong>{{ agentStatusLabel(d.bot.status) }}</strong>
+            </article>
+            <article class="account-metric account-metric--status account-metric--stop" [class.status-warn]="d.bot.riskHaltedToday" [class.status-good]="!d.bot.riskHaltedToday">
+              <span>Stop-Loss</span>
+              <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
+            </article>
+            <button class="nav-toggle nav-toggle--theme" type="button" (click)="toggleTheme()">
+              <span class="nav-toggle__icon" aria-hidden="true">
+                @if (theme() === 'dark') {
+                  <svg viewBox="0 0 24 24" class="bulb-icon bulb-icon--on">
+                    <path class="bulb-icon__glow" d="M12 1.8c-4.5 0-8.2 3.5-8.2 7.9 0 2.8 1.4 4.7 3 6.4 1 1.1 1.7 2 2 3.2h6.5c.3-1.2 1-2.1 2-3.2 1.6-1.7 3-3.6 3-6.4 0-4.4-3.7-7.9-8.3-7.9Z"/>
+                    <path class="bulb-icon__glass" d="M12 3.1c-3.8 0-6.8 2.9-6.8 6.5 0 2.2 1 3.8 2.5 5.3 1.2 1.2 2 2.3 2.3 3.8h4c.3-1.5 1.1-2.6 2.3-3.8 1.4-1.5 2.5-3.1 2.5-5.3 0-3.6-3.1-6.5-6.8-6.5Z"/>
+                    <path class="bulb-icon__filament" d="M9.4 10.2c.5-1.2 1.5-1.9 2.6-1.9s2.1.7 2.6 1.9M9.6 12.4h4.8"/>
+                    <path class="bulb-icon__base" d="M9.2 18.8h5.6M9.7 21h4.6"/>
+                  </svg>
+                } @else {
+                  <svg viewBox="0 0 24 24" class="bulb-icon bulb-icon--off">
+                    <path class="bulb-icon__glass" d="M12 3.1c-3.8 0-6.8 2.9-6.8 6.5 0 2.2 1 3.8 2.5 5.3 1.2 1.2 2 2.3 2.3 3.8h4c.3-1.5 1.1-2.6 2.3-3.8 1.4-1.5 2.5-3.1 2.5-5.3 0-3.6-3.1-6.5-6.8-6.5Z"/>
+                    <path class="bulb-icon__filament" d="M9.7 11.2 11 10l1 1.1L13 10l1.3 1.2M9.9 12.9h4.2"/>
+                    <path class="bulb-icon__base" d="M9.2 18.8h5.6M9.7 21h4.6"/>
+                  </svg>
+                }
+              </span>
+              <span>{{ theme() === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    }
+
+		  <header class="topbar">
+		    <div class="brand">
       <div class="brand-mark" aria-hidden="true">
         <span class="brand-mark__bar"></span>
       </div>
@@ -10,41 +58,26 @@
         <h1>Soccer Trading Terminal</h1>
         <p>Live monitoring, execution state, and strategy performance for in-play Kalshi soccer markets.</p>
       </div>
-    </div>
-    <div class="header-controls">
-      <span class="chip">Updated {{ now() | date:'mediumTime' }}</span>
-      <span class="chip" [ngClass]="statusClass(data()?.bot?.status)">Agent {{ data()?.bot?.status || 'UNKNOWN' }}</span>
-      <span class="chip" [class.warn]="data()?.bot?.riskHaltedToday">Stop-Loss {{ data()?.bot?.riskHaltedToday ? 'ON' : 'OFF' }}</span>
-      <button class="theme-toggle" type="button" (click)="toggleTheme()">
-        {{ theme() === 'dark' ? 'Light' : 'Dark' }} mode
-      </button>
-    </div>
-  </header>
+	    </div>
+		  </header>
 
-  @if (loading()) {
-    <section class="panel loading">Loading terminal data...</section>
-  }
+	  @if (loading()) {
+	    <section class="panel loading">Loading terminal data...</section>
+	  }
 
-  @if (error()) {
-    <section class="panel error">{{ error() }}</section>
-  }
+	  @if (error()) {
+	    <section class="panel error">{{ error() }}</section>
+	  }
 
-  @if (data(); as d) {
-    <section class="hero panel">
+	  @if (data(); as d) {
+	    <section class="hero panel">
       <div class="hero-head">
         <div>
-          <p class="eyebrow">All-Time Strategy PnL</p>
-          <h2>{{ chartStats().currentValue | currency:'USD':'symbol':'1.2-2' }}</h2>
-          <p class="delta" [class.pos]="chartStats().delta >= 0" [class.neg]="chartStats().delta < 0">
-            {{ chartStats().delta >= 0 ? '+' : '' }}{{ chartStats().delta | currency:'USD':'symbol':'1.2-2' }}
-            @if (chartStats().deltaPct !== null) {
-              ({{ chartStats().deltaPct | percent:'1.1-2' }})
-            }
-            in {{ chartRange() }}
-            @if (chartStats().currentTs) {
-              <span class="hover-readout">
-                {{ chartStats().currentTs | date:'MMM d, h:mm a' }}
-              </span>
+          <h2>{{ chartNetAccountValue() === null ? '-' : (chartNetAccountValue() | currency:'USD':'symbol':'1.2-2') }}</h2>
+          <p class="delta" [class.pos]="chartReadout().value >= 0" [class.neg]="chartReadout().value < 0">
+            {{ chartReadout().value >= 0 ? '+' : '' }}{{ chartReadout().value | currency:'USD':'symbol':'1.2-2' }}
+            @if (chartReadout().pct !== null) {
+              ({{ (chartReadout().pct ?? 0) >= 0 ? '+' : '' }}{{ (chartReadout().pct ?? 0) | percent:'1.1-2' }})
             }
           </p>
         </div>
@@ -54,7 +87,7 @@
         </div>
       </div>
 
-      <div class="chart-wrap">
+      <div class="chart-wrap" #chartWrap>
         <canvas #pnlChart></canvas>
       </div>
 
@@ -81,7 +114,12 @@
             <article class="signal-card">
               <h3>{{ card.label }}</h3>
               @if (card.format === 'usd') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                <p [ngClass]="numberTone(card.value)">
+                  {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                  @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                    <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                  }
+                </p>
               }
               @if (card.format === 'pct') {
                 <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
@@ -101,30 +139,32 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Minute</th>
-                    <th>Competition</th>
-                    <th>Game</th>
-                    <th>Score</th>
-                    <th>Red (H-A)</th>
-                    <th>Red (L-T)</th>
-                    <th>Leader</th>
-                    <th>Diff</th>
-                    <th>Status</th>
-                    <th>Reason</th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'minute')">Minute <span>{{ sortIndicator('monitoredGames', 'minute') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'competition')">Competition <span>{{ sortIndicator('monitoredGames', 'competition') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'title')">Game <span>{{ sortIndicator('monitoredGames', 'title') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'score')">Score <span>{{ sortIndicator('monitoredGames', 'score') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'homeYesPrice')">Home YES <span>{{ sortIndicator('monitoredGames', 'homeYesPrice') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'awayYesPrice')">Away YES <span>{{ sortIndicator('monitoredGames', 'awayYesPrice') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'redCards')">Red (H-A) <span>{{ sortIndicator('monitoredGames', 'redCards') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingTeam')">Leader <span>{{ sortIndicator('monitoredGames', 'leadingTeam') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'goalDiff')">Diff <span>{{ sortIndicator('monitoredGames', 'goalDiff') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'status')">Status <span>{{ sortIndicator('monitoredGames', 'status') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'reason')">Reason <span>{{ sortIndicator('monitoredGames', 'reason') }}</span></button></th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.monitoredGames.length) {
-                    <tr><td colspan="10" class="muted">No live tracked games right now</td></tr>
+                    <tr><td colspan="11" class="muted">No live tracked games right now</td></tr>
                   }
-                  @for (g of d.monitoredGames.slice(0, 120); track g.eventTicker) {
+                  @for (g of sortedMonitoredGames().slice(0, 120); track g.eventTicker) {
                     <tr>
                       <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
                       <td>{{ g.competition }}</td>
                       <td>{{ g.title }}</td>
                       <td>{{ g.score }}</td>
+                      <td>{{ g.homeYesPrice === null || g.homeYesPrice === undefined ? '-' : (g.homeYesPrice | percent:'1.0-0') }}</td>
+                      <td>{{ g.awayYesPrice === null || g.awayYesPrice === undefined ? '-' : (g.awayYesPrice | percent:'1.0-0') }}</td>
                       <td>{{ g.redCards || '-' }}</td>
-                      <td>{{ g.leadingVsTrailingRedCards || '-' }}</td>
                       <td>{{ g.leadingTeam }}</td>
                       <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
                       <td><span class="chip">{{ g.status }}</span></td>
@@ -144,37 +184,39 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Ticker</th>
-                    <th>Game</th>
-                    <th>Bet</th>
-                    <th>Mkt</th>
-                    <th>Qty</th>
-                    <th>Amt Bet</th>
-                    <th>Total Return</th>
-                    <th>Cost</th>
-                    <th>Mark</th>
-                    <th>PnL</th>
-                    <th>ROI</th>
-                    <th>Condition</th>
-                    <th>Cards</th>
-                    <th>Update</th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'ticker')">Ticker <span>{{ sortIndicator('openTrades', 'ticker') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'eventTitle')">Game <span>{{ sortIndicator('openTrades', 'eventTitle') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'currentScore')">Score <span>{{ sortIndicator('openTrades', 'currentScore') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'selectionLabel')">Bet <span>{{ sortIndicator('openTrades', 'selectionLabel') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'marketStatus')">Mkt <span>{{ sortIndicator('openTrades', 'marketStatus') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'currentContractCostUsd')">Current Cost <span>{{ sortIndicator('openTrades', 'currentContractCostUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'entryPx')">Entry Cost <span>{{ sortIndicator('openTrades', 'entryPx') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'quantity')"># Contracts <span>{{ sortIndicator('openTrades', 'quantity') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('openTrades', 'amountBetUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('openTrades', 'totalReturnUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedPnlUsd')">PnL <span>{{ sortIndicator('openTrades', 'unrealizedPnlUsd') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedRoiPct')">ROI <span>{{ sortIndicator('openTrades', 'unrealizedRoiPct') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'condition')">Condition <span>{{ sortIndicator('openTrades', 'condition') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'cards')">Cards <span>{{ sortIndicator('openTrades', 'cards') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'lastUpdated')">Update <span>{{ sortIndicator('openTrades', 'lastUpdated') }}</span></button></th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.openTrades.length) {
-                    <tr><td colspan="14" class="muted">No open positions</td></tr>
+                    <tr><td colspan="17" class="muted">No open positions</td></tr>
                   }
-                  @for (t of d.openTrades; track trackByTicker($index, t)) {
+                  @for (t of sortedOpenTrades(); track trackByTicker($index, t)) {
                     <tr>
                       <td>{{ t.ticker }}</td>
                       <td>{{ t.event_title || t.event_ticker || '-' }}</td>
+                      <td>{{ t.current_score || '-' }}</td>
                       <td>{{ t.selection_label || t.market_title || '-' }}</td>
                       <td>{{ t.market_status || '-' }}</td>
+                      <td>{{ t.current_contract_cost_usd === null || t.current_contract_cost_usd === undefined ? '-' : (t.current_contract_cost_usd | currency:'USD':'symbol':'1.2-2') }}</td>
+                      <td>{{ t.placed_context?.yesPrice === null || t.placed_context?.yesPrice === undefined ? '-' : (t.placed_context?.yesPrice | currency:'USD':'symbol':'1.2-2') }}</td>
                       <td>{{ t.quantity ?? '-' }}</td>
                       <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
                       <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.cost_basis_usd === undefined ? '-' : (t.cost_basis_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.mark_price === null || t.mark_price === undefined ? '-' : (t.mark_price | percent:'1.0-2') }}</td>
                       <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
                         {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd === undefined ? '-' : (t.unrealized_pnl_usd | currency:'USD':'symbol':'1.2-2') }}
                       </td>
@@ -184,13 +226,13 @@
                       <td>
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
-                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red (H-A) {{ t.placed_context.placedCards || '-' }}
                         }
                       </td>
                       <td>
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
-                          {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                          {{ t.placed_context.placedCards || '-' }}
                         }
                       </td>
                       <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
@@ -225,7 +267,12 @@
               <article class="signal-card">
                 <h3>{{ card.label }}</h3>
                 @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                  <p [ngClass]="numberTone(card.value)">
+                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                    }
+                  </p>
                 }
                 @if (card.format === 'pct') {
                   <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
@@ -250,7 +297,12 @@
               <article class="signal-card">
                 <h3>{{ card.label }}</h3>
                 @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
+                  <p [ngClass]="numberTone(card.value)">
+                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                    }
+                  </p>
                 }
                 @if (card.format === 'pct') {
                   <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
@@ -262,6 +314,40 @@
             }
           </div>
         </article>
+
+        <article class="desk-panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Risk & Sustainability</h2>
+              <p class="panel-subtitle">These metrics matter because long-run survival depends on edge, payoff ratio, drawdown, and how much bankroll each bet consumes.</p>
+            </div>
+            <span class="chip" [class.warn]="riskStatus().ruinRisk !== 'Controlled'">
+              Edge {{ riskStatus().edge }} | Ruin Risk {{ riskStatus().ruinRisk }}
+            </span>
+          </div>
+          <div class="signal-grid signal-grid--six">
+            @for (card of riskMetrics(); track card.label) {
+              <article class="signal-card">
+                <h3>{{ card.label }}</h3>
+                @if (card.format === 'usd') {
+                  <p [ngClass]="numberTone(card.value)">
+                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
+                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
+                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
+                    }
+                  </p>
+                }
+                @if (card.format === 'pct') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
+                }
+                @if (card.format === 'num') {
+                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : card.value }}</p>
+                }
+              </article>
+            }
+          </div>
+          <p class="panel-subtitle" style="margin-top:0.7rem">{{ riskStatus().note }}</p>
+        </article>
       </div>
     </section>
 
@@ -269,7 +355,7 @@
       <div class="panel-title-row">
         <div>
           <h2>Recovery Overview</h2>
-          <p class="panel-subtitle">Stake escalation metrics stay above the ladder so next action and recovery context are visible in one place.</p>
+          <p class="panel-subtitle">Closed losses enter a FIFO recovery queue, and the next trade targets the oldest unresolved loss using fee-aware sizing.</p>
         </div>
       </div>
       <article class="recovery-overview">
@@ -293,46 +379,50 @@
 
       <section class="desk-panel recovery-ladder-block">
         <div class="panel-title-row">
-          <h2>Recovery Ladder</h2>
+          <h2>Recovery Queue</h2>
           <span class="chip">
             {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} |
-            Next {{ (d.recovery?.nextStakeUsd ?? d.bot.currentStakeUsd ?? 0) | currency:'USD':'symbol':'1.0-0' }} |
+            Next Target {{ (d.recovery?.nextTargetProfitUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }} |
             Streak {{ d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
-            Loss {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
+            Queue {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
           </span>
         </div>
         <div class="table-wrap terminal-table">
           <table>
             <thead>
               <tr>
-                <th>Stake</th>
-                <th>Trades</th>
-                <th>Wins</th>
-                <th>Losses</th>
-                <th>Loss $</th>
-                <th>Win $</th>
-                <th>Net PnL</th>
-                <th>Prev Stake Loss $</th>
-                <th>Remaining Loss $</th>
-                <th>Wins Needed To Offset Prev Loss</th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'queueId')">Queue ID <span>{{ sortIndicator('recoveryQueue', 'queueId') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'sourceEventTitle')">Loss Trade <span>{{ sortIndicator('recoveryQueue', 'sourceEventTitle') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'competition')">League <span>{{ sortIndicator('recoveryQueue', 'competition') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'lossUsd')">Loss $ <span>{{ sortIndicator('recoveryQueue', 'lossUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveredUsd')">Recovered $ <span>{{ sortIndicator('recoveryQueue', 'recoveredUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'remainingTargetUsd')">Remaining $ <span>{{ sortIndicator('recoveryQueue', 'remainingTargetUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveryBet')">Recovery Bet <span>{{ sortIndicator('recoveryQueue', 'recoveryBet') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'stakeUsdTarget')">Bet Size <span>{{ sortIndicator('recoveryQueue', 'stakeUsdTarget') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'yesPrice')">Contract Px <span>{{ sortIndicator('recoveryQueue', 'yesPrice') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveryBetResultUsd')">Bet Result <span>{{ sortIndicator('recoveryQueue', 'recoveryBetResultUsd') }}</span></button></th>
+                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'status')">Status <span>{{ sortIndicator('recoveryQueue', 'status') }}</span></button></th>
               </tr>
             </thead>
             <tbody>
-              @if (!(d.recovery?.ladder?.length)) {
-                <tr><td colspan="10" class="muted">No recovery stats yet</td></tr>
+              @if (!(d.recovery?.queue?.length)) {
+                <tr><td colspan="11" class="muted">No unresolved recovery queue items</td></tr>
               }
-              @for (r of (d.recovery?.ladder || []); track r.stakeUsd) {
+              @for (r of sortedRecoveryQueue(); track r.queueId) {
                 <tr>
-                  <td>{{ r.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</td>
-                  <td>{{ r.trades }}</td>
-                  <td>{{ r.wins }}</td>
-                  <td>{{ r.losses }}</td>
-                  <td class="neg">{{ r.lossUsdAbs | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td class="pos">{{ r.winUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td [class.pos]="r.netPnlUsd >= 0" [class.neg]="r.netPnlUsd < 0">{{ r.netPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td>{{ r.prevTierStakeUsd === null ? '-' : (r.prevTierLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
-                  <td [class.neg]="(r.remainingLossUsd || 0) > 0">{{ r.remainingLossUsd === undefined ? '-' : (r.remainingLossUsd | currency:'USD':'symbol':'1.2-2') }}</td>
-                  <td>{{ r.prevTierStakeUsd === null ? '-' : (r.winsNeededToOffsetPrevTierLosses ?? '-') }}</td>
+                  <td>{{ r.queueId }}</td>
+                  <td>{{ r.sourceEventTitle }}</td>
+                  <td>{{ r.competition }}</td>
+                  <td class="neg">{{ r.lossUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td class="pos">{{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td [class.neg]="r.remainingTargetUsd > 0">{{ r.remainingTargetUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                  <td>{{ r.recoveryBet?.eventTitle || '-' }}</td>
+                  <td>{{ r.recoveryBet?.stakeUsdTarget === null || r.recoveryBet?.stakeUsdTarget === undefined ? '-' : (r.recoveryBet?.stakeUsdTarget | currency:'USD':'symbol':'1.2-2') }}</td>
+                  <td>{{ r.recoveryBet?.yesPrice === null || r.recoveryBet?.yesPrice === undefined ? '-' : (r.recoveryBet?.yesPrice | percent:'1.0-0') }}</td>
+                  <td [class.pos]="(r.recoveryBetResultUsd || 0) > 0" [class.neg]="(r.recoveryBetResultUsd || 0) < 0">
+                    {{ r.recoveryBetResultUsd === null || r.recoveryBetResultUsd === undefined ? '-' : (r.recoveryBetResultUsd | currency:'USD':'symbol':'1.2-2') }}
+                  </td>
+                  <td>{{ r.status }}</td>
                 </tr>
               }
             </tbody>
@@ -374,7 +464,7 @@
           <li><span>Trigger</span><strong>{{ d.config.minTriggerMinute }}'+ and {{ d.config.minGoalLead }}+ lead</strong></li>
           <li><span>Retry Until</span><strong>{{ d.config.retryUntilMinute }}'</strong></li>
           <li><span>Daily Stop Loss</span><strong>{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
-          <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? ('ON ($' + d.config.recoveryStakeUsd + ' -> max $' + (d.config.recoveryMaxStakeUsd || 16) + ')') : 'OFF' }}</strong></li>
+          <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? 'ON (closed-loss queue)' : 'OFF' }}</strong></li>
           <li><span>Leagues</span><strong>{{ d.config.leagues.length }}</strong></li>
         </ul>
       </article>
@@ -390,20 +480,20 @@
         <table>
           <thead>
             <tr>
-              <th>League</th>
-              <th>Trades</th>
-              <th>Wins</th>
-              <th>Losses</th>
-              <th>Win Rate</th>
-              <th>Avg ROI</th>
-              <th>Total PnL</th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'league')">League <span>{{ sortIndicator('leagueLeaderboard', 'league') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'trades')">Trades <span>{{ sortIndicator('leagueLeaderboard', 'trades') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'wins')">Wins <span>{{ sortIndicator('leagueLeaderboard', 'wins') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'losses')">Losses <span>{{ sortIndicator('leagueLeaderboard', 'losses') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'winRate')">Win Rate <span>{{ sortIndicator('leagueLeaderboard', 'winRate') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'avgRoiPct')">Avg ROI <span>{{ sortIndicator('leagueLeaderboard', 'avgRoiPct') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'totalPnlUsd')">Total PnL <span>{{ sortIndicator('leagueLeaderboard', 'totalPnlUsd') }}</span></button></th>
             </tr>
           </thead>
           <tbody>
             @if (!d.leagueLeaderboard.length) {
               <tr><td colspan="7" class="muted">No settled league stats yet</td></tr>
             }
-            @for (r of d.leagueLeaderboard; track r.league) {
+            @for (r of sortedLeagueLeaderboard(); track r.league) {
               <tr>
                 <td>{{ r.league }}</td>
                 <td>{{ r.trades }}</td>
@@ -421,7 +511,7 @@
       </div>
       </section>
 
-      <section class="panel">
+      <section class="panel panel--action-logs">
         <div class="panel-title-row">
           <h2>Action Logs</h2>
           <div class="log-toolbar">
@@ -496,24 +586,24 @@
         <table>
           <thead>
             <tr>
-              <th>Settled</th>
-              <th>Ticker</th>
-              <th>Event</th>
-              <th>Result</th>
-              <th>Amt Bet</th>
-              <th>Total Return</th>
-              <th>PnL</th>
-              <th>ROI</th>
-              <th>Recovery Wins</th>
-              <th>Placed Condition</th>
-              <th>Cards</th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'settledTime')">Settled <span>{{ sortIndicator('closedTrades', 'settledTime') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'ticker')">Ticker <span>{{ sortIndicator('closedTrades', 'ticker') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'eventTitle')">Event <span>{{ sortIndicator('closedTrades', 'eventTitle') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'marketResult')">Result <span>{{ sortIndicator('closedTrades', 'marketResult') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('closedTrades', 'amountBetUsd') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('closedTrades', 'totalReturnUsd') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'pnlUsd')">PnL <span>{{ sortIndicator('closedTrades', 'pnlUsd') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'roiPct')">ROI <span>{{ sortIndicator('closedTrades', 'roiPct') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'winsToRecover')">Recovery Wins <span>{{ sortIndicator('closedTrades', 'winsToRecover') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'placedCondition')">Placed Condition <span>{{ sortIndicator('closedTrades', 'placedCondition') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'cards')">Cards <span>{{ sortIndicator('closedTrades', 'cards') }}</span></button></th>
             </tr>
           </thead>
           <tbody>
             @if (!d.closedTrades.length) {
               <tr><td colspan="11" class="muted">No settled trades yet</td></tr>
             }
-            @for (t of d.closedTrades.slice(0, 80); track t.ticker + t.settled_time) {
+            @for (t of sortedClosedTrades().slice(0, 80); track t.ticker + t.settled_time) {
               <tr>
                 <td>{{ t.settled_time | date:'short' }}</td>
                 <td>{{ t.ticker }}</td>
@@ -531,13 +621,13 @@
                 <td>
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
-                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }}
+                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.leadingTeam || '-' }} | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} | Red (H-A) {{ t.placed_context.placedCards || '-' }}
                   }
                 </td>
                 <td>
                   @if (!t.placed_context) { - }
                   @if (t.placed_context) {
-                    {{ t.placed_context.placedCards || '-' }} | {{ t.placed_context.placedLeaderVsTrailingCards || '-' }}
+                    {{ t.placed_context.placedCards || '-' }}
                   }
                 </td>
               </tr>

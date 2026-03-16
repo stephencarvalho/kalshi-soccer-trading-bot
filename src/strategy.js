@@ -215,12 +215,12 @@ function extractGameState(event) {
 function deriveSignalRule(game, config) {
   if (!game || !game.leadingTeam) return null;
 
-  if ((game.leadingTeamMaxLead || 0) >= config.anytimeLargeLeadMinGoalLead) {
+  if ((game.goalDiff || 0) >= config.minGoalLead) {
     return {
-      id: `ANYTIME_LEAD_${config.anytimeLargeLeadMinGoalLead}`,
-      requiredLead: config.anytimeLargeLeadMinGoalLead,
+      id: `CURRENT_LEAD_${config.minGoalLead}`,
+      requiredLead: config.minGoalLead,
       stageMaxYesPrice: Math.min(config.maxYesPrice, config.anytimeLargeLeadMaxYesPrice),
-      bypassMinute: true,
+      bypassMinute: false,
     };
   }
 
@@ -235,12 +235,7 @@ function deriveSignalRule(game, config) {
     };
   }
 
-  return {
-    id: `POST_${config.minTriggerMinute}_LEAD_${config.minGoalLead}`,
-    requiredLead: config.minGoalLead,
-    stageMaxYesPrice: config.maxYesPrice,
-    bypassMinute: false,
-  };
+  return null;
 }
 
 function isLeagueAllowed(competition, config) {
@@ -343,6 +338,7 @@ function eligibleTradeCandidate(event, config, stateStore) {
   if (!game.leadingTeam) return null;
   const signalLead = signalRule.bypassMinute ? game.leadingTeamMaxLead : game.goalDiff;
   if (signalLead < signalRule.requiredLead) return null;
+  if (game.homeRedCards === null || game.awayRedCards === null) return null;
   if (
     game.leadingTeamRedCards !== null &&
     game.trailingTeamRedCards !== null &&

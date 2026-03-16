@@ -18,7 +18,8 @@
   color: var(--ink);
   background: var(--bg);
   min-height: 100dvh;
-  padding: 1.2rem;
+  padding: 0 1.2rem 1.2rem;
+  overflow-x: clip;
 }
 
 .theme-dark {
@@ -43,11 +44,235 @@
 }
 
 .topbar {
-  margin: 0 0 1rem;
+  margin: 1rem 0 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
+}
+
+.account-strip {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin: 0 0 1rem;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  box-sizing: border-box;
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--panel) 96%, var(--bg));
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+  overflow: clip;
+}
+
+.account-strip__row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.account-strip__row > *,
+.account-strip__metrics > *,
+.account-strip__actions > * {
+  min-width: 0;
+}
+
+.account-strip__metrics {
+  flex: 5 1 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+}
+
+.account-strip__actions {
+  flex: 2.5 1 0;
+  min-width: 0;
+  margin-left: auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  justify-content: end;
+}
+
+.nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  min-height: 36px;
+  align-self: center;
+  padding: 0 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0.6 1 0;
+}
+
+.nav-toggle {
+  background: color-mix(in oklab, var(--panel) 84%, var(--chip));
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 18%, transparent);
+}
+
+.theme-light .nav-toggle {
+  background: color-mix(in oklab, var(--panel) 92%, #eef4ea);
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--accent) 24%, var(--line));
+}
+
+.nav-toggle__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+}
+
+.bulb-icon {
+  width: 1.4rem;
+  height: 1.4rem;
+  overflow: visible;
+}
+
+.bulb-icon__glass,
+.bulb-icon__filament,
+.bulb-icon__base,
+.bulb-icon__glow {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bulb-icon__glass {
+  stroke-width: 1.5;
+}
+
+.bulb-icon__filament {
+  stroke-width: 1.45;
+}
+
+.bulb-icon__base {
+  stroke-width: 1.6;
+}
+
+.bulb-icon--on .bulb-icon__glow {
+  fill: color-mix(in oklab, #fff3a3 66%, transparent);
+  stroke: none;
+  filter: drop-shadow(0 0 5px rgba(255, 231, 122, 0.9)) drop-shadow(0 0 10px rgba(255, 221, 87, 0.55));
+}
+
+.bulb-icon--on .bulb-icon__glass {
+  stroke: #ffe57a;
+  fill: color-mix(in oklab, #fff3a3 32%, transparent);
+}
+
+.bulb-icon--on .bulb-icon__filament {
+  stroke: #ffd54f;
+  filter: drop-shadow(0 0 2px rgba(255, 213, 79, 0.95));
+}
+
+.bulb-icon--on .bulb-icon__base {
+  stroke: color-mix(in oklab, #ffd54f 72%, var(--ink));
+}
+
+.bulb-icon--off .bulb-icon__glass {
+  stroke: color-mix(in oklab, var(--muted) 78%, var(--line));
+  fill: color-mix(in oklab, var(--panel) 78%, transparent);
+}
+
+.bulb-icon--off .bulb-icon__filament {
+  stroke: color-mix(in oklab, #f0a54b 72%, var(--muted));
+  filter: drop-shadow(0 0 1.5px rgba(240, 165, 75, 0.35));
+}
+
+.bulb-icon--off .bulb-icon__base {
+  stroke: color-mix(in oklab, var(--muted) 82%, var(--line));
+}
+
+.account-metric {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.38rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--panel) 86%, var(--chip));
+  overflow: hidden;
+
+  span {
+    display: block;
+    margin-bottom: 0.16rem;
+    color: var(--muted);
+    font-size: clamp(0.48rem, 0.38rem + 0.12vw, 0.58rem);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  strong {
+    display: block;
+    font-size: clamp(1.04rem, 0.86rem + 0.28vw, 1.28rem);
+    line-height: 1.1;
+    font-weight: 900;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.account-metric--status {
+  background: color-mix(in oklab, var(--panel) 78%, var(--chip));
+  flex: 0.8 1 0;
+}
+
+.account-metric--status strong,
+.account-metric--time strong,
+.account-metric--stop strong {
+  font-size: clamp(0.9rem, 0.76rem + 0.18vw, 1.05rem);
+}
+
+.account-metric--time {
+  background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 18%, var(--panel)), color-mix(in oklab, #7bb4ff 8%, var(--panel)));
+}
+
+.account-metric--stop {
+  background: linear-gradient(180deg, color-mix(in oklab, #ffbe4d 16%, var(--panel)), color-mix(in oklab, #ffbe4d 8%, var(--panel)));
+}
+
+.account-metric.status-good {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 18%, var(--panel)), color-mix(in oklab, var(--accent) 8%, var(--panel)));
+}
+
+.account-metric.status-info {
+  background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 16%, var(--panel)), color-mix(in oklab, #7bb4ff 8%, var(--panel)));
+}
+
+.account-metric.status-warn {
+  background: linear-gradient(180deg, color-mix(in oklab, #ffbe4d 18%, var(--panel)), color-mix(in oklab, #ffbe4d 8%, var(--panel)));
+}
+
+.account-metric.status-bad,
+.account-metric.status-down {
+  background: linear-gradient(180deg, color-mix(in oklab, #ff7b6b 18%, var(--panel)), color-mix(in oklab, #ff7b6b 8%, var(--panel)));
+}
+
+.account-metric.status-neutral {
+  background: color-mix(in oklab, var(--panel) 78%, var(--chip));
 }
 
 .brand {
@@ -103,15 +328,6 @@
   min-width: 0;
 }
 
-.header-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
 .chip {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -130,15 +346,31 @@
   }
 }
 
-.theme-toggle {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink);
-  font-weight: 700;
-  font-size: 0.76rem;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
+@media (max-width: 720px) {
+  .account-strip__row {
+    flex-wrap: wrap;
+  }
+
+  .account-strip__metrics,
+  .account-strip__actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .account-metric,
+  .account-metric--status,
+  .nav-toggle {
+    flex: 1 1 140px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-strip {
+    padding: 0.45rem 0.6rem;
+  }
 }
 
 .chip[class*='status-'] {
@@ -165,6 +397,19 @@
 .hero {
   margin: 0 0 1.2rem;
   overflow: hidden;
+}
+
+.headline-percent {
+  margin-left: 0.5rem;
+  font-size: 0.55em;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.metric-secondary {
+  margin-left: 0.35rem;
+  font-size: 0.82em;
+  color: var(--muted);
 }
 
 .hero-head {
@@ -210,14 +455,13 @@
 
 .chart-wrap {
   margin-top: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
   background: transparent;
+  position: relative;
+  height: 320px;
 
   canvas {
-    width: 100%;
-    height: 320px;
+    width: 100% !important;
+    height: 100% !important;
     display: block;
   }
 }
@@ -402,6 +646,7 @@ section.panel:not(.hero) {
 
 .table-wrap {
   overflow: auto;
+  position: relative;
 }
 
 .terminal-table {
@@ -427,11 +672,42 @@ table {
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-size: 0.7rem;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: color-mix(in oklab, var(--panel) 94%, var(--chip));
+    box-shadow: 0 1px 0 var(--line);
   }
 
   tbody tr:hover {
     background: color-mix(in oklab, var(--panel) 84%, var(--chip));
   }
+}
+
+.sort-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.sort-button span:last-child {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .pos {
@@ -453,6 +729,21 @@ table {
   overflow: auto;
   display: grid;
   gap: 0.45rem;
+}
+
+.panel--action-logs {
+  contain: size layout;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel--action-logs .log-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  align-content: start;
 }
 
 .log-toolbar {

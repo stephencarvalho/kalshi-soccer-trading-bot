@@ -44,19 +44,16 @@ npm -v
 ### Entry conditions
 
 1. Live game data must be available (minute + score).
-2. Match minute must be `>= MIN_TRIGGER_MINUTE` (default `70`).
-3. Team must be leading by:
-   - `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD` at any minute, if the current leader has held that lead at any point in the match (default: 3-goal lead)
-   - `MIN_GOAL_LEAD` before `POST80_START_MINUTE` (default: 2-goal lead)
-   - `POST80_MIN_GOAL_LEAD` at/after `POST80_START_MINUTE` (default: 1-goal lead)
-4. Leading team red-card filter:
+2. Team must be leading by either:
+   - `MIN_GOAL_LEAD` or more right now at the time of entry (default: 2-goal lead)
+   - `POST80_MIN_GOAL_LEAD` at/after `POST80_START_MINUTE` (now `85`, default late-rule lead: 1 goal)
+3. Leading team red-card filter:
    - skip if `leadingTeamRedCards > trailingTeamRedCards` (when card data is available).
-5. Market must be active and look like a match-winner market (draw/tie props excluded).
-6. YES ask price must be at or below:
-   - `min(MAX_YES_PRICE, ANYTIME_LARGE_LEAD_MAX_YES_PRICE)` for the anytime 3-goal override
-   - `MAX_YES_PRICE` before post-80 window
-   - `min(MAX_YES_PRICE, POST80_MAX_YES_PRICE)` in post-80 window.
-7. Event is skipped if already traded (one filled entry per event).
+4. Market must be active and look like a match-winner market (draw/tie props excluded).
+5. YES ask price must be at or below:
+   - `min(MAX_YES_PRICE, ANYTIME_LARGE_LEAD_MAX_YES_PRICE)` for the current 2+ lead signal
+   - `min(MAX_YES_PRICE, POST80_MAX_YES_PRICE)` for the late 1-goal rule starting at minute `85`
+6. Event is skipped if already traded (one filled entry per event).
 
 ### Order behavior
 
@@ -73,7 +70,7 @@ npm -v
 - Max concurrent open positions: `MAX_OPEN_POSITIONS`.
 - Skip if insufficient available cash balance.
 
-### Recovery sizing ladder (optional)
+### Recovery queue sizing (optional)
 
 Controlled by:
 
@@ -81,14 +78,52 @@ Controlled by:
 - `RECOVERY_STAKE_USD`
 - `RECOVERY_MAX_STAKE_USD`
 
-Current ladder logic:
+Current queue logic:
 
-- Track unresolved losses by stake tier and offset with the next higher tier.
-- Includes both settled PnL and open unrealized PnL.
-- With defaults (`$1 -> $2 -> $4 -> $8 -> $16`):
-  - `$1` losses are offset by `$2` wins,
-  - `$2` losses by `$4` wins, etc.
-- Bot chooses the next stake from the highest tier that still has unresolved loss.
+- Base stake remains `STAKE_USD` when there are no unresolved closed losses.
+- Only settled losing trades create recovery targets.
+- Open unrealized PnL does not affect recovery sizing.
+- The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
+- Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
+
+## Strategy Log and Rule History
+
+This project keeps historical trigger labels in persisted trade metadata and action logs. That means older trades can still show strategy IDs that are no longer active. The current rule set and prior rule labels are documented below so dashboard rows and logs remain interpretable over time.
+
+### Current active trigger rules
+
+- `CURRENT_LEAD_2`
+  - Current implementation for the early/main signal.
+  - Meaning: the currently leading team must be ahead by `MIN_GOAL_LEAD` right now at the moment of entry.
+  - Default current setup: leader must be up by `2+` goals now.
+- `POST_85_LEAD_1`
+  - Current late-game signal.
+  - Meaning: once the match reaches minute `85` or later, a team leading by `1+` goal can qualify.
+  - Uses the late-rule price cap `POST80_MAX_YES_PRICE`.
+
+### Historical trigger rules still found in saved logs/state
+
+- `ANYTIME_LEAD_2`
+  - Older rule that allowed entry if the current leader had reached a `2+` goal lead at any earlier point in the match, even if the lead had narrowed by entry time.
+  - This rule is no longer active and was replaced by `CURRENT_LEAD_2`.
+- `POST_80_LEAD_1`
+  - Older late-game rule that started at minute `80`.
+  - This rule is no longer active and was replaced by `POST_85_LEAD_1`.
+- `POST_70_LEAD_2`
+  - Older lead-based entry rule seen in historical trades/logs.
+  - This rule is no longer active.
+
+### Sizing modes recorded in logs
+
+- `BASE`
+  - Standard non-recovery order sizing using the configured base stake.
+- `RECOVERY_QUEUE_CAPPED`
+  - Recovery mode sizing where the order was capped by current balance and/or `RECOVERY_MAX_STAKE_USD` instead of fully reaching the target recovery profit.
+
+### Notes on historical logs
+
+- `data/state.json` and `logs/trading-actions.ndjson` preserve the original trigger labels used at the time of each trade.
+- The dashboard intentionally shows those original labels for historical accuracy, even if the live strategy has changed since then.
 
 ## Setup
 
@@ -150,7 +185,7 @@ UI:
 
 ![Dashboard overview](docs/screenshots/01-overview.png)
 
-### 2. Recovery ladder + live games + open trades
+### 2. Recovery queue + live games + open trades
 
 ![Live games and open trades](docs/screenshots/02-live-open-trades.png)
 
@@ -170,6 +205,30 @@ UI:
 - `KALSHI_API_KEY_ID` (required)
 - `KALSHI_PRIVATE_KEY_PATH` (required unless using inline PEM)
 - `KALSHI_PRIVATE_KEY_PEM` (optional, not recommended)
+- `KALSHI_WEB_AUTH_STATE_PATH` (optional, default: `./.openclaw/kalshi-web-auth.json`)
+- `KALSHI_WEB_USER_ID` (optional override, used only if not reading from auth state)
+- `KALSHI_WEB_SESSION_COOKIE` (optional override, Kalshi web `sessions` cookie value)
+- `KALSHI_WEB_CSRF_TOKEN` (optional override, Kalshi web `csrfToken` value)
+- `INVESTED_START_DATE` (optional, default: `2026-03-01T00:00:00Z`)
+
+### One-Time Kalshi web auth for deposit-based invested capital
+
+To avoid manually updating web session env vars, run:
+
+```bash
+npm install
+npm run kalshi:web-auth
+```
+
+This opens a browser, lets you log into Kalshi normally, and saves local browser auth state to `.openclaw/kalshi-web-auth.json`.
+
+After that, restart the monitor API:
+
+```bash
+npm run monitor:api
+```
+
+The dashboard will then read deposit history automatically from the saved web session. Re-run `npm run kalshi:web-auth` only when Kalshi eventually expires the session.
 
 ### Bot runtime
 
@@ -180,9 +239,7 @@ UI:
 
 ### Strategy thresholds
 
-- `MIN_TRIGGER_MINUTE`
 - `MIN_GOAL_LEAD`
-- `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD`
 - `ANYTIME_LARGE_LEAD_MAX_YES_PRICE`
 - `RETRY_UNTIL_MINUTE`
 - `STAKE_USD`
@@ -203,7 +260,7 @@ UI:
 - `MAX_OPEN_POSITIONS`
 - `MAX_DAILY_LOSS_USD`
 
-### Recovery ladder sizing
+### Recovery queue sizing
 
 - `RECOVERY_MODE_ENABLED`
 - `RECOVERY_STAKE_USD`
