@@ -65,6 +65,7 @@ interface DashboardPayload {
   metrics: {
     totalCycles: number;
     totalOrderSubmit: number;
+    totalBetsPlaced: number;
     totalFilled: number;
     totalNotFilled: number;
     totalErrors: number;
@@ -569,6 +570,7 @@ export class App implements OnDestroy {
         ? null
         : Number(d.account.investedCapitalUsd.toFixed(2));
     const allTimePnlPct = totalInvested && totalInvested > 0 ? (allTimePnl.value / totalInvested) : null;
+    const totalBetsPlaced = d.metrics.totalBetsPlaced;
 
     return [
       {
@@ -598,6 +600,14 @@ export class App implements OnDestroy {
         label: 'Total Amount Invested',
         value: totalInvested === null ? '-' : `$${totalInvested.toFixed(2)}`,
         tone: this.numberTone(totalInvested),
+      },
+      {
+        label: 'Total Bets Placed',
+        value:
+          typeof totalBetsPlaced === 'number'
+            ? totalBetsPlaced.toLocaleString('en-US')
+            : '-',
+        tone: this.numberTone(totalBetsPlaced),
       },
     ];
   });

@@ -154,6 +154,7 @@ function computeDerivedMetrics(actionLogs) {
     totalNotFilled,
     totalErrors,
     fillRate,
+    totalBetsPlaced: totalOrderSubmit,
   };
 }
 
