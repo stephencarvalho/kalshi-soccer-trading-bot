@@ -154,7 +154,6 @@ function computeDerivedMetrics(actionLogs) {
     totalNotFilled,
     totalErrors,
     fillRate,
-    totalBetsPlaced: totalOrderSubmit,
   };
 }
 
@@ -680,7 +679,6 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const { important: importantLogs, verbose: verboseLogs } = splitLogs(actionLogs);
   const placementContextByEvent = buildPlacementContextByEvent(actionLogs, runtime);
   const state = safeReadJson(statePath, {});
-  const metrics = computeDerivedMetrics(actionLogs);
   const agentStatus = computeAgentStatus({ actionLogs, state, runtime });
 
   const client = getClient();
@@ -831,6 +829,10 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     };
     })
     .filter(Boolean);
+  const metrics = {
+    ...computeDerivedMetrics(actionLogs),
+    totalBetsPlaced: openTrades.length + closedTrades.length,
+  };
   const openUnrealizedPnlUsd = Number(
     openTrades.reduce((acc, t) => acc + (t.unrealized_pnl_usd || 0), 0).toFixed(4),
   );
