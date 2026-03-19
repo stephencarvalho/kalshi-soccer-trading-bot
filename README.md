@@ -167,6 +167,143 @@ cp .env.example .env
 
 3. Fill `.env` values (especially Kalshi credentials + key path).
 
+## Runner Handoff Checklist
+
+If someone else is going to run this project, hand them the following:
+
+1. A copy of `.env` with values appropriate for their machine and account.
+2. The Kalshi RSA private key file referenced by `KALSHI_PRIVATE_KEY_PATH`, stored locally on their machine.
+3. Clear confirmation of whether they should run in `DRY_RUN=true` or live trading mode.
+4. A starting `STATE_FILE` only if you intentionally want to preserve existing traded-event memory and recovery context. Otherwise let them start with a fresh state file.
+5. Optional dashboard extras:
+   - the existing Kalshi web auth state file if invested-capital tracking is expected
+
+Do not hand off:
+
+- committed `.env` files
+- private keys inside chat, email, or source control
+- stale Kalshi web session cookies without telling the runner they may expire
+
+## AI Agent Bootstrap Prompt
+
+Use this prompt when you want another AI coding agent to get the project running with minimal back-and-forth. Replace every bracketed placeholder before sending it to the agent. The non-secret defaults below mirror the current operating defaults from the maintainer's `.env`. This version assumes everything runs on localhost only.
+
+```text
+You are setting up and running the project at:
+/absolute/path/to/kalshi-openclaw-trading-bot
+
+Your job is to get the app running end-to-end without asking me for setup help unless a value below is missing or invalid.
+
+Project goals:
+- Start the trading engine
+- Start the monitor API
+- Start the Angular dashboard
+- Verify that the health endpoint and dashboard load
+- Launch every required process yourself instead of asking the user to run commands
+- Use the provided defaults unless a value below explicitly overrides them
+
+Required context you can rely on:
+
+Repository path:
+- [ABSOLUTE_REPO_PATH]
+
+Node environment:
+- Node version available: [NODE_VERSION or "unknown"]
+- npm version available: [NPM_VERSION or "unknown"]
+
+Kalshi API credentials:
+- KALSHI_API_BASE_URL=https://api.elections.kalshi.com/trade-api/v2
+- KALSHI_API_KEY_ID=[PROVIDE_REAL_KEY_ID]
+- KALSHI_PRIVATE_KEY_PATH=[PROVIDE_ABSOLUTE_PATH_TO_PEM]
+- KALSHI_PRIVATE_KEY_PEM=[OPTIONAL_IF_NOT_USING_PATH]
+
+Trading mode and runtime defaults:
+- DRY_RUN=false
+- POLL_SECONDS=10
+- TIMEZONE=America/New_York
+- LOG_LEVEL=info
+
+Strategy defaults:
+- MIN_TRIGGER_MINUTE=70
+- MIN_GOAL_LEAD=2
+- RETRY_UNTIL_MINUTE=80
+- STAKE_USD=1
+- ESTIMATED_WIN_PROBABILITY=0.92
+- FEE_BUFFER=0.02
+- MAX_YES_PRICE=
+- POST80_START_MINUTE=85
+- POST80_MIN_GOAL_LEAD=1
+- POST80_MAX_YES_PRICE=0.90
+
+Liquidity defaults:
+- MIN_VOLUME_24H_CONTRACTS=50
+- MIN_LIQUIDITY_DOLLARS=250
+
+Risk defaults:
+- MAX_OPEN_POSITIONS=20
+- MAX_DAILY_LOSS_USD=50
+
+Recovery defaults:
+- RECOVERY_MODE_ENABLED=true
+- RECOVERY_STAKE_USD=2
+- RECOVERY_MAX_STAKE_USD=50
+
+League scope:
+- LEAGUES=ALL
+
+Localhost assumptions:
+- MONITOR_API_TOKEN=
+- DASHBOARD_API_BASE_URL=
+- DASHBOARD_API_TOKEN=
+
+Kalshi web invested-capital tracking:
+- KALSHI_WEB_AUTH_STATE_PATH=./.openclaw/kalshi-web-auth.json
+- INVESTED_START_DATE=2026-03-01T00:00:00Z
+
+State and overrides:
+- STATE_FILE=./data/state.json
+- RUNTIME_OVERRIDES_FILE=./data/runtime-overrides.json
+
+What I want you to do:
+1. Inspect the repo and install all required dependencies in both the root project and the dashboard.
+2. Create or update `.env` using exactly the values above.
+3. Verify that the private key file exists and is readable.
+4. Run `npm run kalshi:web-auth` to establish or refresh Kalshi web auth for invested-capital tracking.
+5. When the browser opens, explicitly prompt the user to log into Kalshi there, then continue once login is complete and the auth-state file is saved.
+6. Start the monitor API and confirm `/api/health` responds successfully.
+7. Start the Angular dashboard and confirm it can reach the API.
+8. Start the trading engine in the configured mode.
+9. Report which processes are running, which URLs are available, and any setup problems you had to fix.
+
+Rules:
+- Do not change strategy values unless they are clearly invalid.
+- Prefer using existing npm scripts from `package.json`.
+- Start the monitor API, dashboard, and trading engine yourself in separate terminals/sessions so they can run concurrently.
+- Do not ask the user to run local commands for you unless a step truly requires human interaction in a browser login flow.
+- If a secret value above is blank, treat that feature as optional and skip it safely.
+- Always run `npm run kalshi:web-auth` during setup for invested-capital tracking unless the user explicitly says to skip deposit tracking.
+- When that command opens the browser, ask the user to complete the Kalshi login there and wait for them before moving on.
+- If anything fails, debug it and continue until the app is runnable.
+```
+
+Minimum values the human must provide before using the prompt:
+
+- `KALSHI_API_KEY_ID`
+- `KALSHI_PRIVATE_KEY_PATH` or `KALSHI_PRIVATE_KEY_PEM`
+- the correct absolute repo path
+
+Optional values the human should provide only if they want those features:
+
+- enough access to complete the browser login when the agent runs `npm run kalshi:web-auth`
+
+How this Kalshi web auth-state file is obtained:
+
+- run `npm run kalshi:web-auth`
+- the script opens a browser window to Kalshi
+- log into Kalshi normally as the account owner
+- the script saves the authenticated browser state locally to `.openclaw/kalshi-web-auth.json`
+- after that, the monitor API can use that local file to read deposit history without manually copying cookies or CSRF tokens
+
 ## Run (3 terminals)
 
 ### 1) Trading engine
@@ -226,15 +363,43 @@ UI:
 
 ### Authentication
 
-- `KALSHI_API_BASE_URL` (default: `https://api.elections.kalshi.com/trade-api/v2`)
-- `KALSHI_API_KEY_ID` (required)
-- `KALSHI_PRIVATE_KEY_PATH` (required unless using inline PEM)
-- `KALSHI_PRIVATE_KEY_PEM` (optional, not recommended)
-- `KALSHI_WEB_AUTH_STATE_PATH` (optional, default: `./.openclaw/kalshi-web-auth.json`)
-- `KALSHI_WEB_USER_ID` (optional override, used only if not reading from auth state)
-- `KALSHI_WEB_SESSION_COOKIE` (optional override, Kalshi web `sessions` cookie value)
-- `KALSHI_WEB_CSRF_TOKEN` (optional override, Kalshi web `csrfToken` value)
-- `INVESTED_START_DATE` (optional, default: `2026-03-01T00:00:00Z`)
+- `KALSHI_API_BASE_URL`
+  - Why: base URL for the signed Kalshi trading API requests.
+  - Usually use the default `https://api.elections.kalshi.com/trade-api/v2`.
+  - Where to get it: from Kalshi API docs if they change environments or endpoints.
+- `KALSHI_API_KEY_ID`
+  - Why: identifies the Kalshi API key used to sign every authenticated request.
+  - Where to get it: from the runner's own Kalshi API key management page in their Kalshi account.
+  - Required: yes.
+- `KALSHI_PRIVATE_KEY_PATH`
+  - Why: points to the RSA private key file paired with `KALSHI_API_KEY_ID`.
+  - Where to get it: from the `.pem` file generated and downloaded when the Kalshi API key was created.
+  - Required: yes, unless using `KALSHI_PRIVATE_KEY_PEM`.
+- `KALSHI_PRIVATE_KEY_PEM`
+  - Why: inline fallback for the private key when a file path is not practical.
+  - Where to get it: same private key material as the `.pem` file.
+  - Required: no.
+  - Note: avoid this for normal use because it is easier to leak in shell history or logs.
+- `KALSHI_WEB_AUTH_STATE_PATH`
+  - Why: local file the project uses to store browser auth state for Kalshi web deposit-history access.
+  - Where to get it: generated locally by running `npm run kalshi:web-auth`.
+  - Required: only for invested-capital tracking from deposit history.
+- `KALSHI_WEB_USER_ID`
+  - Why: identifies the logged-in Kalshi web user when using raw session env vars instead of saved auth state.
+  - Where to get it: from the authenticated Kalshi web app session or existing internal setup notes.
+  - Required: only if not using `KALSHI_WEB_AUTH_STATE_PATH`.
+- `KALSHI_WEB_SESSION_COOKIE`
+  - Why: lets the monitor API call Kalshi's web endpoints for deposit history.
+  - Where to get it: from the authenticated `sessions` cookie in Kalshi web, or avoided entirely by using `npm run kalshi:web-auth`.
+  - Required: only if not using `KALSHI_WEB_AUTH_STATE_PATH`.
+- `KALSHI_WEB_CSRF_TOKEN`
+  - Why: companion auth token for Kalshi web deposit-history requests.
+  - Where to get it: from the authenticated Kalshi web app session, or avoided entirely by using `npm run kalshi:web-auth`.
+  - Required: only if not using `KALSHI_WEB_AUTH_STATE_PATH`.
+- `INVESTED_START_DATE`
+  - Why: tells the dashboard which deposits count toward "Total Amount Invested".
+  - Where to get it: choose the start date that matches when this strategy/account funding period began.
+  - Required: no, but useful for accurate ROI and capital reporting.
 
 ### One-Time Kalshi web auth for deposit-based invested capital
 
@@ -257,56 +422,131 @@ The dashboard will then read deposit history automatically from the saved web se
 
 ### Bot runtime
 
-- `DRY_RUN` (`true|false`)
-- `POLL_SECONDS` (cycle interval)
-- `TIMEZONE` (used for daily stop-loss boundaries)
-- `LOG_LEVEL` (`info`, etc.)
+- `DRY_RUN`
+  - Why: controls whether the trading engine places real orders or only logs what it would do.
+  - Where to get it: this is an operating decision, not an external credential.
+  - Typical handoff: set to `true` for new runners until everything is verified.
+- `POLL_SECONDS`
+  - Why: sets how often the engine scans live events and reevaluates signals.
+  - Where to get it: choose based on desired responsiveness and API usage tolerance.
+- `TIMEZONE`
+  - Why: determines when daily PnL resets for stop-loss calculations and dashboard day boundaries.
+  - Where to get it: choose the operating timezone for the trading workflow, often `America/New_York`.
+- `LOG_LEVEL`
+  - Why: controls how verbose runtime logs are.
+  - Where to get it: operational preference, usually `info`.
 
 ### Strategy thresholds
 
+- `MIN_TRIGGER_MINUTE`
+  - Why: earliest in-match minute the main signal is allowed to act.
+  - Where to get it: strategy choice.
 - `MIN_GOAL_LEAD`
+  - Why: minimum current lead required for the main lead-based rule.
+  - Where to get it: strategy choice.
+- `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD`
+  - Why: minimum lead size for the large-lead path.
+  - Where to get it: strategy choice.
 - `ANYTIME_LARGE_LEAD_MAX_YES_PRICE`
+  - Why: max entry price for the large-lead path.
+  - Where to get it: strategy choice based on risk tolerance.
 - `RETRY_UNTIL_MINUTE`
+  - Why: latest minute where retries or rechecks are still allowed.
+  - Where to get it: strategy choice.
 - `STAKE_USD`
+  - Why: base capital target per trade before recovery sizing adjustments.
+  - Where to get it: account sizing decision.
 - `ESTIMATED_WIN_PROBABILITY`
+  - Why: used with `FEE_BUFFER` to derive a default max yes price when `MAX_YES_PRICE` is unset.
+  - Where to get it: internal strategy assumption.
 - `FEE_BUFFER`
-- `MAX_YES_PRICE` (if blank, computed as `ESTIMATED_WIN_PROBABILITY - FEE_BUFFER`)
+  - Why: reduces the max price cap to leave room for Kalshi fees and edge protection.
+  - Where to get it: internal strategy assumption.
+- `MAX_YES_PRICE`
+  - Why: hard cap on entry price across rules.
+  - Where to get it: optional override from strategy/risk preference.
+  - If blank: computed as `ESTIMATED_WIN_PROBABILITY - FEE_BUFFER`.
 - `POST80_START_MINUTE`
+  - Why: minute where the late-game rule begins.
+  - Where to get it: strategy choice.
 - `POST80_MIN_GOAL_LEAD`
+  - Why: minimum lead for the late-game lead rule.
+  - Where to get it: strategy choice.
 - `POST80_MAX_YES_PRICE`
+  - Why: price cap for late-game lead and tie entries.
+  - Where to get it: strategy choice.
 
 ### Liquidity / market quality settings
 
 - `MIN_VOLUME_24H_CONTRACTS`
+  - Why: avoids thin markets with too little recent activity.
+  - Where to get it: strategy/risk preference.
 - `MIN_LIQUIDITY_DOLLARS`
+  - Why: avoids markets with too little quoted depth.
+  - Where to get it: strategy/risk preference.
 
 ### Risk controls
 
 - `MAX_OPEN_POSITIONS`
+  - Why: caps concurrent exposure across open trades.
+  - Where to get it: account risk preference.
 - `MAX_DAILY_LOSS_USD`
+  - Why: pauses trading after realized losses reach the configured daily limit.
+  - Where to get it: account risk preference.
 
 ### Recovery queue sizing
 
 - `RECOVERY_MODE_ENABLED`
+  - Why: turns the loss-recovery queue sizing system on or off.
+  - Where to get it: operating decision.
 - `RECOVERY_STAKE_USD`
+  - Why: minimum stake used when recovery logic is active.
+  - Where to get it: strategy/risk preference.
 - `RECOVERY_MAX_STAKE_USD`
+  - Why: hard cap to stop recovery sizing from growing too large.
+  - Where to get it: strategy/risk preference.
 
 ### League selection and exclusions
 
-- `LEAGUES` (`ALL` or comma-separated competitions)
-- `IGNORE_SETTLEMENT_TICKERS` (comma-separated ticker/event IDs excluded from metrics)
+- `LEAGUES`
+  - Why: controls which soccer competitions the bot scans.
+  - Where to get it: choose `ALL` or copy exact Kalshi competition names from dashboard data / Kalshi event metadata.
+- `IGNORE_SETTLEMENT_TICKERS`
+  - Why: excludes specific markets or events from dashboard metrics and settlement-based analytics.
+  - Where to get it: internal operations choice, usually for known outliers or intentionally ignored markets.
 
 ### Notifications (optional)
 
 - `TWILIO_ACCOUNT_SID`
+  - Why: authenticates Twilio API calls for WhatsApp alerts.
+  - Where to get it: Twilio console.
 - `TWILIO_AUTH_TOKEN`
+  - Why: secret paired with the Twilio account SID.
+  - Where to get it: Twilio console.
 - `TWILIO_WHATSAPP_FROM`
+  - Why: sending WhatsApp-enabled Twilio number.
+  - Where to get it: Twilio sandbox or production WhatsApp sender configuration.
 - `TWILIO_WHATSAPP_TO`
+  - Why: destination WhatsApp number for alerts.
+  - Where to get it: the operator's verified destination number.
 
 ### Storage and overrides
 
+- `MONITOR_API_TOKEN`
+  - Why: protects `/api/dashboard` when the monitor API is exposed beyond localhost.
+  - Where to get it: generate your own random secret and share it only with dashboard/API consumers that need access.
+- `DASHBOARD_API_BASE_URL`
+  - Why: tells the Angular dashboard where the monitor API lives when it is not served from the same origin.
+  - Where to get it: the deployed monitor API URL, such as a local reverse proxy, VPS, or Netlify function gateway.
+- `DASHBOARD_API_TOKEN`
+  - Why: lets the dashboard authenticate to the monitor API if `MONITOR_API_TOKEN` is enabled.
+  - Where to get it: same value you generated for `MONITOR_API_TOKEN`.
 - `STATE_FILE`
+  - Why: persistent bot memory for traded events, open orders, and stop-loss context.
+  - Where to get it: local file path chosen by the operator. The app creates the file if missing.
 - `RUNTIME_OVERRIDES_FILE`
+  - Why: stores live override values layered on top of `.env` without restarting the whole config workflow.
+  - Where to get it: local file path chosen by the operator. The app creates the file if missing.
 
 ## Logs and Data Persistence
 
