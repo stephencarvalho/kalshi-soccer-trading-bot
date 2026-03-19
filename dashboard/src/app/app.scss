@@ -441,8 +441,8 @@
 
   strong {
     display: block;
-    font-size: clamp(1.04rem, 0.86rem + 0.28vw, 1.28rem);
-    line-height: 1.1;
+    font-size: clamp(0.96rem, 0.8rem + 0.22vw, 1.16rem);
+    line-height: 1.02;
     font-weight: 900;
     white-space: nowrap;
     overflow: hidden;

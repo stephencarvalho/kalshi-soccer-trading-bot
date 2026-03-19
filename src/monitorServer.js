@@ -125,6 +125,16 @@ function settlementPnlUsd(settlement) {
   return Number((revenue - costYes - costNo - fee).toFixed(4));
 }
 
+function settlementHasExposure(settlement) {
+  const yesCount = Math.abs(parseFp(settlement?.yes_count_fp));
+  const noCount = Math.abs(parseFp(settlement?.no_count_fp));
+  const yesCost = Math.abs(parseFp(settlement?.yes_total_cost_dollars));
+  const noCost = Math.abs(parseFp(settlement?.no_total_cost_dollars));
+  const revenue = Math.abs(Number(settlement?.revenue || 0));
+  const fee = Math.abs(parseFp(settlement?.fee_cost));
+  return yesCount > 0 || noCount > 0 || yesCost > 0 || noCost > 0 || revenue > 0 || fee > 0;
+}
+
 function safeRatio(n, d) {
   return d > 0 ? n / d : null;
 }
@@ -727,7 +737,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
 
   const todayKey = toISODateInTz(Date.now(), config.timezone);
   const ignoredSettlementTickers = runtime.ignoredSettlementTickers || config.ignoredSettlementTickers || [];
-  const filteredSettlements = settlements.filter((s) => !isIgnoredSettlement(s, ignoredSettlementTickers));
+  const filteredSettlements = settlements.filter(
+    (s) => !isIgnoredSettlement(s, ignoredSettlementTickers) && settlementHasExposure(s),
+  );
   const closedTrades = filteredSettlements
     .map((s) => ({
       ticker: s.ticker,

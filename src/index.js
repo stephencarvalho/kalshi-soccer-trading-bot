@@ -34,6 +34,16 @@ function settlementPnlUsd(settlement) {
   return revenue - costYes - costNo - fee;
 }
 
+function settlementHasExposure(settlement) {
+  const yesCount = Math.abs(parseFp(settlement?.yes_count_fp));
+  const noCount = Math.abs(parseFp(settlement?.no_count_fp));
+  const yesCost = Math.abs(parseFp(settlement?.yes_total_cost_dollars));
+  const noCost = Math.abs(parseFp(settlement?.no_total_cost_dollars));
+  const revenue = Math.abs(Number(settlement?.revenue || 0));
+  const fee = Math.abs(parseFp(settlement?.fee_cost));
+  return yesCount > 0 || noCount > 0 || yesCost > 0 || noCost > 0 || revenue > 0 || fee > 0;
+}
+
 function isIgnoredSettlement(settlement, ignoredTickers = []) {
   const ignored = new Set((ignoredTickers || []).map((x) => String(x)));
   const ticker = String(settlement?.ticker || '');
@@ -45,6 +55,7 @@ function computeRecoveryState(settlements, stateStore, runtime) {
   const baseStake = Number(runtime.stakeUsd || 1);
   const closedTrades = (settlements || [])
     .filter((s) => !isIgnoredSettlement(s, runtime.ignoredSettlementTickers || []))
+    .filter(settlementHasExposure)
     .filter((s) => String(s?.event_ticker || '').includes('GAME'))
     .map((s) => {
       const meta = stateStore.getTradeMeta(s.event_ticker) || {};
