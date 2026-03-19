@@ -78,6 +78,57 @@ function isSoccerCompetitionName(name) {
 		"bundesliga",
 		"la liga",
 		"ligue 1",
+		"swiss super league",
+		"africa cup",
+		"intl friendlies",
+		"champions league womens",
+		"liga portugal",
+		"french super cup",
+		"france super cup",
+		"venezuelan liga futve",
+		"uruguay primera division",
+		"belgian pro league",
+		"pro league",
+		"laliga",
+		"japan j1 league",
+		"chinese super league",
+		"finalissima",
+		"liga mx",
+		"ucl",
+		"ecuador ligapro",
+		"fifa world cup qualification",
+		"fifa world cup qualifiers",
+		"egyptian premier league",
+		"taca de portugal",
+		"usl championship",
+		"concacaf champions cup",
+		"la liga 2",
+		"championship",
+		"club world cup",
+		"croatia hnl",
+		"knvb",
+		"major",
+		"korea k league 1",
+		"coupe de france",
+		"dansk superliga",
+		"danish superliga",
+		"bundesliga 2",
+		"peru liga 1",
+		"apf division de honor",
+		"greece super league",
+		"spain super cup",
+		"super lig",
+		"scottish premiership",
+		"coppa italia",
+		"serie b",
+		"colombian liga dimayor",
+		"fifa world cup",
+		"efl cup",
+		"eredivisie",
+		"australia a league",
+		"afc champions league",
+		"english womens super league",
+		"dfb pokal",
 		"eredivisie",
 		"primeira",
 		"super lig",
@@ -121,8 +172,13 @@ function isAmbiguousSoccerCompetitionName(name) {
 function isSoccerLiveDetails(details) {
 	if (!details || typeof details !== "object") return false;
 
-	const time = normalizeText(details.time || details.last_play?.description || "");
-	if (time.match(/\b\d{1,3}(\s*\+\s*\d+)?\s*$/) || String(details.time || "").includes("'")) {
+	const time = normalizeText(
+		details.time || details.last_play?.description || "",
+	);
+	if (
+		time.match(/\b\d{1,3}(\s*\+\s*\d+)?\s*$/) ||
+		String(details.time || "").includes("'")
+	) {
 		return true;
 	}
 
@@ -218,7 +274,9 @@ async function fetchLiveSoccerMilestonesFromFeed(competitions) {
 		["all", "*"].includes(String(x).trim().toLowerCase()),
 	);
 	const allowedCompetitions = new Set(
-		(competitions || []).map((competition) => String(competition || "").trim()).filter(Boolean),
+		(competitions || [])
+			.map((competition) => String(competition || "").trim())
+			.filter(Boolean),
 	);
 	const milestones = [];
 	const liveDatas = [];
@@ -226,29 +284,36 @@ async function fetchLiveSoccerMilestonesFromFeed(competitions) {
 	let page = 0;
 
 	do {
-		const response = await axios.get("https://api.elections.kalshi.com/v1/live_data/feed", {
-			timeout: 15000,
-			headers: {
-				"User-Agent": "Mozilla/5.0",
-				Accept: "application/json",
+		const response = await axios.get(
+			"https://api.elections.kalshi.com/v1/live_data/feed",
+			{
+				timeout: 15000,
+				headers: {
+					"User-Agent": "Mozilla/5.0",
+					Accept: "application/json",
+				},
+				params: {
+					include_events: true,
+					include_markets: true,
+					include_series: true,
+					live_only: true,
+					hydrate: "structured_targets",
+					page_size: 100,
+					milestone_types: "soccer_tournament_multi_leg",
+					cursor: cursor || undefined,
+				},
 			},
-			params: {
-				include_events: true,
-				include_markets: true,
-				include_series: true,
-				live_only: true,
-				hydrate: "structured_targets",
-				page_size: 100,
-				milestone_types: "soccer_tournament_multi_leg",
-				cursor: cursor || undefined,
-			},
-		});
+		);
 
 		for (const milestone of response.data?.live_milestones || []) {
 			const competitionName =
 				milestone?.competition || milestone?.details?.league || null;
 			if (!isSoccerCompetitionName(competitionName)) continue;
-			if (!hasAllLeagues && !allowedCompetitions.has(String(competitionName || "").trim())) continue;
+			if (
+				!hasAllLeagues &&
+				!allowedCompetitions.has(String(competitionName || "").trim())
+			)
+				continue;
 			milestones.push(milestone);
 		}
 		liveDatas.push(...(response.data?.live_datas || []));
@@ -332,7 +397,10 @@ function computeLeadHistory(homeEvents, awayEvents) {
 	const timeline = [];
 
 	for (const event of homeEvents || []) {
-		if (!event || String(event.event_type || "").toLowerCase() !== "score_change")
+		if (
+			!event ||
+			String(event.event_type || "").toLowerCase() !== "score_change"
+		)
 			continue;
 		timeline.push({
 			side: "home",
@@ -341,7 +409,10 @@ function computeLeadHistory(homeEvents, awayEvents) {
 	}
 
 	for (const event of awayEvents || []) {
-		if (!event || String(event.event_type || "").toLowerCase() !== "score_change")
+		if (
+			!event ||
+			String(event.event_type || "").toLowerCase() !== "score_change"
+		)
 			continue;
 		timeline.push({
 			side: "away",
@@ -358,7 +429,9 @@ function computeLeadHistory(homeEvents, awayEvents) {
 
 	timeline.sort((a, b) => {
 		const left = Number.isFinite(a.minute) ? a.minute : Number.MAX_SAFE_INTEGER;
-		const right = Number.isFinite(b.minute) ? b.minute : Number.MAX_SAFE_INTEGER;
+		const right = Number.isFinite(b.minute)
+			? b.minute
+			: Number.MAX_SAFE_INTEGER;
 		if (left !== right) return left - right;
 		if (a.side === b.side) return 0;
 		return a.side === "home" ? -1 : 1;
@@ -491,7 +564,11 @@ async function getLiveSoccerEventData(client, competitions) {
 	const minimumStartDate = new Date(nowMs - 6 * 3600 * 1000).toISOString();
 	const milestones = [];
 
-	if ((competitions || []).some((x) => ["all", "*"].includes(String(x).trim().toLowerCase()))) {
+	if (
+		(competitions || []).some((x) =>
+			["all", "*"].includes(String(x).trim().toLowerCase()),
+		)
+	) {
 		let cursor = "";
 		let page = 0;
 		do {
@@ -554,7 +631,10 @@ async function getLiveSoccerEventData(client, competitions) {
 		if (!isSoccerCompetitionName(competitionName)) {
 			continue;
 		}
-		if (isAmbiguousSoccerCompetitionName(competitionName) && !isSoccerLiveDetails(details)) {
+		if (
+			isAmbiguousSoccerCompetitionName(competitionName) &&
+			!isSoccerLiveDetails(details)
+		) {
 			continue;
 		}
 		const isLive = milestoneIsLive(details);
@@ -567,16 +647,16 @@ async function getLiveSoccerEventData(client, competitions) {
 		const awayScore = Number.isFinite(Number(details.away_same_game_score))
 			? Number(details.away_same_game_score)
 			: null;
-			const homeRedCards =
-				parseNullableInt(details.home_red_cards) ??
-				parseNullableInt(details.home_red_card_count) ??
-				parseNullableInt(details.home_cards_red) ??
-				countDismissalEvents(details.home_significant_events);
-			const awayRedCards =
-				parseNullableInt(details.away_red_cards) ??
-				parseNullableInt(details.away_red_card_count) ??
-				parseNullableInt(details.away_cards_red) ??
-				countDismissalEvents(details.away_significant_events);
+		const homeRedCards =
+			parseNullableInt(details.home_red_cards) ??
+			parseNullableInt(details.home_red_card_count) ??
+			parseNullableInt(details.home_cards_red) ??
+			countDismissalEvents(details.home_significant_events);
+		const awayRedCards =
+			parseNullableInt(details.away_red_cards) ??
+			parseNullableInt(details.away_red_card_count) ??
+			parseNullableInt(details.away_cards_red) ??
+			countDismissalEvents(details.away_significant_events);
 		const leadHistory = computeLeadHistory(
 			details.home_significant_events,
 			details.away_significant_events,

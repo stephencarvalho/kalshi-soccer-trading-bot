@@ -334,6 +334,16 @@ function settlementPnlUsd(settlement) {
   return revenue - costYes - costNo - fee;
 }
 
+function settlementHasExposure(settlement) {
+  const yesCount = Math.abs(parseFp(settlement?.yes_count_fp));
+  const noCount = Math.abs(parseFp(settlement?.no_count_fp));
+  const yesCost = Math.abs(parseFp(settlement?.yes_total_cost_dollars));
+  const noCost = Math.abs(parseFp(settlement?.no_total_cost_dollars));
+  const revenue = Math.abs(Number(settlement?.revenue || 0));
+  const fee = Math.abs(parseFp(settlement?.fee_cost));
+  return yesCount > 0 || noCount > 0 || yesCost > 0 || noCost > 0 || revenue > 0 || fee > 0;
+}
+
 function isIgnoredSettlement(settlement, ignoredTickers = []) {
   const ignored = new Set((ignoredTickers || []).map((x) => String(x)));
   const ticker = String(settlement?.ticker || '');
@@ -348,6 +358,7 @@ function computeDailyLossUsd(settlements, timezone, ignoredTickers = []) {
   let dailyPnl = 0;
   for (const s of settlements) {
     if (isIgnoredSettlement(s, ignoredTickers)) continue;
+    if (!settlementHasExposure(s)) continue;
     const ts = new Date(s.settled_time).getTime();
     if (!Number.isFinite(ts)) continue;
     const key = toISODateInTz(ts, timezone);
