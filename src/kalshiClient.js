@@ -106,6 +106,14 @@ class KalshiClient {
           canRetry ? 'Kalshi API request failed, retrying' : 'Kalshi API request failed',
         );
 
+        error.kalshiRequest = {
+          method: methodUpper,
+          path: pathWithQuery,
+          status: status ?? null,
+          attempt,
+          maxAttempts,
+        };
+
         if (!canRetry) throw error;
         const backoffMs = 250 * 2 ** (attempt - 1);
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
