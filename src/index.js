@@ -26,6 +26,47 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function truncateText(value, maxLength = 500) {
+  const text = String(value || '');
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function serializeError(error) {
+  if (!error) {
+    return {
+      message: 'Unknown error',
+      name: 'Error',
+    };
+  }
+
+  const responseData = error.response?.data;
+  const requestConfig = error.config || {};
+
+  return {
+    message: error.message || 'Unknown error',
+    name: error.name || 'Error',
+    code: error.code || null,
+    stack: error.stack || null,
+    status: error.response?.status ?? null,
+    statusText: error.response?.statusText || null,
+    method:
+      error.kalshiRequest?.method ||
+      (requestConfig.method ? String(requestConfig.method).toUpperCase() : null),
+    path:
+      error.kalshiRequest?.path ||
+      requestConfig.url ||
+      null,
+    responseData:
+      responseData === undefined
+        ? null
+        : truncateText(
+            typeof responseData === 'string' ? responseData : JSON.stringify(responseData),
+            1000,
+          ),
+    kalshiRequest: error.kalshiRequest || null,
+  };
+}
+
 function settlementPnlUsd(settlement) {
   const revenue = Number(settlement.revenue || 0) / 100;
   const costYes = parseFp(settlement.yes_total_cost_dollars);
@@ -649,8 +690,9 @@ async function main() {
     try {
       await runCycle(client);
     } catch (error) {
-      logger.error({ err: error.message }, 'Cycle failed');
-      appendAction('cycle_error', { message: error.message });
+      const errorMeta = serializeError(error);
+      logger.error({ err: errorMeta }, 'Cycle failed');
+      appendAction('cycle_error', errorMeta);
       await notifier.send(`Kalshi bot cycle error: ${error.message}`);
     }
 

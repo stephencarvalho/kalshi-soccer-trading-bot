@@ -32,6 +32,46 @@ npm -v
 - Persistent state: `data/state.json`
 - Action logs: `logs/trading-actions.ndjson`
 
+### Runtime flow
+
+```mermaid
+flowchart LR
+    User[User in Browser]
+    Dashboard[Angular Dashboard<br/>dashboard/]
+    API[Monitor API<br/>src/monitorServer.js]
+    Agent[Trading Agent<br/>src/index.js]
+    Kalshi[Kalshi APIs<br/>trade API + live data]
+    WebAuth[Kalshi Web Auth State<br/>.openclaw/kalshi-web-auth.json]
+    State[Persistent State<br/>data/state.json]
+    Logs[Action Log<br/>logs/trading-actions.ndjson]
+
+    User -->|opens localhost dashboard| Dashboard
+    Dashboard -->|requests /api/dashboard| API
+    API -->|returns health, metrics, trades, logs| Dashboard
+
+    Agent -->|reads markets, live data, balance, positions, settlements| Kalshi
+    Agent -->|places and manages orders| Kalshi
+    Agent -->|persists traded events, open orders, last cycle| State
+    Agent -->|appends cycle/order/error events| Logs
+
+    API -->|reads state and action history| State
+    API -->|reads state and action history| Logs
+    API -->|fetches balance, positions, settlements, events| Kalshi
+    API -->|reads deposit history when auth exists| WebAuth
+
+    State -. shared context .- API
+    State -. shared context .- Agent
+    Logs -. shared history .- API
+    Logs -. shared history .- Agent
+```
+
+How these three pieces work together:
+
+- The trading agent is the worker that talks to Kalshi, evaluates signals, places orders, and writes trade memory plus action logs.
+- The monitor API is the read-model layer for the UI. It combines Kalshi account data with local state and logs, then exposes one dashboard-friendly JSON response.
+- The dashboard never talks directly to Kalshi. It only talks to the monitor API on localhost and refreshes the view every few seconds.
+- `data/state.json` and `logs/trading-actions.ndjson` are the bridge between the agent and the API, so the dashboard can explain not just what is open now, but how and why the bot got there.
+
 ## Strategy (Current Implementation)
 
 ### Market scope
