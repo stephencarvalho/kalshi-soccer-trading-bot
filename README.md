@@ -41,7 +41,7 @@ flowchart LR
     API[Monitor API<br/>src/monitorServer.js]
     Agent[Trading Agent<br/>src/index.js]
     Kalshi[Kalshi APIs<br/>trade API + live data]
-    WebAuth[Kalshi Web Auth State<br/>.openclaw/kalshi-web-auth.json]
+    WebAuth[Kalshi Web Auth State<br/>.kalshi-soccer-bot/kalshi-web-auth.json]
     State[Persistent State<br/>data/state.json]
     Logs[Action Log<br/>logs/trading-actions.ndjson]
 
@@ -230,7 +230,7 @@ Use this prompt when you want another AI coding agent to get the project running
 
 ```text
 You are setting up and running the project at:
-/absolute/path/to/kalshi-openclaw-trading-bot
+/absolute/path/to/kalshi-soccer-trading-bot
 
 Your job is to get the app running end-to-end without asking me for setup help unless a value below is missing or invalid.
 
@@ -297,7 +297,7 @@ Localhost assumptions:
 - DASHBOARD_API_TOKEN=
 
 Kalshi web invested-capital tracking:
-- KALSHI_WEB_AUTH_STATE_PATH=./.openclaw/kalshi-web-auth.json
+- KALSHI_WEB_AUTH_STATE_PATH=./.kalshi-soccer-bot/kalshi-web-auth.json
 - INVESTED_START_DATE=2026-03-01T00:00:00Z
 
 State and overrides:
@@ -341,7 +341,7 @@ How this Kalshi web auth-state file is obtained:
 - run `npm run kalshi:web-auth`
 - the script opens a browser window to Kalshi
 - log into Kalshi normally as the account owner
-- the script saves the authenticated browser state locally to `.openclaw/kalshi-web-auth.json`
+- the script saves the authenticated browser state locally to `.kalshi-soccer-bot/kalshi-web-auth.json`
 - after that, the monitor API can use that local file to read deposit history without manually copying cookies or CSRF tokens
 
 ## Run (3 terminals)
@@ -450,7 +450,7 @@ npm install
 npm run kalshi:web-auth
 ```
 
-This opens a browser, lets you log into Kalshi normally, and saves local browser auth state to `.openclaw/kalshi-web-auth.json`.
+This opens a browser, lets you log into Kalshi normally, and saves local browser auth state to `.kalshi-soccer-bot/kalshi-web-auth.json`.
 
 After that, restart the monitor API:
 

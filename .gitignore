@@ -12,7 +12,7 @@ data/*.json
 dashboard/node_modules/
 dashboard/dist/
 dashboard/.angular/
-.openclaw/
-.openclaw/*.json
+.kalshi-soccer-bot/
+.kalshi-soccer-bot/*.json
 
 dashboard/public/runtime-config.js

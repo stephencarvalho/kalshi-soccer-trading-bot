@@ -151,7 +151,7 @@ const config = {
 	kalshiWebCsrfToken: process.env.KALSHI_WEB_CSRF_TOKEN || "",
 	kalshiWebAuthStatePath:
 		process.env.KALSHI_WEB_AUTH_STATE_PATH ||
-		path.resolve(".openclaw/kalshi-web-auth.json"),
+		path.resolve(".kalshi-soccer-bot/kalshi-web-auth.json"),
 	investedStartDate: process.env.INVESTED_START_DATE || "2026-03-01T00:00:00Z",
 };
 

@@ -236,7 +236,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
       yes_price_dollars: limitPrice.toFixed(4),
       time_in_force: 'good_till_canceled',
       cancel_order_on_pause: true,
-      client_order_id: `openclaw-${candidate.event.event_ticker}-${Date.now()}`,
+      client_order_id: `kalshi-soccer-bot-${candidate.event.event_ticker}-${Date.now()}`,
     },
     sizing: {
       sizingMode,
@@ -265,7 +265,7 @@ function isRestingOrder(order) {
 
 function parseEventTickerFromClientOrderId(clientOrderId) {
   const text = String(clientOrderId || '');
-  const match = text.match(/^openclaw-(.+)-\d+$/);
+  const match = text.match(/^kalshi-soccer-bot-(.+)-\d+$/);
   return match ? match[1] : null;
 }
 
@@ -288,7 +288,7 @@ function syncRestingOrderState(restingOrders, stateStore, events) {
   for (const order of restingOrders || []) {
     if (!isRestingOrder(order)) continue;
     const clientOrderId = order.client_order_id || order.clientOrderId || '';
-    if (!String(clientOrderId).startsWith('openclaw-')) continue;
+    if (!String(clientOrderId).startsWith('kalshi-soccer-bot-')) continue;
     const marketTicker = order.ticker || order.market_ticker || null;
     const eventTicker =
       order.event_ticker ||
