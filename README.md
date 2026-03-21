@@ -133,7 +133,75 @@ Current queue logic:
 - Only settled losing trades create recovery targets.
 - Open unrealized PnL does not affect recovery sizing.
 - The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
+- In-flight recovery trades reserve only the dollar amount they are targeting, not the entire loss row.
 - Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
+
+### Recovery bug fix: root cause and current behavior
+
+Root cause of the duplicate recovery-bet issue:
+
+- Recovery targets were built only from settled losses.
+- A recovery trade that had already been placed but had not settled yet did not reserve its `recoveryQueueId`.
+- On later scans, the bot still saw the same oldest unresolved loss as available and could size another recovery trade against it.
+- That made one closed loss capable of spawning multiple recovery bets before the first recovery attempt resolved.
+
+How recovery works now:
+
+- The oldest unresolved closed loss remains the active recovery target.
+- As soon as the bot places a recovery order, only that order's targeted recovery dollars are reserved in-flight.
+- If the oldest queued loss is larger than the in-flight recovery reservation, later recovery bets can still target the uncovered remainder of that same loss.
+- If the in-flight reservations fully cover the current oldest loss, the bot can advance to the next unresolved loss instead of duplicating coverage.
+- Once the recovery trade settles, the queue is recalculated from actual closed-trade results and the bot either:
+  - marks the loss as fully resolved,
+  - keeps it partially unresolved and waits for one new recovery attempt,
+  - or advances to the next queued loss if the oldest one is fully recovered.
+
+### Strategy and recovery flow
+
+```mermaid
+flowchart TD
+    A[Cycle starts] --> B[Load balance, events, positions, orders, settlements]
+    B --> C{Trading enabled and risk checks pass?}
+    C -- No --> Z[Do not place orders]
+    C -- Yes --> D[Build eligible live soccer candidates]
+
+    D --> E{Match tied at or after minute 85?}
+    E -- Yes --> F{Equal red cards and Tie YES price within cap?}
+    F -- Yes --> G[Strategy: POST_85_TIE_YES]
+    F -- No --> H[Reject candidate]
+
+    E -- No --> I{Leader up by 2+ goals now?}
+    I -- Yes --> J{Price within anytime lead cap?}
+    J -- Yes --> K[Strategy: CURRENT_LEAD_2]
+    J -- No --> H
+
+    I -- No --> L{Minute 85+ and leader up by 1+?}
+    L -- Yes --> M{Leader card filter passes and price within late cap?}
+    M -- Yes --> N[Strategy: POST_85_LEAD_1]
+    M -- No --> H
+    L -- No --> H
+
+    G --> O[Candidate survives strategy checks]
+    K --> O
+    N --> O
+
+    O --> P{Recovery mode enabled and unresolved settled loss exists?}
+    P -- No --> Q[Use BASE sizing]
+    P -- Yes --> R[Target oldest unresolved loss in FIFO queue]
+    R --> S{Recovery queue item already has in-flight recovery trade?}
+    S -- Yes --> T[Skip new recovery order for that queue item]
+    S -- No --> U[Size one recovery order with fee-aware sizing]
+
+    Q --> V[Submit order]
+    U --> V
+    V --> W{Filled or resting?}
+    W -- No --> X[No trade recorded]
+    W -- Yes --> Y[Lock recovery queue item until settlement]
+    Y --> AA[Later settlement recomputes queue from realized PnL]
+    AA --> AB{Loss fully recovered?}
+    AB -- Yes --> AC[Advance to next queued loss or return to BASE sizing]
+    AB -- No --> AD[Keep same oldest loss queued for one future recovery attempt]
+```
 
 ## Strategy Log and Rule History
 

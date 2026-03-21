@@ -43,14 +43,6 @@
   margin: 0 auto;
 }
 
-.topbar {
-  margin: 1rem 0 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.5rem;
-}
-
 .account-strip {
   position: sticky;
   top: 0;
@@ -490,59 +482,6 @@
   background: color-mix(in oklab, var(--panel) 78%, var(--chip));
 }
 
-.brand {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.9rem;
-
-  .brand-kicker {
-    margin: 0 0 0.3rem;
-    color: var(--accent);
-    font-size: 0.78rem;
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-
-  h1 {
-    margin: 0;
-    font-size: clamp(1.4rem, 2.1vw, 2rem);
-    letter-spacing: -0.03em;
-    line-height: 1.02;
-  }
-
-  p {
-    margin: 0.35rem 0 0;
-    color: var(--muted);
-    max-width: 780px;
-  }
-}
-
-.brand-mark {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  margin-top: 0.1rem;
-  border-radius: 12px;
-  border: 1px solid color-mix(in oklab, var(--accent) 26%, var(--line));
-  background: color-mix(in oklab, var(--accent) 12%, var(--panel));
-}
-
-.brand-mark__bar {
-  width: 18px;
-  height: 18px;
-  border-radius: 6px;
-  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 92%, white), var(--accent));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent);
-}
-
-.brand-copy {
-  min-width: 0;
-}
-
 .chip {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -576,11 +515,6 @@
   .account-metric--status,
   .nav-toggle {
     flex: 1 1 140px;
-  }
-
-  .topbar {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .account-strip {
@@ -960,14 +894,17 @@ table {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
 .panel--action-logs .log-list {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   max-height: none;
   align-content: start;
+  overflow-x: hidden;
 }
 
 .log-toolbar {
@@ -1012,12 +949,14 @@ table {
   gap: 0.9rem;
   align-items: start;
   background: color-mix(in oklab, var(--panel) 88%, var(--chip));
+  min-width: 0;
 }
 
 .log-rail {
   display: grid;
   gap: 0.25rem;
   align-content: start;
+  min-width: 0;
 
   .log-ts {
     color: var(--ink);
@@ -1077,6 +1016,7 @@ table {
   display: grid;
   gap: 0.55rem;
   min-width: 0;
+  overflow: hidden;
 }
 
 .log-headline {
@@ -1090,6 +1030,8 @@ table {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .log-meta--secondary {
@@ -1107,6 +1049,7 @@ table {
   border-radius: 999px;
   background: color-mix(in oklab, var(--chip) 90%, var(--panel));
   font-size: 0.76rem;
+  overflow: hidden;
 
   strong {
     color: var(--muted);
@@ -1171,17 +1114,8 @@ table {
 }
 
 @media (max-width: 840px) {
-  .topbar,
   .hero-head {
     flex-direction: column;
-  }
-
-  .topbar {
-    align-items: flex-start;
-  }
-
-  .brand {
-    width: 100%;
   }
 
   .header-controls,

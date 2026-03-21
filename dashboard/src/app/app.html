@@ -29,19 +29,6 @@
       </section>
     }
 
-		  <header class="topbar">
-		    <div class="brand">
-      <div class="brand-mark" aria-hidden="true">
-        <span class="brand-mark__bar"></span>
-      </div>
-      <div class="brand-copy">
-        <p class="brand-kicker">Kalshi Soccer Trading Bot</p>
-        <h1>Soccer Trading Terminal</h1>
-        <p>Live monitoring, execution state, and strategy performance for in-play Kalshi soccer markets.</p>
-      </div>
-	    </div>
-		  </header>
-
 	  @if (loading()) {
 	    <section class="panel loading">Loading terminal data...</section>
 	  }
@@ -192,13 +179,14 @@
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedPnlUsd')">PnL <span>{{ sortIndicator('openTrades', 'unrealizedPnlUsd') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedRoiPct')">ROI <span>{{ sortIndicator('openTrades', 'unrealizedRoiPct') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'condition')">Condition <span>{{ sortIndicator('openTrades', 'condition') }}</span></button></th>
+                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'recovery')">Recovery <span>{{ sortIndicator('openTrades', 'recovery') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'cards')">Cards <span>{{ sortIndicator('openTrades', 'cards') }}</span></button></th>
                     <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'lastUpdated')">Update <span>{{ sortIndicator('openTrades', 'lastUpdated') }}</span></button></th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.openTrades.length) {
-                    <tr><td colspan="17" class="muted">No open positions</td></tr>
+                    <tr><td colspan="16" class="muted">No open positions</td></tr>
                   }
                   @for (t of sortedOpenTrades(); track trackByTicker($index, t)) {
                     <tr>
@@ -222,6 +210,12 @@
                         @if (!t.placed_context) { - }
                         @if (t.placed_context) {
                           {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.selectedOutcome || t.placed_context.leadingTeam || '-' }}@if (t.placed_context.triggerRule !== 'POST_85_TIE_YES') { | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} } | Red (H-A) {{ t.placed_context.placedCards || '-' }}
+                        }
+                      </td>
+                      <td>
+                        @if (!t.placed_context?.recoveryQueueId) { Base }
+                        @if (t.placed_context?.recoveryQueueId) {
+                          {{ t.placed_context?.sizingMode === 'RECOVERY_QUEUE_CAPPED' ? 'Recovery (Capped)' : 'Recovery' }} | {{ t.placed_context?.recoveryQueueId }} | {{ t.placed_context?.recoverySourceEventTitle || '-' }}@if (t.placed_context?.targetProfitUsd !== null && t.placed_context?.targetProfitUsd !== undefined) { | Target {{ t.placed_context?.targetProfitUsd | currency:'USD':'symbol':'1.2-2' }} }
                         }
                       </td>
                       <td>
