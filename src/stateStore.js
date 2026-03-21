@@ -50,6 +50,13 @@ class StateStore {
     return this.state.tradedEvents[eventTicker] || null;
   }
 
+  listTradedEvents() {
+    return Object.entries(this.state.tradedEvents || {}).map(([eventTicker, value]) => ({
+      eventTicker,
+      ...(value || {}),
+    }));
+  }
+
   findTradeMetaByMarketTicker(marketTicker) {
     const entries = Object.values(this.state.tradedEvents || {});
     return entries.find((x) => x && x.marketTicker === marketTicker) || null;

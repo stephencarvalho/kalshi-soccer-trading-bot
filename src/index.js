@@ -142,6 +142,30 @@ function computeRecoveryState(settlements, stateStore, runtime) {
   };
 }
 
+function computePendingRecoveryQueueIds(settlements, stateStore) {
+  const settledEventTickers = new Set(
+    (settlements || [])
+      .map((settlement) => String(settlement?.event_ticker || ''))
+      .filter(Boolean),
+  );
+  const pendingQueueIds = new Set();
+
+  for (const trade of stateStore.listTradedEvents()) {
+    const queueId = String(trade?.recoveryQueueId || '');
+    if (!queueId) continue;
+    if (settledEventTickers.has(String(trade?.eventTicker || ''))) continue;
+    pendingQueueIds.add(queueId);
+  }
+
+  for (const openOrder of stateStore.listOpenOrders()) {
+    const queueId = String(openOrder?.recoveryQueueId || '');
+    if (!queueId) continue;
+    pendingQueueIds.add(queueId);
+  }
+
+  return pendingQueueIds;
+}
+
 function deriveTriggerRule(game, runtime) {
   return deriveSignalRule(game, runtime)?.id || 'UNKNOWN_RULE';
 }
@@ -295,6 +319,7 @@ function syncRestingOrderState(restingOrders, stateStore, events) {
       marketToEvent.get(marketTicker) ||
       parseEventTickerFromClientOrderId(clientOrderId);
     if (!eventTicker) continue;
+    const existing = stateStore.getEventOpenOrder(eventTicker) || {};
     activeByEvent.set(eventTicker, {
       orderId: order.order_id || order.id || null,
       marketTicker,
@@ -302,6 +327,10 @@ function syncRestingOrderState(restingOrders, stateStore, events) {
       limitPrice: Number.parseFloat(order.yes_price_dollars || order.price || 0) || null,
       count: parseFp(order.count || order.count_fp),
       status: order.status || null,
+      recoveryQueueId: existing.recoveryQueueId || null,
+      recoveryRemainingUsd: existing.recoveryRemainingUsd ?? null,
+      recoverySourceLossUsd: existing.recoverySourceLossUsd ?? null,
+      recoverySourceEventTitle: existing.recoverySourceEventTitle || null,
     });
   }
 
@@ -377,6 +406,7 @@ async function runCycle(client) {
   const enrichedEvents = attachLiveDataToEvents(events, liveSoccerMap);
   const recovery = computeRecoveryState(settlements, stateStore, runtime);
   let activeRestingOrders = syncRestingOrderState(restingOrders, stateStore, enrichedEvents);
+  const pendingRecoveryQueueIds = computePendingRecoveryQueueIds(settlements, stateStore);
   const openPositionByMarket = new Map(
     (openPositions || [])
       .filter((position) => Math.abs(parseFp(position.position_fp)) > 0)
@@ -517,6 +547,21 @@ async function runCycle(client) {
       });
       continue;
     }
+
+    const nextRecoveryQueueItem =
+      recovery.enabled && Array.isArray(recovery.queue)
+        ? recovery.queue.find((item) => Number(item.remainingTargetUsd || 0) > 0.0001) || null
+        : null;
+    if (nextRecoveryQueueItem && pendingRecoveryQueueIds.has(String(nextRecoveryQueueItem.queueId))) {
+      appendAction('skip_pending_recovery_order', {
+        eventTicker: candidate.event.event_ticker,
+        marketTicker: candidate.market.ticker,
+        recoveryQueueId: nextRecoveryQueueItem.queueId,
+        recoverySourceEventTitle: nextRecoveryQueueItem.sourceEventTitle || null,
+      });
+      continue;
+    }
+
     const orderPlan = makeOrderPayload(candidate, balanceUsd, runtime, recovery);
     if (!orderPlan) {
       appendAction('skip_no_contract_capacity', {
@@ -563,6 +608,9 @@ async function runCycle(client) {
     if (runtime.dryRun) {
       logger.info(logMeta, 'DRY_RUN would place order');
       appendAction('dry_run_order', logMeta);
+      if (orderPlan.sizing.recoveryQueueId) {
+        pendingRecoveryQueueIds.add(String(orderPlan.sizing.recoveryQueueId));
+      }
       continue;
     }
 
@@ -624,6 +672,9 @@ async function runCycle(client) {
       const msg = `Filled ${fillCount} contract(s): ${candidate.event.title} at ${candidate.ask.toFixed(4)} (minute ${candidate.game.minute}, score ${candidate.game.homeScore}-${candidate.game.awayScore})`;
       logger.info({ ...logMeta, orderId: order.order_id, fillCount }, 'Order filled');
       appendAction('order_filled', { ...logMeta, orderId: order.order_id, fillCount });
+      if (orderPlan.sizing.recoveryQueueId) {
+        pendingRecoveryQueueIds.add(String(orderPlan.sizing.recoveryQueueId));
+      }
       await notifier.send(msg);
     } else if (isRestingOrder(order)) {
       stateStore.setEventOpenOrder(candidate.event.event_ticker, {
@@ -633,9 +684,16 @@ async function runCycle(client) {
         limitPrice: orderPlan.sizing.limitPrice,
         count: orderPlan.order.count,
         status: order.status || null,
+        recoveryQueueId: orderPlan.sizing.recoveryQueueId,
+        recoveryRemainingUsd: orderPlan.sizing.recoveryRemainingUsd,
+        recoverySourceLossUsd: orderPlan.sizing.recoverySourceLossUsd,
+        recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
       });
       logger.info({ ...logMeta, orderId: order.order_id, orderStatus: order.status }, 'Order resting on book');
       appendAction('order_resting', { ...logMeta, orderId: order.order_id, orderStatus: order.status || null });
+      if (orderPlan.sizing.recoveryQueueId) {
+        pendingRecoveryQueueIds.add(String(orderPlan.sizing.recoveryQueueId));
+      }
     } else {
       stateStore.clearEventOpenOrder(candidate.event.event_ticker);
       logger.info({ ...logMeta, orderStatus: order.status }, 'Order not filled this cycle (will retry until minute cutoff)');
