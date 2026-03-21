@@ -92,6 +92,25 @@
   justify-content: end;
 }
 
+.account-strip__button {
+  min-height: 42px;
+  padding: 0 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--danger) 24%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--panel) 88%, var(--chip));
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.account-strip__button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .nav-toggle {
   display: flex;
   align-items: center;

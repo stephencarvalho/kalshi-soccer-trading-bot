@@ -21,6 +21,8 @@ const logger = createLogger(config.logLevel);
 const notifier = new Notifier(config, logger);
 const stateStore = new StateStore(config.stateFile);
 stateStore.load();
+const ORDER_REJECTION_COOLDOWN_MS = 10 * 60 * 1000;
+const RECOVERY_MAX_BET_CAP_USD = 50;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,6 +67,38 @@ function serializeError(error) {
           ),
     kalshiRequest: error.kalshiRequest || null,
   };
+}
+
+async function getMarketDiagnostics(client, marketTicker) {
+  if (!client || !marketTicker) return null;
+  try {
+    const markets = await client.getMarketsByTickers([marketTicker]);
+    const market = markets[0] || null;
+    if (!market) return { found: false, ticker: marketTicker };
+    return {
+      found: true,
+      ticker: market.ticker || marketTicker,
+      eventTicker: market.event_ticker || null,
+      status: market.status || null,
+      yesAsk: parseFp(market.yes_ask_dollars),
+      yesBid: parseFp(market.yes_bid_dollars),
+      noAsk: parseFp(market.no_ask_dollars),
+      noBid: parseFp(market.no_bid_dollars),
+      lastPrice: parseFp(market.last_price_dollars),
+      liquidityDollars: parseFp(market.liquidity_dollars),
+      volume24h: parseFp(market.volume_24h),
+      yesSubtitle: market.yes_sub_title || null,
+      noSubtitle: market.no_sub_title || null,
+      closeTime: market.close_time || null,
+      result: market.result || null,
+    };
+  } catch (error) {
+    return {
+      found: false,
+      ticker: marketTicker,
+      diagnosticsError: error.message || 'Failed to fetch market diagnostics',
+    };
+  }
 }
 
 function settlementPnlUsd(settlement) {
@@ -146,6 +180,25 @@ function roundRecoveryUsd(value) {
   return Number((Number(value || 0)).toFixed(4));
 }
 
+function inferReservedRecoveryUsd(meta) {
+  const explicit = Number(meta?.reservedRecoveryUsd);
+  if (Number.isFinite(explicit) && explicit > 0) return roundRecoveryUsd(explicit);
+
+  const netProfitUsd = Number(meta?.estimatedNetProfitUsd ?? meta?.netProfitUsd);
+  if (Number.isFinite(netProfitUsd) && netProfitUsd > 0) return roundRecoveryUsd(netProfitUsd);
+
+  const count = Number(meta?.count ?? meta?.fillCount);
+  const limitPrice = Number(meta?.limitPrice ?? meta?.yesPrice);
+  if (Number.isFinite(count) && count > 0 && Number.isFinite(limitPrice) && limitPrice > 0 && limitPrice < 1) {
+    return roundRecoveryUsd(count * (1 - limitPrice) - kalshiImmediateFeeUsd(count, limitPrice));
+  }
+
+  const targetProfitUsd = Number(meta?.targetProfitUsd);
+  if (Number.isFinite(targetProfitUsd) && targetProfitUsd > 0) return roundRecoveryUsd(targetProfitUsd);
+
+  return 0;
+}
+
 function computePendingRecoveryReservations(settlements, stateStore) {
   const settledEventTickers = new Set(
     (settlements || [])
@@ -166,13 +219,13 @@ function computePendingRecoveryReservations(settlements, stateStore) {
     const queueId = String(trade?.recoveryQueueId || '');
     if (!queueId) continue;
     if (settledEventTickers.has(String(trade?.eventTicker || ''))) continue;
-    reserve(queueId, trade?.targetProfitUsd);
+    reserve(queueId, inferReservedRecoveryUsd(trade));
   }
 
   for (const openOrder of stateStore.listOpenOrders()) {
     const queueId = String(openOrder?.recoveryQueueId || '');
     if (!queueId) continue;
-    reserve(queueId, openOrder?.targetProfitUsd);
+    reserve(queueId, inferReservedRecoveryUsd(openOrder));
   }
 
   return reservedByQueueId;
@@ -253,8 +306,8 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
     const maxSpendUsd =
       Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
-        ? Math.min(maxRecoverySpendUsd, balanceUsd)
-        : balanceUsd;
+        ? Math.min(maxRecoverySpendUsd, RECOVERY_MAX_BET_CAP_USD, balanceUsd)
+        : Math.min(RECOVERY_MAX_BET_CAP_USD, balanceUsd);
     const fitsBudget =
       sized &&
       sized.totalCostUsd <= maxSpendUsd + 1e-9;
@@ -305,6 +358,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
       netProfitUsd,
       limitPrice,
       targetProfitUsd: targetProfitUsd || null,
+      reservedRecoveryUsd: targetProfitUsd ? netProfitUsd : null,
       recoveryQueueId: queueItem?.queueId || null,
       recoverySourceEventTitle: queueItem?.sourceEventTitle || null,
       recoverySourceLossUsd: queueItem?.lossUsd ?? null,
@@ -367,6 +421,7 @@ function syncRestingOrderState(restingOrders, stateStore, events) {
       recoverySourceLossUsd: existing.recoverySourceLossUsd ?? null,
       recoverySourceEventTitle: existing.recoverySourceEventTitle || null,
       targetProfitUsd: existing.targetProfitUsd ?? null,
+      reservedRecoveryUsd: existing.reservedRecoveryUsd ?? null,
     });
   }
 
@@ -420,7 +475,7 @@ async function runCycle(client) {
   const dailyLossUsd = computeDailyLossUsd(settlements, config.timezone, runtime.ignoredSettlementTickers || []);
   stateStore.setDailyLossUsd(Date.now(), config.timezone, dailyLossUsd);
 
-  if (dailyLossUsd >= runtime.maxDailyLossUsd) {
+  if (!runtime.ignoreDailyLossLimit && dailyLossUsd >= runtime.maxDailyLossUsd) {
     const msg = `Trading paused: daily loss ${dailyLossUsd.toFixed(2)} reached limit ${runtime.maxDailyLossUsd.toFixed(2)}.`;
     logger.warn(msg);
     appendAction('risk_halt', { reason: 'daily_loss_limit', dailyLossUsd, maxDailyLossUsd: runtime.maxDailyLossUsd });
@@ -457,21 +512,34 @@ async function runCycle(client) {
     const openPosition = openPositionByMarket.get(previousOrder.marketTicker);
     if (!openPosition) continue;
     const event = eventMap.get(previousOrder.eventTicker);
+    const priorTradeMeta = stateStore.getTradeMeta(previousOrder.eventTicker) || {};
     stateStore.markEventTraded(previousOrder.eventTicker, {
       orderId: previousOrder.orderId || null,
       marketTicker: previousOrder.marketTicker || null,
       fillCount: Math.abs(parseFp(openPosition.position_fp)),
-      yesPrice: null,
-      triggerRule: 'GTC_RESTING_FILL',
-      competition: event?.product_metadata?.competition || event?.__live?.competition || null,
-      eventTitle: event?.title || null,
-      selectedOutcome: event?.markets?.find((market) => market.ticker === previousOrder.marketTicker)?.yes_sub_title || null,
+      yesPrice: priorTradeMeta.yesPrice ?? null,
+      triggerRule: priorTradeMeta.triggerRule || null,
+      executionDetail: 'GTC_RESTING_FILL',
+      placedMinute: priorTradeMeta.placedMinute ?? null,
+      placedScore: priorTradeMeta.placedScore || null,
+      placedCards: priorTradeMeta.placedCards || null,
+      placedLeaderVsTrailingCards: priorTradeMeta.placedLeaderVsTrailingCards || null,
+      leadingTeam: priorTradeMeta.leadingTeam || null,
+      leadingTeamMaxLead: priorTradeMeta.leadingTeamMaxLead ?? null,
+      competition: priorTradeMeta.competition || event?.product_metadata?.competition || event?.__live?.competition || null,
+      eventTitle: priorTradeMeta.eventTitle || event?.title || null,
+      selectedOutcome:
+        priorTradeMeta.selectedOutcome ||
+        event?.markets?.find((market) => market.ticker === previousOrder.marketTicker)?.yes_sub_title ||
+        null,
     });
     appendAction('order_fill_detected_from_position', {
       eventTicker: previousOrder.eventTicker,
       marketTicker: previousOrder.marketTicker || null,
       orderId: previousOrder.orderId || null,
       fillCount: Math.abs(parseFp(openPosition.position_fp)),
+      triggerRule: priorTradeMeta.triggerRule || null,
+      executionDetail: 'GTC_RESTING_FILL',
     });
   }
 
@@ -484,10 +552,10 @@ async function runCycle(client) {
     .sort((a, b) => b.game.minute - a.game.minute);
   const candidateByEvent = new Map(candidates.map((candidate) => [candidate.event.event_ticker, candidate]));
 
-  if (!runtime.tradingEnabled || dailyLossUsd >= runtime.maxDailyLossUsd || openPositions.length >= runtime.maxOpenPositions) {
+  if (!runtime.tradingEnabled || (!runtime.ignoreDailyLossLimit && dailyLossUsd >= runtime.maxDailyLossUsd) || openPositions.length >= runtime.maxOpenPositions) {
     const reason = !runtime.tradingEnabled
       ? 'runtime_override'
-      : dailyLossUsd >= runtime.maxDailyLossUsd
+      : (!runtime.ignoreDailyLossLimit && dailyLossUsd >= runtime.maxDailyLossUsd)
         ? 'daily_loss_limit'
         : 'max_open_positions';
     for (const openOrder of activeRestingOrders) {
@@ -508,7 +576,7 @@ async function runCycle(client) {
     activeRestingOrders = stateStore.listOpenOrders();
   }
 
-  if (dailyLossUsd >= runtime.maxDailyLossUsd) {
+  if (!runtime.ignoreDailyLossLimit && dailyLossUsd >= runtime.maxDailyLossUsd) {
     const msg = `Trading paused: daily loss ${dailyLossUsd.toFixed(2)} reached limit ${runtime.maxDailyLossUsd.toFixed(2)}.`;
     logger.warn(msg);
     appendAction('risk_halt', { reason: 'daily_loss_limit', dailyLossUsd, maxDailyLossUsd: runtime.maxDailyLossUsd });
@@ -586,6 +654,18 @@ async function runCycle(client) {
       continue;
     }
 
+    const existingRejection = stateStore.getEventRejection(candidate.event.event_ticker);
+    if (existingRejection) {
+      appendAction('skip_recent_order_rejection', {
+        eventTicker: candidate.event.event_ticker,
+        marketTicker: candidate.market.ticker,
+        reason: existingRejection.reason || null,
+        errorCode: existingRejection.errorCode || null,
+        untilTs: existingRejection.untilTs || null,
+      });
+      continue;
+    }
+
     const orderPlan = makeOrderPayload(candidate, balanceUsd, runtime, effectiveRecovery);
     if (!orderPlan) {
       appendAction('skip_no_contract_capacity', {
@@ -636,14 +716,55 @@ async function runCycle(client) {
         const queueId = String(orderPlan.sizing.recoveryQueueId);
         pendingRecoveryReservations.set(
           queueId,
-          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.targetProfitUsd || 0)),
+          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.reservedRecoveryUsd || 0)),
         );
       }
       continue;
     }
 
     appendAction('order_submit', { ...logMeta, payload: orderPlan.order });
-    const result = await client.createOrder(orderPlan.order);
+    let result;
+    try {
+      result = await client.createOrder(orderPlan.order);
+    } catch (error) {
+      const errorMeta = serializeError(error);
+      const marketDiagnostics = await getMarketDiagnostics(client, candidate.market.ticker);
+      const errorCode = error.response?.data?.error?.code || null;
+      const rejectionUntilTs =
+        error.response?.status === 400 && errorCode === 'invalid_parameters'
+          ? Date.now() + ORDER_REJECTION_COOLDOWN_MS
+          : null;
+
+      appendAction('order_submit_error', {
+        ...logMeta,
+        ...errorMeta,
+        payload: orderPlan.order,
+        marketDiagnostics,
+        rejectionUntilTs,
+      });
+
+      logger.error(
+        {
+          ...logMeta,
+          err: errorMeta,
+          payload: orderPlan.order,
+          marketDiagnostics,
+          rejectionUntilTs,
+        },
+        'Order submission failed',
+      );
+
+      if (rejectionUntilTs) {
+        stateStore.setEventRejected(candidate.event.event_ticker, {
+          marketTicker: candidate.market.ticker,
+          reason: 'order_invalid_parameters',
+          errorCode,
+          untilTs: rejectionUntilTs,
+          reservedRecoveryUsd: orderPlan.sizing.reservedRecoveryUsd,
+        });
+      }
+      continue;
+    }
     const order = result.order || {};
     const fillCount = parseFp(order.fill_count_fp);
 
@@ -651,6 +772,7 @@ async function runCycle(client) {
 
     if (fillCount > 0) {
       const triggerRule = deriveTriggerRule(candidate.game, runtime);
+      stateStore.clearEventRejection(candidate.event.event_ticker);
       stateStore.markEventTraded(candidate.event.event_ticker, {
         orderId: order.order_id,
         marketTicker: candidate.market.ticker,
@@ -658,6 +780,7 @@ async function runCycle(client) {
         yesPrice: candidate.ask,
         stakeUsdTarget: orderPlan.sizing.totalCostUsd,
         targetProfitUsd: orderPlan.sizing.targetProfitUsd,
+        reservedRecoveryUsd: orderPlan.sizing.reservedRecoveryUsd,
         recoveryQueueId: orderPlan.sizing.recoveryQueueId,
         recoveryRemainingUsd: orderPlan.sizing.recoveryRemainingUsd,
         recoverySourceLossUsd: orderPlan.sizing.recoverySourceLossUsd,
@@ -704,11 +827,12 @@ async function runCycle(client) {
         const queueId = String(orderPlan.sizing.recoveryQueueId);
         pendingRecoveryReservations.set(
           queueId,
-          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.targetProfitUsd || 0)),
+          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.reservedRecoveryUsd || 0)),
         );
       }
       await notifier.send(msg);
     } else if (isRestingOrder(order)) {
+      stateStore.clearEventRejection(candidate.event.event_ticker);
       stateStore.setEventOpenOrder(candidate.event.event_ticker, {
         orderId: order.order_id,
         marketTicker: candidate.market.ticker,
@@ -721,6 +845,7 @@ async function runCycle(client) {
         recoverySourceLossUsd: orderPlan.sizing.recoverySourceLossUsd,
         recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
         targetProfitUsd: orderPlan.sizing.targetProfitUsd,
+        reservedRecoveryUsd: orderPlan.sizing.reservedRecoveryUsd,
       });
       logger.info({ ...logMeta, orderId: order.order_id, orderStatus: order.status }, 'Order resting on book');
       appendAction('order_resting', { ...logMeta, orderId: order.order_id, orderStatus: order.status || null });
@@ -728,7 +853,7 @@ async function runCycle(client) {
         const queueId = String(orderPlan.sizing.recoveryQueueId);
         pendingRecoveryReservations.set(
           queueId,
-          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.targetProfitUsd || 0)),
+          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.reservedRecoveryUsd || 0)),
         );
       }
     } else {
@@ -788,6 +913,8 @@ async function main() {
       const errorMeta = serializeError(error);
       logger.error({ err: errorMeta }, 'Cycle failed');
       appendAction('cycle_error', errorMeta);
+      stateStore.setLastCycle(new Date().toISOString());
+      stateStore.persist();
       await notifier.send(`Kalshi bot cycle error: ${error.message}`);
     }
 

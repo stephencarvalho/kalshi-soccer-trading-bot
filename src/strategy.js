@@ -378,6 +378,7 @@ function eligibleTradeCandidate(event, config, stateStore) {
 
   if (game.homeRedCards === null || game.awayRedCards === null) return null;
   if (stateStore.hasTradedEvent(event.event_ticker)) return null;
+  if (typeof stateStore.hasRecentEventRejection === 'function' && stateStore.hasRecentEventRejection(event.event_ticker)) return null;
 
   if (signalRule.outcomeType === 'tie') {
     if (game.homeScore !== game.awayScore) return null;

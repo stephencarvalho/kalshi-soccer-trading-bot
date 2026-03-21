@@ -17,6 +17,7 @@ class StateStore {
     this.filePath = filePath;
     this.state = {
       tradedEvents: {},
+      rejectedEvents: {},
       openOrderIdsByEvent: {},
       dailyLossByDate: {},
       lastCycleAt: null,
@@ -63,10 +64,36 @@ class StateStore {
   }
 
   markEventTraded(eventTicker, tradeMeta) {
+    delete this.state.rejectedEvents[eventTicker];
     this.state.tradedEvents[eventTicker] = {
       ...tradeMeta,
       markedAt: new Date().toISOString(),
     };
+  }
+
+  setEventRejected(eventTicker, rejectionMeta) {
+    if (!eventTicker || !rejectionMeta) return;
+    this.state.rejectedEvents[eventTicker] = {
+      ...rejectionMeta,
+      markedAt: new Date().toISOString(),
+    };
+  }
+
+  getEventRejection(eventTicker) {
+    const value = this.state.rejectedEvents?.[eventTicker];
+    if (!value) return null;
+    const untilTs = Number(value.untilTs || 0);
+    if (Number.isFinite(untilTs) && untilTs > Date.now()) return value;
+    delete this.state.rejectedEvents[eventTicker];
+    return null;
+  }
+
+  hasRecentEventRejection(eventTicker) {
+    return Boolean(this.getEventRejection(eventTicker));
+  }
+
+  clearEventRejection(eventTicker) {
+    delete this.state.rejectedEvents[eventTicker];
   }
 
   setEventOpenOrder(eventTicker, orderId) {

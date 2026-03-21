@@ -29,6 +29,7 @@ interface DashboardPayload {
     minVolume24hContracts: number;
     minLiquidityDollars: number;
     maxDailyLossUsd: number;
+    ignoreDailyLossLimit?: boolean;
     recoveryModeEnabled?: boolean;
     recoveryStakeUsd?: number;
     recoveryMaxStakeUsd?: number;
@@ -54,6 +55,8 @@ interface DashboardPayload {
     lastCycleAt: string | null;
     tradedEventsCount: number;
     riskHaltedToday: boolean;
+    riskHaltLoggedToday?: boolean;
+    riskHaltOverrideActive?: boolean;
     status: 'STARTING' | 'UP_TRADING' | 'UP_DRY_RUN' | 'UP_BLOCKED_STOP_LOSS' | 'UP_DEGRADED' | 'DOWN';
     statusReason: string;
     lastError: string | null;
@@ -74,6 +77,7 @@ interface DashboardPayload {
   analytics: TradeAnalytics;
   recovery?: RecoveryAnalytics;
   leagueLeaderboard: LeagueLeaderboardRow[];
+  strategyLeaderboard: StrategyLeaderboardRow[];
   monitoredGamesSummary: {
     total: number;
     eligibleNow: number;
@@ -254,6 +258,17 @@ interface LeagueLeaderboardRow {
   avgRoiPct: number | null;
 }
 
+interface StrategyLeaderboardRow {
+  strategy: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  winRate: number | null;
+  totalPnlUsd: number;
+  avgRoiPct: number | null;
+}
+
 interface MonitoredGameRecord {
   eventTicker: string;
   title: string;
@@ -281,7 +296,7 @@ type ChartRange = 'LIVE' | '1H' | '3H' | '6H' | '12H' | '1D' | '1W' | '1M' | '3M
 type LogViewMode = 'important' | 'verbose';
 type LogTimeRange = 'TODAY' | '24H' | '7D' | 'ALL';
 type SortDirection = 'asc' | 'desc';
-type TableId = 'monitoredGames' | 'openTrades' | 'recoveryQueue' | 'leagueLeaderboard' | 'closedTrades';
+type TableId = 'monitoredGames' | 'openTrades' | 'recoveryQueue' | 'leagueLeaderboard' | 'strategyLeaderboard' | 'closedTrades';
 
 interface TableSortState {
   key: string;
@@ -293,6 +308,7 @@ const DEFAULT_TABLE_SORT: Record<TableId, TableSortState> = {
   openTrades: { key: 'lastUpdated', direction: 'desc' },
   recoveryQueue: { key: 'remainingTargetUsd', direction: 'desc' },
   leagueLeaderboard: { key: 'avgRoiPct', direction: 'desc' },
+  strategyLeaderboard: { key: 'totalPnlUsd', direction: 'desc' },
   closedTrades: { key: 'settledTime', direction: 'desc' },
 };
 
@@ -424,6 +440,7 @@ export class App implements OnDestroy {
   readonly chartRange = signal<ChartRange>('ALL');
   readonly logViewMode = signal<LogViewMode>('important');
   readonly logTimeRange = signal<LogTimeRange>('TODAY');
+  readonly riskHaltBusy = signal(false);
   readonly tableSort = signal<Record<TableId, TableSortState>>({ ...DEFAULT_TABLE_SORT });
   readonly chartRanges: ChartRange[] = ['LIVE', '1H', '3H', '6H', '12H', '1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'ALL'];
   readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
@@ -516,6 +533,19 @@ export class App implements OnDestroy {
     if (!d) return [];
     return this.sortRows(d.leagueLeaderboard || [], this.tableSort().leagueLeaderboard, {
       league: (row) => row.league,
+      trades: (row) => row.trades,
+      wins: (row) => row.wins,
+      losses: (row) => row.losses,
+      winRate: (row) => row.winRate,
+      avgRoiPct: (row) => row.avgRoiPct,
+      totalPnlUsd: (row) => row.totalPnlUsd,
+    });
+  });
+  readonly sortedStrategyLeaderboard = computed<StrategyLeaderboardRow[]>(() => {
+    const d = this.data();
+    if (!d) return [];
+    return this.sortRows(d.strategyLeaderboard || [], this.tableSort().strategyLeaderboard, {
+      strategy: (row) => row.strategy,
       trades: (row) => row.trades,
       wins: (row) => row.wins,
       losses: (row) => row.losses,
@@ -996,6 +1026,23 @@ export class App implements OnDestroy {
 
   setLogTimeRange(range: LogTimeRange): void {
     this.logTimeRange.set(range);
+  }
+
+  toggleRiskHalt(active: boolean): void {
+    if (this.riskHaltBusy()) return;
+    const runtime = getDashboardRuntimeConfig();
+    const headers = runtime.apiToken ? { Authorization: `Bearer ${runtime.apiToken}` } : undefined;
+    this.riskHaltBusy.set(true);
+    this.http.post(buildApiUrl('/api/runtime/risk-halt'), { active }, { headers }).subscribe({
+      next: () => {
+        this.riskHaltBusy.set(false);
+        this.fetchDashboard();
+      },
+      error: (err) => {
+        this.riskHaltBusy.set(false);
+        this.error.set(err?.error?.message || err?.message || 'Failed to update risk halt override');
+      },
+    });
   }
 
   setTableSort(table: TableId, key: string): void {

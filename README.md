@@ -133,7 +133,9 @@ Current queue logic:
 - Only settled losing trades create recovery targets.
 - Open unrealized PnL does not affect recovery sizing.
 - The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
-- In-flight recovery trades reserve only the dollar amount they are targeting, not the entire loss row.
+- Each recovery bet is hard-capped at `$50`, even if `RECOVERY_MAX_STAKE_USD` is set higher.
+- In-flight recovery trades reserve their expected net recovery after fees, not the full loss row and not the raw target amount.
+- If the oldest loss still has uncovered remaining recovery after current in-flight reservations, the bot can continue placing more recovery bets against that same loss.
 - Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
 
 ### Recovery bug fix: root cause and current behavior
@@ -141,20 +143,29 @@ Current queue logic:
 Root cause of the duplicate recovery-bet issue:
 
 - Recovery targets were built only from settled losses.
-- A recovery trade that had already been placed but had not settled yet did not reserve its `recoveryQueueId`.
+- A recovery trade that had already been placed but had not settled yet did not reserve its queued loss correctly.
 - On later scans, the bot still saw the same oldest unresolved loss as available and could size another recovery trade against it.
 - That made one closed loss capable of spawning multiple recovery bets before the first recovery attempt resolved.
 
 How recovery works now:
 
 - The oldest unresolved closed loss remains the active recovery target.
-- As soon as the bot places a recovery order, only that order's targeted recovery dollars are reserved in-flight.
-- If the oldest queued loss is larger than the in-flight recovery reservation, later recovery bets can still target the uncovered remainder of that same loss.
-- If the in-flight reservations fully cover the current oldest loss, the bot can advance to the next unresolved loss instead of duplicating coverage.
+- As soon as the bot places a recovery order, only that order's expected net profit after fees is reserved in-flight.
+- If the oldest queued loss is larger than the currently reserved expected recovery, later recovery bets can still target the uncovered remainder of that same loss.
+- If in-flight expected recovery fully covers the current oldest loss, the bot can advance to the next unresolved loss instead of duplicating coverage.
+- Recovery sizing is split across multiple bets automatically whenever a single capped recovery bet cannot cover the remaining unresolved loss.
 - Once the recovery trade settles, the queue is recalculated from actual closed-trade results and the bot either:
   - marks the loss as fully resolved,
-  - keeps it partially unresolved and waits for one new recovery attempt,
+  - keeps it partially unresolved and continues recovery sizing from the new remaining balance,
   - or advances to the next queued loss if the oldest one is fully recovered.
+
+### Recovery guardrails
+
+- A single recovery order can never exceed `$50`.
+- Existing `MAX_OPEN_POSITIONS`, balance checks, and daily-loss rules still apply.
+- Recovery reservations are fee-aware and based on expected net payout, so the bot does not incorrectly assume a capped bet fully covers a large loss.
+- Markets rejected by Kalshi with `400 invalid_parameters` are put on a cooldown before the bot will try them again.
+- Unexpected cycle errors now still refresh the bot heartbeat, so the dashboard can show a degraded-but-running agent instead of falsely showing it as fully down.
 
 ### Strategy and recovery flow
 
@@ -188,19 +199,44 @@ flowchart TD
     O --> P{Recovery mode enabled and unresolved settled loss exists?}
     P -- No --> Q[Use BASE sizing]
     P -- Yes --> R[Target oldest unresolved loss in FIFO queue]
-    R --> S{Recovery queue item already has in-flight recovery trade?}
-    S -- Yes --> T[Skip new recovery order for that queue item]
-    S -- No --> U[Size one recovery order with fee-aware sizing]
+    R --> S[Measure uncovered recovery after fee-aware in-flight reservations]
+    S --> T{Uncovered recovery > 0?}
+    T -- No --> U[Stop adding recovery bets until settlements update queue]
+    T -- Yes --> V[Size next recovery bet subject to 50 USD cap]
 
-    Q --> V[Submit order]
-    U --> V
-    V --> W{Filled or resting?}
-    W -- No --> X[No trade recorded]
-    W -- Yes --> Y[Lock recovery queue item until settlement]
-    Y --> AA[Later settlement recomputes queue from realized PnL]
-    AA --> AB{Loss fully recovered?}
-    AB -- Yes --> AC[Advance to next queued loss or return to BASE sizing]
-    AB -- No --> AD[Keep same oldest loss queued for one future recovery attempt]
+    Q --> W[Submit order]
+    V --> W
+    W --> X{Kalshi accepts order?}
+    X -- No --> Y[Log detailed reject diagnostics and cooldown bad market]
+    X -- Yes --> Z{Filled or resting?}
+    Z -- No --> AA[No trade recorded]
+    Z -- Yes --> AB[Reserve expected net recovery from this in-flight bet]
+    AB --> AC{Uncovered recovery still > 0 and capacity remains?}
+    AC -- Yes --> AD[Allow another recovery bet on a later eligible market]
+    AC -- No --> AE[Wait for settlements]
+    AE --> AF[Later settlement recomputes queue from realized PnL]
+    AF --> AG{Loss fully recovered?}
+    AG -- Yes --> AH[Advance to next queued loss or return to BASE sizing]
+    AG -- No --> AI[Keep same oldest loss at front of queue]
+```
+
+### Recovery sizing algorithm
+
+```mermaid
+flowchart TD
+    A[Oldest unresolved loss remainingTargetUsd] --> B[Subtract reservedRecoveryUsd from every unsettled recovery bet tied to that queue row]
+    B --> C[Compute uncoveredRecoveryUsd]
+    C --> D{uncoveredRecoveryUsd <= 0?}
+    D -- Yes --> E[Do not place more recovery bets yet]
+    D -- No --> F[Choose next eligible market]
+    F --> G[Size contracts for uncovered target using fee-aware profit math]
+    G --> H[Apply min(balance, RECOVERY_MAX_STAKE_USD, 50 USD hard cap)]
+    H --> I{Can fully size target?}
+    I -- Yes --> J[Use RECOVERY_QUEUE sizing]
+    I -- No --> K[Use RECOVERY_QUEUE_CAPPED sizing]
+    J --> L[Reserve expected net profit, not raw target]
+    K --> L
+    L --> M[Repeat until uncoveredRecoveryUsd <= 0 or no capacity remains]
 ```
 
 ## Strategy Log and Rule History
@@ -240,6 +276,9 @@ This project keeps historical trigger labels in persisted trade metadata and act
   - Standard non-recovery order sizing using the configured base stake.
 - `RECOVERY_QUEUE_CAPPED`
   - Recovery mode sizing where the order was capped by current balance and/or `RECOVERY_MAX_STAKE_USD` instead of fully reaching the target recovery profit.
+- `GTC_RESTING_FILL`
+  - No longer intended as a user-facing strategy label.
+  - It is now only an execution detail for internal bookkeeping when a previously resting order is detected as filled later.
 
 ### Notes on historical logs
 

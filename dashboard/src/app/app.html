@@ -22,8 +22,29 @@
             </article>
             <article class="account-metric account-metric--status account-metric--stop" [class.status-warn]="d.bot.riskHaltedToday" [class.status-good]="!d.bot.riskHaltedToday">
               <span>Stop-Loss</span>
-              <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
+              <strong>
+                @if (d.bot.riskHaltOverrideActive) {
+                  Bypassed
+                } @else {
+                  {{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}
+                }
+              </strong>
             </article>
+            @if (d.bot.riskHaltedToday || d.bot.riskHaltOverrideActive) {
+              <button
+                type="button"
+                class="account-strip__button"
+                [disabled]="riskHaltBusy()"
+                (click)="toggleRiskHalt(!!d.bot.riskHaltOverrideActive)">
+                @if (riskHaltBusy()) {
+                  Updating...
+                } @else if (d.bot.riskHaltOverrideActive) {
+                  Re-enable Halt
+                } @else {
+                  Turn Off Halt
+                }
+              </button>
+            }
           </div>
         </div>
       </section>
@@ -619,6 +640,46 @@
                     {{ t.placed_context.placedCards || '-' }}
                   }
                 </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Strategy Leaderboard</h2>
+        <span class="chip">{{ (d.strategyLeaderboard || []).length }} strategies</span>
+      </div>
+      <div class="table-wrap terminal-table">
+        <table>
+          <thead>
+            <tr>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'strategy')">Strategy <span>{{ sortIndicator('strategyLeaderboard', 'strategy') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'trades')">Trades <span>{{ sortIndicator('strategyLeaderboard', 'trades') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'wins')">Wins <span>{{ sortIndicator('strategyLeaderboard', 'wins') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'losses')">Losses <span>{{ sortIndicator('strategyLeaderboard', 'losses') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'winRate')">Win Rate <span>{{ sortIndicator('strategyLeaderboard', 'winRate') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'avgRoiPct')">Avg ROI <span>{{ sortIndicator('strategyLeaderboard', 'avgRoiPct') }}</span></button></th>
+              <th><button type="button" class="sort-button" (click)="setTableSort('strategyLeaderboard', 'totalPnlUsd')">Total PnL <span>{{ sortIndicator('strategyLeaderboard', 'totalPnlUsd') }}</span></button></th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!(d.strategyLeaderboard || []).length) {
+              <tr><td colspan="7" class="muted">No settled strategy stats yet</td></tr>
+            }
+            @for (r of sortedStrategyLeaderboard(); track r.strategy) {
+              <tr>
+                <td>{{ r.strategy }}</td>
+                <td>{{ r.trades }}</td>
+                <td>{{ r.wins }}</td>
+                <td>{{ r.losses }}</td>
+                <td>{{ r.winRate === null ? '-' : (r.winRate | percent:'1.1-2') }}</td>
+                <td [class.pos]="(r.avgRoiPct ?? 0) >= 0" [class.neg]="(r.avgRoiPct ?? 0) < 0">
+                  {{ r.avgRoiPct === null ? '-' : (r.avgRoiPct | percent:'1.1-2') }}
+                </td>
+                <td [class.pos]="r.totalPnlUsd >= 0" [class.neg]="r.totalPnlUsd < 0">{{ r.totalPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
               </tr>
             }
           </tbody>

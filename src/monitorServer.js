@@ -11,7 +11,7 @@ const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
-const { getRuntimeConfig, readOverrides, OVERRIDES_PATH } = require('./runtimeConfig');
+const { getRuntimeConfig, readOverrides, OVERRIDES_PATH, setOverride, unsetOverride } = require('./runtimeConfig');
 const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice } = require('./strategy');
 const {
   getLiveSoccerEventData,
@@ -29,6 +29,7 @@ const logger = createLogger(config.logLevel);
 const port = Number(process.env.MONITOR_PORT || 8787);
 const logsPath = path.resolve('logs/trading-actions.ndjson');
 const statePath = path.resolve(config.stateFile || 'data/state.json');
+const RECOVERY_MAX_BET_CAP_USD = 50;
 const VALID_AGENT_STATUSES = [
   'STARTING',
   'UP_TRADING',
@@ -244,6 +245,7 @@ function computeTradeAnalytics(closedTrades) {
   }
 
   const leagueMap = new Map();
+  const strategyMap = new Map();
   for (const t of ordered) {
     const league = t.placed_context?.competition || 'Unknown';
     if (!leagueMap.has(league)) {
@@ -268,11 +270,48 @@ function computeTradeAnalytics(closedTrades) {
       row.roiSum += t.roi_pct;
       row.roiCount += 1;
     }
+
+    const strategy = t.placed_context?.triggerRule || 'UNKNOWN_RULE';
+    if (!strategyMap.has(strategy)) {
+      strategyMap.set(strategy, {
+        strategy,
+        trades: 0,
+        wins: 0,
+        losses: 0,
+        pushes: 0,
+        totalPnlUsd: 0,
+        roiSum: 0,
+        roiCount: 0,
+      });
+    }
+    const strategyRow = strategyMap.get(strategy);
+    strategyRow.trades += 1;
+    if (t.pnl_usd > 0) strategyRow.wins += 1;
+    else if (t.pnl_usd < 0) strategyRow.losses += 1;
+    else strategyRow.pushes += 1;
+    strategyRow.totalPnlUsd += t.pnl_usd;
+    if (t.roi_pct !== null && Number.isFinite(t.roi_pct)) {
+      strategyRow.roiSum += t.roi_pct;
+      strategyRow.roiCount += 1;
+    }
   }
 
   const leagueLeaderboard = Array.from(leagueMap.values())
     .map((r) => ({
       league: r.league,
+      trades: r.trades,
+      wins: r.wins,
+      losses: r.losses,
+      pushes: r.pushes,
+      winRate: safeRatio(r.wins, r.wins + r.losses),
+      totalPnlUsd: Number(r.totalPnlUsd.toFixed(4)),
+      avgRoiPct: r.roiCount > 0 ? r.roiSum / r.roiCount : null,
+    }))
+    .sort((a, b) => b.totalPnlUsd - a.totalPnlUsd);
+
+  const strategyLeaderboard = Array.from(strategyMap.values())
+    .map((r) => ({
+      strategy: r.strategy,
       trades: r.trades,
       wins: r.wins,
       losses: r.losses,
@@ -308,6 +347,7 @@ function computeTradeAnalytics(closedTrades) {
     longestWinStreak,
     longestLossStreak,
     leagueLeaderboard,
+    strategyLeaderboard,
   };
 }
 
@@ -352,8 +392,8 @@ function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
     const maxSpendUsd =
       Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
-        ? Math.min(maxRecoverySpendUsd, Number(balanceUsd))
-        : Number(balanceUsd);
+        ? Math.min(maxRecoverySpendUsd, RECOVERY_MAX_BET_CAP_USD, Number(balanceUsd))
+        : Math.min(RECOVERY_MAX_BET_CAP_USD, Number(balanceUsd));
     if (sized && sized.totalCostUsd <= maxSpendUsd + 1e-9) return true;
     return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
   }
@@ -549,6 +589,7 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
   const staleThresholdMs = pollMs * 4 + 15000;
   const lastCycleMs = state.lastCycleAt ? new Date(state.lastCycleAt).getTime() : null;
   const riskHalted = actionLogs.some((x) => x.action === 'risk_halt' && toISODateInTz(new Date(x.ts).getTime(), config.timezone) === todayKey);
+  const riskHaltActive = riskHalted && !runtime.ignoreDailyLossLimit;
   const lastErr = [...actionLogs].reverse().find((x) => x.action === 'cycle_error' || x.action === 'fatal_error');
 
   if (!lastCycleMs || !Number.isFinite(lastCycleMs)) {
@@ -576,7 +617,7 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
     };
   }
 
-  if (riskHalted) {
+  if (riskHaltActive) {
     return {
       status: 'UP_BLOCKED_STOP_LOSS',
       reason: 'Daily stop-loss reached; trade execution blocked',
@@ -613,7 +654,7 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
 
   return {
     status: 'UP_TRADING',
-    reason: 'Bot is healthy and eligible to execute trades',
+    reason: runtime.ignoreDailyLossLimit ? 'Bot is trading with daily stop-loss override active' : 'Bot is healthy and eligible to execute trades',
     lastError: lastErr?.message || null,
   };
 }
@@ -1030,6 +1071,12 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     .filter(Boolean)
     .sort((a, b) => (b.minute ?? -1) - (a.minute ?? -1));
 
+  const riskHaltLoggedToday = actionLogs.some(
+    (x) => x.action === 'risk_halt' && toISODateInTz(new Date(x.ts).getTime(), config.timezone) === todayKey,
+  );
+  const riskHaltOverrideActive = Boolean(runtime.ignoreDailyLossLimit);
+  const riskHaltActiveToday = riskHaltLoggedToday && !riskHaltOverrideActive;
+
   res.json({
     generatedAt: new Date().toISOString(),
     config: {
@@ -1043,6 +1090,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       minVolume24hContracts: runtime.minVolume24hContracts,
       minLiquidityDollars: runtime.minLiquidityDollars,
       maxDailyLossUsd: runtime.maxDailyLossUsd,
+      ignoreDailyLossLimit: Boolean(runtime.ignoreDailyLossLimit),
       recoveryModeEnabled: runtime.recoveryModeEnabled,
       recoveryStakeUsd: runtime.recoveryStakeUsd,
       recoveryMaxStakeUsd: runtime.recoveryMaxStakeUsd,
@@ -1068,7 +1116,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     bot: {
       lastCycleAt: state.lastCycleAt || null,
       tradedEventsCount: Object.keys(state.tradedEvents || {}).length,
-      riskHaltedToday: actionLogs.some((x) => x.action === 'risk_halt' && toISODateInTz(new Date(x.ts).getTime(), config.timezone) === todayKey),
+      riskHaltedToday: riskHaltActiveToday,
+      riskHaltLoggedToday,
+      riskHaltOverrideActive,
       status: agentStatus.status,
       statusReason: agentStatus.reason,
       lastError: agentStatus.lastError,
@@ -1081,6 +1131,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     analytics,
     recovery,
     leagueLeaderboard: analytics.leagueLeaderboard,
+    strategyLeaderboard: analytics.strategyLeaderboard,
     monitoredGamesSummary: {
       total: monitoredGames.length,
       eligibleNow: monitoredGames.filter((g) => g.status === 'ELIGIBLE_NOW').length,
@@ -1093,6 +1144,36 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     openTrades,
     closedTrades: closedTradesWithRecovery.slice(0, 200),
   });
+});
+
+app.post('/api/runtime/risk-halt', requireMonitorAuth, async (req, res) => {
+  try {
+    const requestedActive = req.body?.active;
+    if (typeof requestedActive !== 'boolean') {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: 'Body must include boolean field "active".',
+      });
+    }
+
+    const overrides = requestedActive
+      ? unsetOverride('ignoreDailyLossLimit')
+      : setOverride('ignoreDailyLossLimit', true);
+
+    return res.json({
+      ok: true,
+      riskHaltActive: requestedActive,
+      riskHaltOverrideActive: !requestedActive,
+      overrides,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: 'runtime_override_failed',
+      message: error.message || 'Failed to update risk halt override',
+    });
+  }
 });
 
 app.listen(port, () => {
