@@ -894,14 +894,17 @@ table {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
 .panel--action-logs .log-list {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   max-height: none;
   align-content: start;
+  overflow-x: hidden;
 }
 
 .log-toolbar {
@@ -946,12 +949,14 @@ table {
   gap: 0.9rem;
   align-items: start;
   background: color-mix(in oklab, var(--panel) 88%, var(--chip));
+  min-width: 0;
 }
 
 .log-rail {
   display: grid;
   gap: 0.25rem;
   align-content: start;
+  min-width: 0;
 
   .log-ts {
     color: var(--ink);
@@ -1011,6 +1016,7 @@ table {
   display: grid;
   gap: 0.55rem;
   min-width: 0;
+  overflow: hidden;
 }
 
 .log-headline {
@@ -1024,6 +1030,8 @@ table {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .log-meta--secondary {
@@ -1041,6 +1049,7 @@ table {
   border-radius: 999px;
   background: color-mix(in oklab, var(--chip) 90%, var(--panel));
   font-size: 0.76rem;
+  overflow: hidden;
 
   strong {
     color: var(--muted);

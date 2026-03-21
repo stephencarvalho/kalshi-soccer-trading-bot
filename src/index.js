@@ -142,28 +142,62 @@ function computeRecoveryState(settlements, stateStore, runtime) {
   };
 }
 
-function computePendingRecoveryQueueIds(settlements, stateStore) {
+function roundRecoveryUsd(value) {
+  return Number((Number(value || 0)).toFixed(4));
+}
+
+function computePendingRecoveryReservations(settlements, stateStore) {
   const settledEventTickers = new Set(
     (settlements || [])
       .map((settlement) => String(settlement?.event_ticker || ''))
       .filter(Boolean),
   );
-  const pendingQueueIds = new Set();
+  const reservedByQueueId = new Map();
+
+  function reserve(queueId, targetProfitUsd) {
+    const key = String(queueId || '');
+    const amount = Number(targetProfitUsd || 0);
+    if (!key) return;
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    reservedByQueueId.set(key, roundRecoveryUsd((reservedByQueueId.get(key) || 0) + amount));
+  }
 
   for (const trade of stateStore.listTradedEvents()) {
     const queueId = String(trade?.recoveryQueueId || '');
     if (!queueId) continue;
     if (settledEventTickers.has(String(trade?.eventTicker || ''))) continue;
-    pendingQueueIds.add(queueId);
+    reserve(queueId, trade?.targetProfitUsd);
   }
 
   for (const openOrder of stateStore.listOpenOrders()) {
     const queueId = String(openOrder?.recoveryQueueId || '');
     if (!queueId) continue;
-    pendingQueueIds.add(queueId);
+    reserve(queueId, openOrder?.targetProfitUsd);
   }
 
-  return pendingQueueIds;
+  return reservedByQueueId;
+}
+
+function applyPendingRecoveryReservations(recoveryState, reservedByQueueId) {
+  if (!recoveryState?.enabled || !Array.isArray(recoveryState.queue)) return recoveryState;
+
+  const queue = recoveryState.queue.map((item) => {
+    const reservedUsd = roundRecoveryUsd(reservedByQueueId?.get(String(item.queueId || '')) || 0);
+    const availableTargetUsd = roundRecoveryUsd(Math.max(0, Number(item.remainingTargetUsd || 0) - reservedUsd));
+    return {
+      ...item,
+      reservedInFlightUsd: reservedUsd,
+      availableTargetUsd,
+    };
+  });
+
+  const nextQueueItem = queue.find((item) => Number(item.availableTargetUsd || 0) > 0.0001) || null;
+
+  return {
+    ...recoveryState,
+    queue,
+    nextTargetProfitUsd: nextQueueItem ? roundRecoveryUsd(nextQueueItem.availableTargetUsd) : 0,
+  };
 }
 
 function deriveTriggerRule(game, runtime) {
@@ -213,7 +247,8 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
   if (recoveryState?.enabled && Number(recoveryState.nextTargetProfitUsd || 0) > 0 && Array.isArray(recoveryState.queue)) {
     sizingMode = 'RECOVERY_QUEUE';
     targetProfitUsd = Number(recoveryState.nextTargetProfitUsd || 0);
-    queueItem = recoveryState.queue.find((item) => Number(item.remainingTargetUsd || 0) > 0.0001) || null;
+    queueItem =
+      recoveryState.queue.find((item) => Number((item.availableTargetUsd ?? item.remainingTargetUsd ?? 0)) > 0.0001) || null;
     const sized = contractsForTargetNetProfit(limitPrice, targetProfitUsd);
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
     const maxSpendUsd =
@@ -273,7 +308,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
       recoveryQueueId: queueItem?.queueId || null,
       recoverySourceEventTitle: queueItem?.sourceEventTitle || null,
       recoverySourceLossUsd: queueItem?.lossUsd ?? null,
-      recoveryRemainingUsd: queueItem?.remainingTargetUsd ?? null,
+      recoveryRemainingUsd: queueItem?.availableTargetUsd ?? queueItem?.remainingTargetUsd ?? null,
       baseStakeUsd,
     },
   };
@@ -331,6 +366,7 @@ function syncRestingOrderState(restingOrders, stateStore, events) {
       recoveryRemainingUsd: existing.recoveryRemainingUsd ?? null,
       recoverySourceLossUsd: existing.recoverySourceLossUsd ?? null,
       recoverySourceEventTitle: existing.recoverySourceEventTitle || null,
+      targetProfitUsd: existing.targetProfitUsd ?? null,
     });
   }
 
@@ -404,9 +440,10 @@ async function runCycle(client) {
   const liveCompetitionScope = await resolveSoccerCompetitionScope(client, events, runtime.leagues || [], logger);
   const liveSoccerMap = await getLiveSoccerEventData(client, liveCompetitionScope);
   const enrichedEvents = attachLiveDataToEvents(events, liveSoccerMap);
-  const recovery = computeRecoveryState(settlements, stateStore, runtime);
+  const recoveryBase = computeRecoveryState(settlements, stateStore, runtime);
   let activeRestingOrders = syncRestingOrderState(restingOrders, stateStore, enrichedEvents);
-  const pendingRecoveryQueueIds = computePendingRecoveryQueueIds(settlements, stateStore);
+  const pendingRecoveryReservations = computePendingRecoveryReservations(settlements, stateStore);
+  const recovery = applyPendingRecoveryReservations(recoveryBase, pendingRecoveryReservations);
   const openPositionByMarket = new Map(
     (openPositions || [])
       .filter((position) => Math.abs(parseFp(position.position_fp)) > 0)
@@ -538,6 +575,7 @@ async function runCycle(client) {
   });
 
   for (const candidate of candidates) {
+    const effectiveRecovery = applyPendingRecoveryReservations(recoveryBase, pendingRecoveryReservations);
     const existingResting = stateStore.getEventOpenOrder(candidate.event.event_ticker);
     if (existingResting?.orderId) {
       appendAction('skip_existing_open_order', {
@@ -548,27 +586,13 @@ async function runCycle(client) {
       continue;
     }
 
-    const nextRecoveryQueueItem =
-      recovery.enabled && Array.isArray(recovery.queue)
-        ? recovery.queue.find((item) => Number(item.remainingTargetUsd || 0) > 0.0001) || null
-        : null;
-    if (nextRecoveryQueueItem && pendingRecoveryQueueIds.has(String(nextRecoveryQueueItem.queueId))) {
-      appendAction('skip_pending_recovery_order', {
-        eventTicker: candidate.event.event_ticker,
-        marketTicker: candidate.market.ticker,
-        recoveryQueueId: nextRecoveryQueueItem.queueId,
-        recoverySourceEventTitle: nextRecoveryQueueItem.sourceEventTitle || null,
-      });
-      continue;
-    }
-
-    const orderPlan = makeOrderPayload(candidate, balanceUsd, runtime, recovery);
+    const orderPlan = makeOrderPayload(candidate, balanceUsd, runtime, effectiveRecovery);
     if (!orderPlan) {
       appendAction('skip_no_contract_capacity', {
         eventTicker: candidate.event.event_ticker,
         marketTicker: candidate.market.ticker,
         ask: candidate.ask,
-        recoveryTargetProfitUsd: recovery.nextTargetProfitUsd || null,
+        recoveryTargetProfitUsd: effectiveRecovery.nextTargetProfitUsd || null,
       });
       continue;
     }
@@ -609,7 +633,11 @@ async function runCycle(client) {
       logger.info(logMeta, 'DRY_RUN would place order');
       appendAction('dry_run_order', logMeta);
       if (orderPlan.sizing.recoveryQueueId) {
-        pendingRecoveryQueueIds.add(String(orderPlan.sizing.recoveryQueueId));
+        const queueId = String(orderPlan.sizing.recoveryQueueId);
+        pendingRecoveryReservations.set(
+          queueId,
+          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.targetProfitUsd || 0)),
+        );
       }
       continue;
     }
@@ -673,7 +701,11 @@ async function runCycle(client) {
       logger.info({ ...logMeta, orderId: order.order_id, fillCount }, 'Order filled');
       appendAction('order_filled', { ...logMeta, orderId: order.order_id, fillCount });
       if (orderPlan.sizing.recoveryQueueId) {
-        pendingRecoveryQueueIds.add(String(orderPlan.sizing.recoveryQueueId));
+        const queueId = String(orderPlan.sizing.recoveryQueueId);
+        pendingRecoveryReservations.set(
+          queueId,
+          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.targetProfitUsd || 0)),
+        );
       }
       await notifier.send(msg);
     } else if (isRestingOrder(order)) {
@@ -688,11 +720,16 @@ async function runCycle(client) {
         recoveryRemainingUsd: orderPlan.sizing.recoveryRemainingUsd,
         recoverySourceLossUsd: orderPlan.sizing.recoverySourceLossUsd,
         recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
+        targetProfitUsd: orderPlan.sizing.targetProfitUsd,
       });
       logger.info({ ...logMeta, orderId: order.order_id, orderStatus: order.status }, 'Order resting on book');
       appendAction('order_resting', { ...logMeta, orderId: order.order_id, orderStatus: order.status || null });
       if (orderPlan.sizing.recoveryQueueId) {
-        pendingRecoveryQueueIds.add(String(orderPlan.sizing.recoveryQueueId));
+        const queueId = String(orderPlan.sizing.recoveryQueueId);
+        pendingRecoveryReservations.set(
+          queueId,
+          roundRecoveryUsd((pendingRecoveryReservations.get(queueId) || 0) + Number(orderPlan.sizing.targetProfitUsd || 0)),
+        );
       }
     } else {
       stateStore.clearEventOpenOrder(candidate.event.event_ticker);

@@ -489,6 +489,7 @@ export class App implements OnDestroy {
       unrealizedPnlUsd: (row) => row.unrealized_pnl_usd,
       unrealizedRoiPct: (row) => row.unrealized_roi_pct,
       condition: (row) => row.placed_context?.triggerRule,
+      recovery: (row) => row.placed_context?.recoverySourceEventTitle || row.placed_context?.recoveryQueueId,
       cards: (row) => row.placed_context?.placedCards,
       lastUpdated: (row) => this.toTimestamp(row.last_updated_ts),
     });

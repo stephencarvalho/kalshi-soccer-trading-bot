@@ -133,7 +133,7 @@ Current queue logic:
 - Only settled losing trades create recovery targets.
 - Open unrealized PnL does not affect recovery sizing.
 - The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
-- Only one in-flight recovery attempt is allowed for the current oldest unresolved loss.
+- In-flight recovery trades reserve only the dollar amount they are targeting, not the entire loss row.
 - Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
 
 ### Recovery bug fix: root cause and current behavior
@@ -148,8 +148,9 @@ Root cause of the duplicate recovery-bet issue:
 How recovery works now:
 
 - The oldest unresolved closed loss remains the active recovery target.
-- As soon as the bot places a recovery order, that queue item is treated as locked in-flight.
-- While that recovery trade is open, resting, or simply not settled yet, the bot will not place another recovery trade for the same queue item.
+- As soon as the bot places a recovery order, only that order's targeted recovery dollars are reserved in-flight.
+- If the oldest queued loss is larger than the in-flight recovery reservation, later recovery bets can still target the uncovered remainder of that same loss.
+- If the in-flight reservations fully cover the current oldest loss, the bot can advance to the next unresolved loss instead of duplicating coverage.
 - Once the recovery trade settles, the queue is recalculated from actual closed-trade results and the bot either:
   - marks the loss as fully resolved,
   - keeps it partially unresolved and waits for one new recovery attempt,
