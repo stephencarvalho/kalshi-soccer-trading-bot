@@ -30,21 +30,14 @@
                 }
               </strong>
             </article>
-            @if (d.bot.riskHaltedToday || d.bot.riskHaltOverrideActive) {
-              <button
-                type="button"
-                class="account-strip__button"
-                [disabled]="riskHaltBusy()"
-                (click)="toggleRiskHalt(!!d.bot.riskHaltOverrideActive)">
-                @if (riskHaltBusy()) {
-                  Updating...
-                } @else if (d.bot.riskHaltOverrideActive) {
-                  Re-enable Halt
-                } @else {
-                  Turn Off Halt
-                }
-              </button>
-            }
+            <button
+              type="button"
+              class="settings-trigger"
+              aria-label="Open settings"
+              [attr.aria-expanded]="settingsOpen()"
+              (click)="openSettings()">
+              <fa-icon [icon]="faGear" class="settings-trigger__icon" aria-hidden="true"></fa-icon>
+            </button>
           </div>
         </div>
       </section>
@@ -419,6 +412,9 @@
                 <tr><td colspan="11" class="muted">No unresolved recovery queue items</td></tr>
               }
               @for (r of sortedRecoveryQueue(); track r.queueId) {
+                @let latestAttempt = latestRecoveryAttempt(r);
+                @let attempts = recoveryAttemptsFor(r);
+                @let credits = recoveryCreditsFor(r);
                 <tr>
                   <td>{{ r.queueId }}</td>
                   <td>{{ r.sourceEventTitle }}</td>
@@ -426,13 +422,159 @@
                   <td class="neg">{{ r.lossUsd | currency:'USD':'symbol':'1.2-2' }}</td>
                   <td class="pos">{{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}</td>
                   <td [class.neg]="r.remainingTargetUsd > 0">{{ r.remainingTargetUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td>{{ r.recoveryBet?.eventTitle || '-' }}</td>
-                  <td>{{ r.recoveryBet?.stakeUsdTarget === null || r.recoveryBet?.stakeUsdTarget === undefined ? '-' : (r.recoveryBet?.stakeUsdTarget | currency:'USD':'symbol':'1.2-2') }}</td>
-                  <td>{{ r.recoveryBet?.yesPrice === null || r.recoveryBet?.yesPrice === undefined ? '-' : (r.recoveryBet?.yesPrice | percent:'1.0-0') }}</td>
-                  <td [class.pos]="(r.recoveryBetResultUsd || 0) > 0" [class.neg]="(r.recoveryBetResultUsd || 0) < 0">
-                    {{ r.recoveryBetResultUsd === null || r.recoveryBetResultUsd === undefined ? '-' : (r.recoveryBetResultUsd | currency:'USD':'symbol':'1.2-2') }}
+                  <td>{{ latestAttempt?.eventTitle || '-' }}</td>
+                  <td>{{ recoveryAttemptStakeUsd(latestAttempt) === null || recoveryAttemptStakeUsd(latestAttempt) === undefined ? '-' : (recoveryAttemptStakeUsd(latestAttempt) | currency:'USD':'symbol':'1.2-2') }}</td>
+                  <td>{{ latestAttempt?.yesPrice === null || latestAttempt?.yesPrice === undefined ? '-' : (latestAttempt?.yesPrice | percent:'1.0-0') }}</td>
+                  <td [class.pos]="(latestAttempt?.pnlUsd || 0) > 0" [class.neg]="(latestAttempt?.pnlUsd || 0) < 0">
+                    {{ latestAttempt?.pnlUsd === null || latestAttempt?.pnlUsd === undefined ? '-' : (latestAttempt?.pnlUsd | currency:'USD':'symbol':'1.2-2') }}
                   </td>
                   <td>{{ r.status }}</td>
+                </tr>
+                <tr class="recovery-detail-row">
+                  <td colspan="11" class="recovery-detail-cell">
+                    <div class="recovery-detail-shell">
+                      <div class="recovery-detail-head">
+                        <strong>Recovery Bets for {{ r.queueId }}</strong>
+                        <div class="recovery-detail-chips">
+                          <span class="chip">{{ attempts.length }} direct bets</span>
+                          <span class="chip">{{ credits.length }} recovery credits</span>
+                          <span class="chip">Recovered {{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}</span>
+                          <span class="chip" [class.warn]="r.remainingTargetUsd > 0">Remaining {{ r.remainingTargetUsd | currency:'USD':'symbol':'1.2-2' }}</span>
+                        </div>
+                      </div>
+                      <div class="recovery-section">
+                        <div class="recovery-section__title">Direct Recovery Bets Placed</div>
+                        <table class="recovery-subtable">
+                          <thead>
+                            <tr>
+                              <th>State</th>
+                              <th>Recovery Bet</th>
+                              <th>Observed</th>
+                              <th>Stake</th>
+                              <th>Target</th>
+                              <th>PnL</th>
+                              <th>Recovered</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @if (!attempts.length) {
+                              <tr>
+                                <td colspan="7" class="muted recovery-empty">No direct recovery bets have been placed for this queue item yet.</td>
+                              </tr>
+                            }
+                            @for (attempt of attempts; track attempt.tradeKey) {
+                              <tr>
+                                <td>
+                                  <span
+                                    class="recovery-attempt-state"
+                                    [class.pos]="attempt.status === 'SETTLED' && (attempt.pnlUsd || 0) > 0"
+                                    [class.neg]="attempt.status === 'SETTLED' && (attempt.pnlUsd || 0) < 0"
+                                  >
+                                    {{ recoveryAttemptResultLabel(attempt) }}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div class="recovery-attempt-title">
+                                    <strong>{{ attempt.eventTitle }}</strong>
+                                    <span class="muted">{{ attempt.competition }}</span>
+                                  </div>
+                                </td>
+                                <td>{{ attempt.observedAt ? (attempt.observedAt | date:'short') : '-' }}</td>
+                                <td>
+                                  {{ recoveryAttemptStakeUsd(attempt) === null || recoveryAttemptStakeUsd(attempt) === undefined
+                                    ? '-'
+                                    : (recoveryAttemptStakeUsd(attempt) | currency:'USD':'symbol':'1.2-2') }}
+                                </td>
+                                <td>
+                                  {{ recoveryAttemptTargetUsd(attempt) === null || recoveryAttemptTargetUsd(attempt) === undefined
+                                    ? '-'
+                                    : (recoveryAttemptTargetUsd(attempt) | currency:'USD':'symbol':'1.2-2') }}
+                                </td>
+                                <td [class.pos]="(attempt.pnlUsd || 0) > 0" [class.neg]="(attempt.pnlUsd || 0) < 0">
+                                  {{ attempt.pnlUsd === null || attempt.pnlUsd === undefined ? '-' : (attempt.pnlUsd | currency:'USD':'symbol':'1.2-2') }}
+                                </td>
+                                <td class="pos">
+                                  {{ attempt.allocatedRecoveryUsd ? (attempt.allocatedRecoveryUsd | currency:'USD':'symbol':'1.2-2') : '-' }}
+                                </td>
+                              </tr>
+                            }
+                            <tr class="recovery-subtable__totals">
+                              <td colspan="2">Direct Bet Totals</td>
+                              <td>{{ attempts.length }} bets</td>
+                              <td>
+                                {{ recoveryAttemptsTotalStakeUsd(r) === null || recoveryAttemptsTotalStakeUsd(r) === undefined
+                                  ? '-'
+                                  : (recoveryAttemptsTotalStakeUsd(r) | currency:'USD':'symbol':'1.2-2') }}
+                              </td>
+                              <td>
+                                {{ recoveryAttemptsTotalTargetUsd(r) === null || recoveryAttemptsTotalTargetUsd(r) === undefined
+                                  ? '-'
+                                  : (recoveryAttemptsTotalTargetUsd(r) | currency:'USD':'symbol':'1.2-2') }}
+                              </td>
+                              <td [class.pos]="(recoveryAttemptsTotalPnlUsd(r) || 0) > 0" [class.neg]="(recoveryAttemptsTotalPnlUsd(r) || 0) < 0">
+                                {{ recoveryAttemptsTotalPnlUsd(r) === null || recoveryAttemptsTotalPnlUsd(r) === undefined
+                                  ? '-'
+                                  : (recoveryAttemptsTotalPnlUsd(r) | currency:'USD':'symbol':'1.2-2') }}
+                              </td>
+                              <td class="pos">{{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div class="recovery-section">
+                        <div class="recovery-section__title">Recovery Credits Applied</div>
+                        <table class="recovery-subtable">
+                          <thead>
+                            <tr>
+                              <th>Source</th>
+                              <th>Credit From</th>
+                              <th>Settled</th>
+                              <th>PnL</th>
+                              <th>Applied To Loss</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @if (!credits.length) {
+                              <tr>
+                                <td colspan="5" class="muted recovery-empty">No recovery credits have been allocated to this queue item yet.</td>
+                              </tr>
+                            }
+                            @for (credit of credits; track credit.tradeKey) {
+                              <tr>
+                                <td>{{ credit.sourceLabel }}</td>
+                                <td>
+                                  <div class="recovery-attempt-title">
+                                    <strong>{{ credit.eventTitle }}</strong>
+                                    <span class="muted">{{ credit.competition }}</span>
+                                  </div>
+                                </td>
+                                <td>{{ credit.settledTime ? (credit.settledTime | date:'short') : '-' }}</td>
+                                <td [class.pos]="(credit.pnlUsd || 0) > 0" [class.neg]="(credit.pnlUsd || 0) < 0">
+                                  {{ credit.pnlUsd === null || credit.pnlUsd === undefined ? '-' : (credit.pnlUsd | currency:'USD':'symbol':'1.2-2') }}
+                                </td>
+                                <td class="pos">{{ credit.allocatedRecoveryUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            }
+                            <tr class="recovery-subtable__totals">
+                              <td colspan="2">Recovery Totals</td>
+                              <td>{{ credits.length }} credits</td>
+                              <td [class.pos]="(recoveryCreditsTotalPnlUsd(r) || 0) > 0" [class.neg]="(recoveryCreditsTotalPnlUsd(r) || 0) < 0">
+                                {{ recoveryCreditsTotalPnlUsd(r) === null || recoveryCreditsTotalPnlUsd(r) === undefined
+                                  ? '-'
+                                  : (recoveryCreditsTotalPnlUsd(r) | currency:'USD':'symbol':'1.2-2') }}
+                              </td>
+                              <td class="pos">
+                                {{ recoveryCreditsTotalAllocatedUsd(r) === null || recoveryCreditsTotalAllocatedUsd(r) === undefined
+                                  ? '-'
+                                  : (recoveryCreditsTotalAllocatedUsd(r) | currency:'USD':'symbol':'1.2-2') }}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </td>
                 </tr>
               }
             </tbody>
@@ -688,6 +830,143 @@
     </section>
 	  }
   </div>
+  @if (settingsOpen()) {
+    @if (data(); as d) {
+      <div class="settings-modal-backdrop" (click)="closeSettings()">
+        <section
+          class="settings-modal panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-modal-title"
+          (click)="$event.stopPropagation()">
+          <div class="settings-modal__header">
+            <div>
+              <p class="settings-modal__eyebrow">Runtime Overrides</p>
+              <h2 id="settings-modal-title">Settings</h2>
+              <p class="panel-subtitle">Update live trading overrides without restarting the bot.</p>
+            </div>
+            <button
+              type="button"
+              class="settings-modal__close"
+              aria-label="Close settings"
+              (click)="closeSettings()">
+              <span aria-hidden="true">&times;</span>
+            </button>
+          </div>
+
+          <div class="settings-modal__meta">
+            <span class="chip">
+              Recovery floor {{ runtimeSizingValidation().minRecoveryMaxUsd | currency:'USD':'symbol':'1.2-2' }}
+            </span>
+            <span class="chip">Bet cap {{ 20 | currency:'USD':'symbol':'1.0-0' }}</span>
+            <span class="chip">Stop-loss floor {{ 1 | currency:'USD':'symbol':'1.0-0' }}</span>
+          </div>
+
+          <div class="settings-modal__grid">
+            <label class="runtime-sizing-field">
+              <span>Base Stake Per Bet</span>
+              <input
+                type="number"
+                inputmode="decimal"
+                min="0.1"
+                max="20"
+                step="0.1"
+                [value]="runtimeStakeInput()"
+                (input)="updateRuntimeStakeInput($any($event.target).value)">
+            </label>
+            <label class="runtime-sizing-field">
+              <span>Max Recovery Bet</span>
+              <input
+                type="number"
+                inputmode="decimal"
+                min="0.1"
+                max="20"
+                step="0.1"
+                [value]="runtimeRecoveryMaxInput()"
+                (input)="updateRuntimeRecoveryMaxInput($any($event.target).value)">
+            </label>
+            <label class="runtime-sizing-field">
+              <span>Max Stop Loss</span>
+              <input
+                type="number"
+                inputmode="decimal"
+                min="1"
+                step="1"
+                [value]="runtimeMaxDailyLossInput()"
+                (input)="updateRuntimeMaxDailyLossInput($any($event.target).value)">
+            </label>
+          </div>
+
+          <div class="settings-modal__hold">
+            <div class="settings-modal__hold-copy">
+              <span class="settings-modal__section-label">Stop / Remove Trading Hold</span>
+              <strong>
+                @if (d.bot.riskHaltOverrideActive) {
+                  Hold Removed
+                } @else if (d.bot.riskHaltedToday) {
+                  Hold Active
+                } @else {
+                  No Hold Active
+                }
+              </strong>
+              <p class="panel-subtitle">
+                Remove the daily stop-loss hold after it fires, or restore it after a bypass.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="account-strip__button account-strip__button--neutral"
+              [disabled]="riskHaltBusy() || (!d.bot.riskHaltedToday && !d.bot.riskHaltOverrideActive)"
+              (click)="toggleRiskHalt(!!d.bot.riskHaltOverrideActive)">
+              @if (riskHaltBusy()) {
+                Updating...
+              } @else if (d.bot.riskHaltOverrideActive) {
+                Restore Trading Hold
+              } @else if (d.bot.riskHaltedToday) {
+                Remove Trading Hold
+              } @else {
+                No Hold Active
+              }
+            </button>
+          </div>
+
+          <div class="settings-modal__footer">
+            <p class="settings-modal__note" [class.settings-modal__note--error]="!!sizingError() || (sizingDirty() && !runtimeSizingValidation().valid)">
+              @if (sizingError()) {
+                {{ sizingError() }}
+              } @else if (sizingDirty() && !runtimeSizingValidation().valid) {
+                {{ runtimeSizingValidation().message }}
+              } @else if (runtimeSizingHasChanges()) {
+                Unsaved override ready. Recovery max must stay above the current recovery stake floor and max stop loss must stay at or above $1.
+              } @else {
+                Live values: base {{ d.config.stakeUsd | currency:'USD':'symbol':'1.2-2' }} | recovery max {{ (d.config.recoveryMaxStakeUsd ?? 20) | currency:'USD':'symbol':'1.2-2' }} | max stop loss {{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.2-2' }}
+              }
+            </p>
+            <div class="settings-modal__actions">
+              <button
+                type="button"
+                class="account-strip__button account-strip__button--ghost"
+                [disabled]="sizingBusy()"
+                (click)="applyRuntimeSizingDefaults()">
+                Defaults
+              </button>
+              <button
+                type="button"
+                class="account-strip__button account-strip__button--neutral"
+                [disabled]="sizingBusy() || !runtimeSizingValidation().valid || !runtimeSizingHasChanges()"
+                (click)="saveRuntimeSizing()">
+                @if (sizingBusy()) {
+                  Saving...
+                } @else {
+                  Save Settings
+                }
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+    }
+  }
   <button
     class="theme-fab"
     type="button"

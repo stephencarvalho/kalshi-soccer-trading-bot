@@ -58,7 +58,8 @@ function safeNumber(value) {
 }
 
 function makeTradeKey(trade) {
-  return `${String(trade?.ticker || trade?.event_ticker || 'TRADE')}@${String(trade?.settled_time || '')}`;
+  const legId = trade?.placed_context?.tradeLegId || trade?.trade_leg_id || '';
+  return `${String(trade?.ticker || trade?.event_ticker || 'TRADE')}@${String(trade?.settled_time || '')}@${String(legId)}`;
 }
 
 function buildRecoveryQueue(closedTrades) {
@@ -81,16 +82,28 @@ function buildRecoveryQueue(closedTrades) {
       amountBetUsd: safeNumber(trade.amount_bet_usd ?? trade.total_cost_usd),
       totalReturnUsd: safeNumber(trade.total_return_usd),
       stakeUsdTarget: safeNumber(trade.placed_context?.stakeUsdTarget),
+      targetProfitUsd: safeNumber(trade.placed_context?.targetProfitUsd),
       yesPrice: safeNumber(trade.placed_context?.yesPrice),
       contracts: safeNumber(trade.placed_context?.fillCount ?? trade.yes_count_fp ?? trade.no_count_fp),
       triggerRule: trade.placed_context?.triggerRule || null,
     };
 
-    if (unresolved.length > 0 && !unresolved[0].recoveryBet) {
-      unresolved[0].recoveryBet = {
+    const targetedQueueId = String(trade?.placed_context?.recoveryQueueId || '');
+    const targetedItem = targetedQueueId
+      ? unresolved.find((item) => item.queueId === targetedQueueId) || null
+      : null;
+
+    if (targetedItem) {
+      const targetedRemainingUsdBefore =
+        safeNumber(trade?.placed_context?.recoveryRemainingUsd) ?? Number(targetedItem.remainingTargetUsd.toFixed(4));
+      const attempt = {
         ...tradeSummary,
-        targetedRemainingUsdBefore: Number(unresolved[0].remainingTargetUsd.toFixed(4)),
+        targetedRemainingUsdBefore,
       };
+      targetedItem.recoveryAttempts.push(attempt);
+      if (!targetedItem.recoveryBet) {
+        targetedItem.recoveryBet = attempt;
+      }
     }
 
     if (pnlUsd > 0) {
@@ -101,6 +114,12 @@ function buildRecoveryQueue(closedTrades) {
         const allocatedUsd = Math.min(item.remainingTargetUsd, remainingWinUsd);
         item.recoveredUsd = Number((item.recoveredUsd + allocatedUsd).toFixed(4));
         item.remainingTargetUsd = Number((item.remainingTargetUsd - allocatedUsd).toFixed(4));
+        const linkedAttempt = item.recoveryAttempts.find((attempt) => attempt.tradeKey === tradeSummary.tradeKey);
+        if (linkedAttempt) {
+          linkedAttempt.allocatedRecoveryUsd = Number(
+            ((linkedAttempt.allocatedRecoveryUsd || 0) + allocatedUsd).toFixed(4),
+          );
+        }
         item.recoverySettlements.push({
           ...tradeSummary,
           allocatedRecoveryUsd: Number(allocatedUsd.toFixed(4)),
@@ -135,6 +154,7 @@ function buildRecoveryQueue(closedTrades) {
         status: 'QUEUED',
         resolvedAt: null,
         recoveryBet: null,
+        recoveryAttempts: [],
         recoverySettlements: [],
       };
       unresolved.push(item);

@@ -18,6 +18,8 @@ function clamp(n, min, max) {
 	return Math.min(max, Math.max(min, n));
 }
 
+const ABSOLUTE_STAKE_CAP_USD = 20;
+
 const defaultCompetitions = [
 	"Swiss Super League",
 	"Africa Cup of Nations",
@@ -126,7 +128,7 @@ const config = {
 		String(process.env.RECOVERY_MODE_ENABLED || "false").toLowerCase() ===
 		"true",
 	recoveryStakeUsd: parseNumber(process.env.RECOVERY_STAKE_USD, 2),
-	recoveryMaxStakeUsd: parseNumber(process.env.RECOVERY_MAX_STAKE_USD, 16),
+		recoveryMaxStakeUsd: parseNumber(process.env.RECOVERY_MAX_STAKE_USD, 20),
 	estimatedWinProbability: parseNumber(
 		process.env.ESTIMATED_WIN_PROBABILITY,
 		0.92,
@@ -165,17 +167,19 @@ config.maxYesPrice =
 function validateConfig(cfg) {
 	const out = { ...cfg };
 	out.pollSeconds = Math.max(1, Number(out.pollSeconds) || 10);
-	out.stakeUsd = Math.max(0.1, Number(out.stakeUsd) || 1);
+	out.stakeUsd = clamp(Number(out.stakeUsd) || 1, 0.1, ABSOLUTE_STAKE_CAP_USD);
 	out.maxDailyLossUsd = Math.max(1, Number(out.maxDailyLossUsd) || 50);
 	out.recoveryModeEnabled = Boolean(out.recoveryModeEnabled);
-	out.recoveryStakeUsd = Math.max(
-		out.stakeUsd,
+	out.recoveryStakeUsd = clamp(
 		Number(out.recoveryStakeUsd) || 2,
+		out.stakeUsd,
+		ABSOLUTE_STAKE_CAP_USD,
 	);
-	out.recoveryMaxStakeUsd = Math.max(
-		out.recoveryStakeUsd,
-		Number(out.recoveryMaxStakeUsd) || 16,
-	);
+		out.recoveryMaxStakeUsd = clamp(
+			Number(out.recoveryMaxStakeUsd) || 20,
+			out.recoveryStakeUsd,
+			ABSOLUTE_STAKE_CAP_USD,
+		);
 	out.maxOpenPositions = Math.max(
 		1,
 		Math.floor(Number(out.maxOpenPositions) || 20),

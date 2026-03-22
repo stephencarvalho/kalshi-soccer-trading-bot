@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { validateConfig } = require('./config');
 
 const OVERRIDES_PATH = path.resolve(process.env.RUNTIME_OVERRIDES_FILE || 'data/runtime-overrides.json');
 
@@ -61,20 +62,28 @@ function sanitizeValue(key, value) {
   return n;
 }
 
-function getRuntimeConfig(baseConfig) {
-  const raw = readOverrides();
+function resolveRuntimeConfig(baseConfig, rawOverrides = readOverrides()) {
   const safe = {};
 
-  for (const [k, v] of Object.entries(raw)) {
+  for (const [k, v] of Object.entries(rawOverrides || {})) {
     if (!ALLOWED_KEYS.has(k)) continue;
     safe[k] = v;
   }
 
-  return {
+  return validateConfig({
     ...baseConfig,
     ...safe,
     tradingEnabled: safe.tradingEnabled !== undefined ? Boolean(safe.tradingEnabled) : true,
-  };
+    dryRun: safe.dryRun !== undefined ? Boolean(safe.dryRun) : Boolean(baseConfig.dryRun),
+    ignoreDailyLossLimit:
+      safe.ignoreDailyLossLimit !== undefined
+        ? Boolean(safe.ignoreDailyLossLimit)
+        : Boolean(baseConfig.ignoreDailyLossLimit),
+  });
+}
+
+function getRuntimeConfig(baseConfig) {
+  return resolveRuntimeConfig(baseConfig, readOverrides());
 }
 
 function setOverride(key, value) {
@@ -83,6 +92,19 @@ function setOverride(key, value) {
   }
   const all = readOverrides();
   all[key] = sanitizeValue(key, value);
+  writeOverrides(all);
+  return all;
+}
+
+function setOverrides(patch) {
+  const all = readOverrides();
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (value === undefined) continue;
+    if (!ALLOWED_KEYS.has(key)) {
+      throw new Error(`Key not allowed. Allowed keys: ${Array.from(ALLOWED_KEYS).join(', ')}`);
+    }
+    all[key] = sanitizeValue(key, value);
+  }
   writeOverrides(all);
   return all;
 }
@@ -97,8 +119,10 @@ function unsetOverride(key) {
 module.exports = {
   OVERRIDES_PATH,
   ALLOWED_KEYS,
+  resolveRuntimeConfig,
   getRuntimeConfig,
   readOverrides,
   setOverride,
+  setOverrides,
   unsetOverride,
 };

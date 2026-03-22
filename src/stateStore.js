@@ -17,6 +17,7 @@ class StateStore {
     this.filePath = filePath;
     this.state = {
       tradedEvents: {},
+      tradeLegsByEvent: {},
       rejectedEvents: {},
       openOrderIdsByEvent: {},
       dailyLossByDate: {},
@@ -44,11 +45,12 @@ class StateStore {
   }
 
   hasTradedEvent(eventTicker) {
-    return Boolean(this.state.tradedEvents[eventTicker]);
+    return this.getTradeLegs(eventTicker).length > 0;
   }
 
   getTradeMeta(eventTicker) {
-    return this.state.tradedEvents[eventTicker] || null;
+    const legs = this.getTradeLegs(eventTicker);
+    return legs.length ? legs[legs.length - 1] : null;
   }
 
   listTradedEvents() {
@@ -58,17 +60,82 @@ class StateStore {
     }));
   }
 
+  getTradeLegs(eventTicker) {
+    const explicitLegs = Array.isArray(this.state.tradeLegsByEvent?.[eventTicker])
+      ? this.state.tradeLegsByEvent[eventTicker]
+      : [];
+    const fallbackLeg = this.state.tradedEvents?.[eventTicker];
+    const legs = explicitLegs.length ? explicitLegs : fallbackLeg ? [fallbackLeg] : [];
+    return legs.map((leg, index) => ({
+      ...(leg || {}),
+      tradeLegId: leg?.tradeLegId || `${eventTicker}#${index + 1}`,
+      tradeLegIndex: Number.isFinite(Number(leg?.tradeLegIndex)) ? Number(leg.tradeLegIndex) : index + 1,
+    }));
+  }
+
+  listTradeLegs() {
+    const eventTickers = new Set([
+      ...Object.keys(this.state.tradeLegsByEvent || {}),
+      ...Object.keys(this.state.tradedEvents || {}),
+    ]);
+    return Array.from(eventTickers).flatMap((eventTicker) =>
+      this.getTradeLegs(eventTicker).map((leg) => ({
+        eventTicker,
+        ...leg,
+      })),
+    );
+  }
+
   findTradeMetaByMarketTicker(marketTicker) {
-    const entries = Object.values(this.state.tradedEvents || {});
+    const entries = this.listTradeLegs().reverse();
     return entries.find((x) => x && x.marketTicker === marketTicker) || null;
   }
 
   markEventTraded(eventTicker, tradeMeta) {
     delete this.state.rejectedEvents[eventTicker];
-    this.state.tradedEvents[eventTicker] = {
-      ...tradeMeta,
-      markedAt: new Date().toISOString(),
-    };
+    const nextMarkedAt = new Date().toISOString();
+    const existingLegs = this.getTradeLegs(eventTicker);
+    const targetOrderId = tradeMeta?.orderId ? String(tradeMeta.orderId) : null;
+    let updated = false;
+    const nextLegs = existingLegs.map((leg, index) => {
+      if (updated) return leg;
+      if (targetOrderId && String(leg?.orderId || '') === targetOrderId) {
+        updated = true;
+        return {
+          ...leg,
+          ...tradeMeta,
+          tradeLegId: leg.tradeLegId || `${eventTicker}#${index + 1}`,
+          tradeLegIndex: index + 1,
+          markedAt: nextMarkedAt,
+        };
+      }
+      return leg;
+    });
+
+    if (!updated) {
+      nextLegs.push({
+        ...tradeMeta,
+        tradeLegId: tradeMeta?.tradeLegId || `${eventTicker}#${nextLegs.length + 1}`,
+        tradeLegIndex: nextLegs.length + 1,
+        markedAt: nextMarkedAt,
+      });
+    }
+
+    this.state.tradeLegsByEvent[eventTicker] = nextLegs;
+    this.state.tradedEvents[eventTicker] = nextLegs[nextLegs.length - 1];
+  }
+
+  hasRecoveryTradeForEvent(eventTicker) {
+    return this.getTradeLegs(eventTicker).some((leg) => {
+      const sizingMode = String(leg?.sizingMode || '').toUpperCase();
+      return Boolean(leg?.recoveryQueueId) || sizingMode.startsWith('RECOVERY');
+    });
+  }
+
+  hasTradeLegForOrderId(orderId) {
+    const target = String(orderId || '');
+    if (!target) return false;
+    return this.listTradeLegs().some((leg) => String(leg?.orderId || '') === target);
   }
 
   setEventRejected(eventTicker, rejectionMeta) {

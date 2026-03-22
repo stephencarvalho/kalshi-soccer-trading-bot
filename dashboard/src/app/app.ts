@@ -1,6 +1,8 @@
 import { CommonModule, CurrencyPipe, DatePipe, PercentPipe } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { Component, computed, effect, ElementRef, HostListener, inject, OnDestroy, signal, ViewChild } from '@angular/core';
+import { FontAwesomeModule } from '@fortawesome/angular-fontawesome';
+import { faGear } from '@fortawesome/free-solid-svg-icons';
 import {
   CategoryScale,
   Chart,
@@ -91,6 +93,16 @@ interface DashboardPayload {
   closedTrades: ClosedTradeRecord[];
 }
 
+interface RuntimeSizingResponse {
+  ok: boolean;
+  config: {
+    stakeUsd: number;
+    recoveryStakeUsd?: number;
+    recoveryMaxStakeUsd: number;
+    maxDailyLossUsd: number;
+  };
+}
+
 interface LogRecord {
   ts: string;
   action: string;
@@ -134,6 +146,7 @@ interface TradeRecord {
     sizingMode?: string | null;
     leadingTeam?: string | null;
     leadingTeamMaxLead?: number | null;
+    competition?: string | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
@@ -170,6 +183,7 @@ interface ClosedTradeRecord {
     sizingMode?: string | null;
     leadingTeam?: string | null;
     leadingTeamMaxLead?: number | null;
+    competition?: string | null;
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
@@ -212,6 +226,7 @@ interface RecoveryTradeLink {
   pnlUsd: number;
   amountBetUsd: number | null;
   stakeUsdTarget: number | null;
+  targetProfitUsd?: number | null;
   yesPrice: number | null;
   contracts: number | null;
   targetedRemainingUsdBefore?: number;
@@ -232,8 +247,35 @@ interface RecoveryQueueRow {
   status: string;
   resolvedAt: string | null;
   recoveryBet: RecoveryTradeLink | null;
+  recoveryAttempts?: RecoveryTradeLink[];
+  recoverySettlements?: RecoveryTradeLink[];
   recoveryBetResultUsd: number | null;
   resolutionTrade: RecoveryTradeLink | null;
+}
+
+interface RecoveryAttemptView {
+  tradeKey: string;
+  eventTitle: string;
+  competition: string;
+  status: 'OPEN' | 'SETTLED';
+  observedAt: string | null;
+  amountBetUsd: number | null;
+  stakeUsdTarget: number | null;
+  targetProfitUsd: number | null;
+  yesPrice: number | null;
+  contracts: number | null;
+  pnlUsd: number | null;
+  allocatedRecoveryUsd: number;
+}
+
+interface RecoveryCreditView {
+  tradeKey: string;
+  eventTitle: string;
+  competition: string;
+  settledTime: string | null;
+  pnlUsd: number | null;
+  allocatedRecoveryUsd: number;
+  sourceLabel: string;
 }
 
 interface RecoveryAnalytics {
@@ -312,6 +354,13 @@ const DEFAULT_TABLE_SORT: Record<TableId, TableSortState> = {
   closedTrades: { key: 'settledTime', direction: 'desc' },
 };
 
+const MIN_STAKE_USD = 0.1;
+const MIN_DAILY_STOP_LOSS_USD = 1;
+const MAX_STAKE_USD = 20;
+const DEFAULT_BASE_STAKE_USD = 1;
+const DEFAULT_RECOVERY_MAX_STAKE_USD = 20;
+const DEFAULT_MAX_DAILY_LOSS_USD = 50;
+
 interface PnlPoint {
   ts: number;
   pnl: number;
@@ -337,6 +386,15 @@ interface MetricSection {
   cards: MetricCard[];
 }
 
+interface RuntimeSizingValidation {
+  baseStakeUsd: number | null;
+  recoveryMaxStakeUsd: number | null;
+  maxDailyLossUsd: number | null;
+  minRecoveryMaxUsd: number;
+  valid: boolean;
+  message: string | null;
+}
+
 interface LogField {
   key: string;
   label: string;
@@ -347,12 +405,13 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, DatePipe, CurrencyPipe, PercentPipe],
+  imports: [CommonModule, DatePipe, CurrencyPipe, PercentPipe, FontAwesomeModule],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
 export class App implements OnDestroy {
   private readonly http = inject(HttpClient);
+  readonly faGear = faGear;
   @ViewChild('pnlChart')
   set chartCanvasRef(value: ElementRef<HTMLCanvasElement> | undefined) {
     this.chartCanvas = value;
@@ -440,7 +499,14 @@ export class App implements OnDestroy {
   readonly chartRange = signal<ChartRange>('ALL');
   readonly logViewMode = signal<LogViewMode>('important');
   readonly logTimeRange = signal<LogTimeRange>('TODAY');
+  readonly settingsOpen = signal(false);
   readonly riskHaltBusy = signal(false);
+  readonly sizingBusy = signal(false);
+  readonly sizingDirty = signal(false);
+  readonly sizingError = signal<string | null>(null);
+  readonly runtimeStakeInput = signal(String(DEFAULT_BASE_STAKE_USD));
+  readonly runtimeRecoveryMaxInput = signal(String(DEFAULT_RECOVERY_MAX_STAKE_USD));
+  readonly runtimeMaxDailyLossInput = signal(String(DEFAULT_MAX_DAILY_LOSS_USD));
   readonly tableSort = signal<Record<TableId, TableSortState>>({ ...DEFAULT_TABLE_SORT });
   readonly chartRanges: ChartRange[] = ['LIVE', '1H', '3H', '6H', '12H', '1D', '1W', '1M', '3M', '6M', 'YTD', '1Y', '3Y', '5Y', 'ALL'];
   readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
@@ -468,6 +534,102 @@ export class App implements OnDestroy {
       const ts = new Date(String(item.ts || '')).getTime();
       return Number.isFinite(ts) ? ts >= fromTs : false;
     });
+  });
+  readonly runtimeSizingValidation = computed<RuntimeSizingValidation>(() => {
+    const d = this.data();
+    const baseStakeUsd = this.parseRuntimeSizingInput(this.runtimeStakeInput());
+    const recoveryMaxStakeUsd = this.parseRuntimeSizingInput(this.runtimeRecoveryMaxInput());
+    const maxDailyLossUsd = this.parseRuntimeSizingInput(this.runtimeMaxDailyLossInput());
+    const configuredRecoveryStakeUsd = Number(d?.config?.recoveryStakeUsd ?? 2);
+    const minRecoveryMaxUsd = Math.max(
+      baseStakeUsd ?? MIN_STAKE_USD,
+      Number.isFinite(configuredRecoveryStakeUsd) ? configuredRecoveryStakeUsd : MIN_STAKE_USD,
+    );
+
+    if (baseStakeUsd === null) {
+      return {
+        baseStakeUsd,
+        recoveryMaxStakeUsd,
+        maxDailyLossUsd,
+        minRecoveryMaxUsd,
+        valid: false,
+        message: 'Base stake must be a number.',
+      };
+    }
+
+    if (baseStakeUsd < MIN_STAKE_USD || baseStakeUsd > MAX_STAKE_USD) {
+      return {
+        baseStakeUsd,
+        recoveryMaxStakeUsd,
+        maxDailyLossUsd,
+        minRecoveryMaxUsd,
+        valid: false,
+        message: `Base stake must stay between $${MIN_STAKE_USD.toFixed(2)} and $${MAX_STAKE_USD.toFixed(2)}.`,
+      };
+    }
+
+    if (recoveryMaxStakeUsd === null) {
+      return {
+        baseStakeUsd,
+        recoveryMaxStakeUsd,
+        maxDailyLossUsd,
+        minRecoveryMaxUsd,
+        valid: false,
+        message: 'Recovery max must be a number.',
+      };
+    }
+
+    if (recoveryMaxStakeUsd < minRecoveryMaxUsd || recoveryMaxStakeUsd > MAX_STAKE_USD) {
+      return {
+        baseStakeUsd,
+        recoveryMaxStakeUsd,
+        maxDailyLossUsd,
+        minRecoveryMaxUsd,
+        valid: false,
+        message: `Recovery max must stay between $${minRecoveryMaxUsd.toFixed(2)} and $${MAX_STAKE_USD.toFixed(2)}.`,
+      };
+    }
+
+    if (maxDailyLossUsd === null) {
+      return {
+        baseStakeUsd,
+        recoveryMaxStakeUsd,
+        maxDailyLossUsd,
+        minRecoveryMaxUsd,
+        valid: false,
+        message: 'Daily stop-loss must be a number.',
+      };
+    }
+
+    if (maxDailyLossUsd < MIN_DAILY_STOP_LOSS_USD) {
+      return {
+        baseStakeUsd,
+        recoveryMaxStakeUsd,
+        maxDailyLossUsd,
+        minRecoveryMaxUsd,
+        valid: false,
+        message: `Daily stop-loss must stay at or above $${MIN_DAILY_STOP_LOSS_USD.toFixed(2)}.`,
+      };
+    }
+
+    return {
+      baseStakeUsd,
+      recoveryMaxStakeUsd,
+      maxDailyLossUsd,
+      minRecoveryMaxUsd,
+      valid: true,
+      message: null,
+    };
+  });
+  readonly runtimeSizingHasChanges = computed(() => {
+    const d = this.data();
+    const validation = this.runtimeSizingValidation();
+    if (!d || !validation.valid) return false;
+    return (
+      Math.abs((validation.baseStakeUsd ?? DEFAULT_BASE_STAKE_USD) - Number(d.config.stakeUsd ?? DEFAULT_BASE_STAKE_USD)) > 1e-9 ||
+      Math.abs((validation.recoveryMaxStakeUsd ?? DEFAULT_RECOVERY_MAX_STAKE_USD) - Number(d.config.recoveryMaxStakeUsd ?? DEFAULT_RECOVERY_MAX_STAKE_USD)) > 1e-9 ||
+      Math.abs((validation.maxDailyLossUsd ?? DEFAULT_MAX_DAILY_LOSS_USD) - Number(d.config.maxDailyLossUsd ?? DEFAULT_MAX_DAILY_LOSS_USD)) > 1e-9
+    );
   });
   readonly sortedMonitoredGames = computed<MonitoredGameRecord[]>(() => {
     const d = this.data();
@@ -511,9 +673,145 @@ export class App implements OnDestroy {
       lastUpdated: (row) => this.toTimestamp(row.last_updated_ts),
     });
   });
+  readonly directRecoveryAttemptMap = computed<Map<string, RecoveryAttemptView[]>>(() => {
+    const d = this.data();
+    const attemptsByQueue = new Map<string, RecoveryAttemptView[]>();
+    if (!d) return attemptsByQueue;
+
+    for (const row of d.recovery?.queue || []) {
+      attemptsByQueue.set(row.queueId, []);
+      for (const attempt of row.recoveryAttempts || []) {
+        this.pushRecoveryAttempt(attemptsByQueue, row.queueId, {
+          tradeKey: attempt.tradeKey,
+          eventTitle: attempt.eventTitle,
+          competition: attempt.competition,
+          status: 'SETTLED',
+          observedAt: attempt.settledTime || null,
+          amountBetUsd: attempt.amountBetUsd ?? null,
+          stakeUsdTarget: attempt.stakeUsdTarget ?? null,
+          targetProfitUsd:
+            attempt.targetProfitUsd ?? attempt.targetedRemainingUsdBefore ?? null,
+          yesPrice: attempt.yesPrice ?? null,
+          contracts: attempt.contracts ?? null,
+          pnlUsd: attempt.pnlUsd,
+          allocatedRecoveryUsd: Number((attempt.allocatedRecoveryUsd || 0).toFixed(4)),
+        });
+      }
+    }
+
+    for (const trade of d.closedTrades || []) {
+      const queueId = trade.placed_context?.recoveryQueueId;
+      if (!queueId) continue;
+
+      this.pushRecoveryAttempt(attemptsByQueue, queueId, {
+        tradeKey: this.closedTradeKey(trade),
+        eventTitle: trade.placed_context?.eventTitle || trade.event_ticker || trade.ticker,
+        competition: trade.placed_context?.competition || 'Unknown',
+        status: 'SETTLED',
+        observedAt: trade.settled_time || null,
+        amountBetUsd: trade.amount_bet_usd ?? trade.total_cost_usd ?? null,
+        stakeUsdTarget: trade.placed_context?.stakeUsdTarget ?? null,
+        targetProfitUsd: trade.placed_context?.targetProfitUsd ?? null,
+        yesPrice: trade.placed_context?.yesPrice ?? null,
+        contracts: trade.placed_context?.fillCount ?? this.fpStringToNumber(trade.yes_count_fp) ?? this.fpStringToNumber(trade.no_count_fp),
+        pnlUsd: trade.pnl_usd ?? null,
+        allocatedRecoveryUsd: 0,
+      });
+    }
+
+    for (const trade of d.openTrades || []) {
+      const queueId = trade.placed_context?.recoveryQueueId;
+      if (!queueId) continue;
+
+      this.pushRecoveryAttempt(attemptsByQueue, queueId, {
+        tradeKey: this.openTradeKey(trade),
+        eventTitle: trade.event_title || trade.placed_context?.eventTitle || trade.event_ticker || trade.ticker,
+        competition: trade.placed_context?.competition || 'Unknown',
+        status: 'OPEN',
+        observedAt: trade.placed_context?.markedAt || trade.last_updated_ts || null,
+        amountBetUsd: trade.amount_bet_usd ?? trade.cost_basis_usd ?? null,
+        stakeUsdTarget: trade.placed_context?.stakeUsdTarget ?? null,
+        targetProfitUsd: trade.placed_context?.targetProfitUsd ?? null,
+        yesPrice: trade.placed_context?.yesPrice ?? null,
+        contracts: trade.placed_context?.fillCount ?? trade.quantity ?? null,
+        pnlUsd: trade.unrealized_pnl_usd ?? null,
+        allocatedRecoveryUsd: 0,
+      });
+    }
+
+    for (const row of d.recovery?.queue || []) {
+      const allocatedByTradeKey = new Map(
+        (row.recoverySettlements || []).map((settlement) => [
+          settlement.tradeKey,
+          Number((settlement.allocatedRecoveryUsd || 0).toFixed(4)),
+        ]),
+      );
+      const attempts = attemptsByQueue.get(row.queueId) || [];
+      attemptsByQueue.set(
+        row.queueId,
+        attempts.map((attempt) => ({
+          ...attempt,
+          allocatedRecoveryUsd: allocatedByTradeKey.get(attempt.tradeKey) ?? attempt.allocatedRecoveryUsd ?? 0,
+        })),
+      );
+    }
+
+    for (const attempts of attemptsByQueue.values()) {
+      attempts.sort((left, right) => {
+        const leftTs = this.toTimestamp(left.observedAt) ?? 0;
+        const rightTs = this.toTimestamp(right.observedAt) ?? 0;
+        return leftTs - rightTs;
+      });
+    }
+
+    return attemptsByQueue;
+  });
+  readonly recoveryCreditMap = computed<Map<string, RecoveryCreditView[]>>(() => {
+    const d = this.data();
+    const creditsByQueue = new Map<string, RecoveryCreditView[]>();
+    if (!d) return creditsByQueue;
+
+    const tradeByKey = new Map((d.closedTrades || []).map((trade) => [this.closedTradeKey(trade), trade]));
+
+    for (const row of d.recovery?.queue || []) {
+      const credits = (row.recoverySettlements || []).map((settlement) => {
+        const matchingTrade = tradeByKey.get(settlement.tradeKey) || null;
+        const sourceQueueId = matchingTrade?.placed_context?.recoveryQueueId || null;
+        const sourceLabel =
+          sourceQueueId === row.queueId
+            ? 'Direct Bet'
+            : sourceQueueId
+              ? `Spillover from ${sourceQueueId}`
+              : 'Base Win';
+        return {
+          tradeKey: settlement.tradeKey,
+          eventTitle: settlement.eventTitle,
+          competition: settlement.competition,
+          settledTime: settlement.settledTime || null,
+          pnlUsd: settlement.pnlUsd ?? null,
+          allocatedRecoveryUsd: Number((settlement.allocatedRecoveryUsd || 0).toFixed(4)),
+          sourceLabel,
+        };
+      });
+
+      credits.sort((left, right) => {
+        const leftTs = this.toTimestamp(left.settledTime) ?? 0;
+        const rightTs = this.toTimestamp(right.settledTime) ?? 0;
+        return leftTs - rightTs;
+      });
+      creditsByQueue.set(row.queueId, credits);
+    }
+
+    return creditsByQueue;
+  });
   readonly sortedRecoveryQueue = computed<RecoveryQueueRow[]>(() => {
     const d = this.data();
     if (!d) return [];
+    const attemptsByQueue = this.directRecoveryAttemptMap();
+    const latestAttemptFor = (row: RecoveryQueueRow) => {
+      const attempts = attemptsByQueue.get(row.queueId) || [];
+      return attempts.length ? attempts[attempts.length - 1] : null;
+    };
     return this.sortRows(d.recovery?.queue || [], this.tableSort().recoveryQueue, {
       queueId: (row) => row.queueId,
       sourceEventTitle: (row) => row.sourceEventTitle,
@@ -521,10 +819,10 @@ export class App implements OnDestroy {
       lossUsd: (row) => row.lossUsd,
       recoveredUsd: (row) => row.recoveredUsd,
       remainingTargetUsd: (row) => row.remainingTargetUsd,
-      recoveryBet: (row) => row.recoveryBet?.eventTitle,
-      stakeUsdTarget: (row) => row.recoveryBet?.stakeUsdTarget,
-      yesPrice: (row) => row.recoveryBet?.yesPrice,
-      recoveryBetResultUsd: (row) => row.recoveryBetResultUsd,
+      recoveryBet: (row) => latestAttemptFor(row)?.eventTitle,
+      stakeUsdTarget: (row) => this.recoveryAttemptStakeUsd(latestAttemptFor(row)),
+      yesPrice: (row) => latestAttemptFor(row)?.yesPrice,
+      recoveryBetResultUsd: (row) => latestAttemptFor(row)?.pnlUsd,
       status: (row) => row.status,
     });
   });
@@ -1002,6 +1300,16 @@ export class App implements OnDestroy {
     }
   }
 
+  openSettings(): void {
+    this.resetRuntimeSettingsDraft();
+    this.settingsOpen.set(true);
+  }
+
+  closeSettings(): void {
+    this.settingsOpen.set(false);
+    this.resetRuntimeSettingsDraft();
+  }
+
   setChartRange(range: ChartRange): void {
     this.chartRange.set(range);
     this.hoveredPoint.set(null);
@@ -1017,6 +1325,13 @@ export class App implements OnDestroy {
     if (this.selectedChartPoints().length) {
       this.selectedChartPoints.set([]);
       this.hoveredPoint.set(null);
+    }
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscapeKey(): void {
+    if (this.settingsOpen()) {
+      this.closeSettings();
     }
   }
 
@@ -1040,9 +1355,86 @@ export class App implements OnDestroy {
       },
       error: (err) => {
         this.riskHaltBusy.set(false);
-        this.error.set(err?.error?.message || err?.message || 'Failed to update risk halt override');
+        const message = err?.error?.message || err?.message || 'Failed to update risk halt override';
+        if (this.settingsOpen()) {
+          this.sizingError.set(message);
+        } else {
+          this.error.set(message);
+        }
       },
     });
+  }
+
+  updateRuntimeStakeInput(value: string): void {
+    this.runtimeStakeInput.set(value);
+    this.sizingDirty.set(true);
+    this.sizingError.set(null);
+  }
+
+  updateRuntimeRecoveryMaxInput(value: string): void {
+    this.runtimeRecoveryMaxInput.set(value);
+    this.sizingDirty.set(true);
+    this.sizingError.set(null);
+  }
+
+  updateRuntimeMaxDailyLossInput(value: string): void {
+    this.runtimeMaxDailyLossInput.set(value);
+    this.sizingDirty.set(true);
+    this.sizingError.set(null);
+  }
+
+  saveRuntimeSizing(
+    stakeUsd = this.runtimeSizingValidation().baseStakeUsd,
+    recoveryMaxStakeUsd = this.runtimeSizingValidation().recoveryMaxStakeUsd,
+    maxDailyLossUsd = this.runtimeSizingValidation().maxDailyLossUsd,
+  ): void {
+    if (this.sizingBusy()) return;
+    if (!Number.isFinite(Number(stakeUsd)) || !Number.isFinite(Number(recoveryMaxStakeUsd)) || !Number.isFinite(Number(maxDailyLossUsd))) {
+      this.sizingError.set(this.runtimeSizingValidation().message || 'Enter valid runtime control values.');
+      return;
+    }
+
+    const validation = this.runtimeSizingValidation();
+    if (
+      !validation.valid &&
+      stakeUsd === validation.baseStakeUsd &&
+      recoveryMaxStakeUsd === validation.recoveryMaxStakeUsd &&
+      maxDailyLossUsd === validation.maxDailyLossUsd
+    ) {
+      this.sizingError.set(validation.message || 'Runtime control values are invalid.');
+      return;
+    }
+
+    const runtime = getDashboardRuntimeConfig();
+    const headers = runtime.apiToken ? { Authorization: `Bearer ${runtime.apiToken}` } : undefined;
+    this.sizingBusy.set(true);
+    this.sizingError.set(null);
+
+    this.http.post<RuntimeSizingResponse>(
+      buildApiUrl('/api/runtime/sizing'),
+      { stakeUsd, recoveryMaxStakeUsd, maxDailyLossUsd },
+      { headers },
+    ).subscribe({
+      next: (response) => {
+        this.sizingBusy.set(false);
+        this.syncRuntimeSizingInputs(response?.config?.stakeUsd, response?.config?.recoveryMaxStakeUsd, response?.config?.maxDailyLossUsd);
+        this.sizingDirty.set(false);
+        this.fetchDashboard();
+      },
+      error: (err) => {
+        this.sizingBusy.set(false);
+        this.sizingError.set(err?.error?.message || err?.message || 'Failed to update runtime controls');
+      },
+    });
+  }
+
+  applyRuntimeSizingDefaults(): void {
+    this.runtimeStakeInput.set(this.formatRuntimeSizingValue(DEFAULT_BASE_STAKE_USD));
+    this.runtimeRecoveryMaxInput.set(this.formatRuntimeSizingValue(DEFAULT_RECOVERY_MAX_STAKE_USD));
+    this.runtimeMaxDailyLossInput.set(this.formatRuntimeSizingValue(DEFAULT_MAX_DAILY_LOSS_USD));
+    this.sizingDirty.set(true);
+    this.sizingError.set(null);
+    this.saveRuntimeSizing(DEFAULT_BASE_STAKE_USD, DEFAULT_RECOVERY_MAX_STAKE_USD, DEFAULT_MAX_DAILY_LOSS_USD);
   }
 
   setTableSort(table: TableId, key: string): void {
@@ -1123,6 +1515,9 @@ export class App implements OnDestroy {
 
     this.http.get<DashboardPayload>(buildApiUrl('/api/dashboard'), { headers }).subscribe({
       next: (payload) => {
+        if (!this.sizingDirty() && !this.sizingBusy()) {
+          this.syncRuntimeSizingInputs(payload?.config?.stakeUsd, payload?.config?.recoveryMaxStakeUsd, payload?.config?.maxDailyLossUsd);
+        }
         this.data.set(payload);
         queueMicrotask(() => this.renderChart());
         this.loading.set(false);
@@ -1133,6 +1528,44 @@ export class App implements OnDestroy {
         this.error.set(err?.message || 'Failed to load dashboard data');
       },
     });
+  }
+
+  private syncRuntimeSizingInputs(
+    stakeUsd: number | null | undefined,
+    recoveryMaxStakeUsd: number | null | undefined,
+    maxDailyLossUsd: number | null | undefined,
+  ): void {
+    const nextStakeUsd = Number.isFinite(Number(stakeUsd)) ? Number(stakeUsd) : DEFAULT_BASE_STAKE_USD;
+    const nextRecoveryMaxStakeUsd = Number.isFinite(Number(recoveryMaxStakeUsd))
+      ? Number(recoveryMaxStakeUsd)
+      : DEFAULT_RECOVERY_MAX_STAKE_USD;
+    const nextMaxDailyLossUsd = Number.isFinite(Number(maxDailyLossUsd))
+      ? Number(maxDailyLossUsd)
+      : DEFAULT_MAX_DAILY_LOSS_USD;
+    this.runtimeStakeInput.set(this.formatRuntimeSizingValue(nextStakeUsd));
+    this.runtimeRecoveryMaxInput.set(this.formatRuntimeSizingValue(nextRecoveryMaxStakeUsd));
+    this.runtimeMaxDailyLossInput.set(this.formatRuntimeSizingValue(nextMaxDailyLossUsd));
+  }
+
+  private resetRuntimeSettingsDraft(): void {
+    const d = this.data();
+    if (d) {
+      this.syncRuntimeSizingInputs(d.config.stakeUsd, d.config.recoveryMaxStakeUsd, d.config.maxDailyLossUsd);
+    } else {
+      this.syncRuntimeSizingInputs(DEFAULT_BASE_STAKE_USD, DEFAULT_RECOVERY_MAX_STAKE_USD, DEFAULT_MAX_DAILY_LOSS_USD);
+    }
+    this.sizingDirty.set(false);
+    this.sizingError.set(null);
+  }
+
+  private formatRuntimeSizingValue(value: number): string {
+    if (!Number.isFinite(value)) return '';
+    return String(Number(value.toFixed(2)));
+  }
+
+  private parseRuntimeSizingInput(value: string): number | null {
+    const parsed = Number(String(value).trim());
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   trackByTicker(index: number, row: { ticker: string }): string {
@@ -1233,6 +1666,41 @@ export class App implements OnDestroy {
     return Number.isFinite(ts) ? ts : null;
   }
 
+  private closedTradeKey(trade: ClosedTradeRecord): string {
+    return `${trade.ticker}@${trade.settled_time}`;
+  }
+
+  private openTradeKey(trade: TradeRecord): string {
+    return `${trade.ticker}@${trade.last_updated_ts || trade.placed_context?.markedAt || trade.event_ticker || trade.ticker}`;
+  }
+
+  private fpStringToNumber(value: string | undefined): number | null {
+    if (value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private pushRecoveryAttempt(
+    attemptsByQueue: Map<string, RecoveryAttemptView[]>,
+    queueId: string,
+    attempt: RecoveryAttemptView,
+  ): void {
+    if (!queueId || !attempt.tradeKey) return;
+    const attempts = attemptsByQueue.get(queueId) || [];
+    const existingIndex = attempts.findIndex((item) => item.tradeKey === attempt.tradeKey);
+    if (existingIndex >= 0) {
+      attempts[existingIndex] = {
+        ...attempts[existingIndex],
+        ...attempt,
+        allocatedRecoveryUsd:
+          attempt.allocatedRecoveryUsd || attempts[existingIndex].allocatedRecoveryUsd || 0,
+      };
+    } else {
+      attempts.push(attempt);
+    }
+    attemptsByQueue.set(queueId, attempts);
+  }
+
   logPrimaryFields(item: LogRecord): LogField[] {
     const priority = [
       'eventTitle',
@@ -1255,6 +1723,78 @@ export class App implements OnDestroy {
   logSecondaryFields(item: LogRecord): LogField[] {
     const primaryKeys = new Set(this.logPrimaryFields(item).map((field) => field.key));
     return this.logFields(item).filter((field) => !primaryKeys.has(field.key));
+  }
+
+  recoveryAttemptsFor(row: RecoveryQueueRow): RecoveryAttemptView[] {
+    return this.directRecoveryAttemptMap().get(row.queueId) || [];
+  }
+
+  recoveryCreditsFor(row: RecoveryQueueRow): RecoveryCreditView[] {
+    return this.recoveryCreditMap().get(row.queueId) || [];
+  }
+
+  latestRecoveryAttempt(row: RecoveryQueueRow): RecoveryAttemptView | null {
+    const attempts = this.recoveryAttemptsFor(row);
+    return attempts.length ? attempts[attempts.length - 1] : null;
+  }
+
+  recoveryAttemptStakeUsd(attempt: RecoveryAttemptView | null | undefined): number | null {
+    if (!attempt) return null;
+    if (attempt.stakeUsdTarget !== null && attempt.stakeUsdTarget !== undefined) return attempt.stakeUsdTarget;
+    if (attempt.amountBetUsd !== null && attempt.amountBetUsd !== undefined) return attempt.amountBetUsd;
+    return null;
+  }
+
+  recoveryAttemptTargetUsd(attempt: RecoveryAttemptView | null | undefined): number | null {
+    if (!attempt) return null;
+    if (attempt.targetProfitUsd !== null && attempt.targetProfitUsd !== undefined) return attempt.targetProfitUsd;
+    return null;
+  }
+
+  recoveryAttemptResultLabel(attempt: RecoveryAttemptView): string {
+    if (attempt.status === 'OPEN') return 'OPEN';
+    if ((attempt.pnlUsd || 0) > 0) return 'WIN';
+    if ((attempt.pnlUsd || 0) < 0) return 'LOSS';
+    return 'PUSH';
+  }
+
+  recoveryAttemptsTotalStakeUsd(row: RecoveryQueueRow): number | null {
+    const total = this.recoveryAttemptsFor(row).reduce((sum, attempt) => {
+      const stakeUsd = this.recoveryAttemptStakeUsd(attempt);
+      return stakeUsd === null || stakeUsd === undefined ? sum : sum + stakeUsd;
+    }, 0);
+    return total > 0 ? Number(total.toFixed(4)) : null;
+  }
+
+  recoveryAttemptsTotalTargetUsd(row: RecoveryQueueRow): number | null {
+    const total = this.recoveryAttemptsFor(row).reduce((sum, attempt) => {
+      const targetUsd = this.recoveryAttemptTargetUsd(attempt);
+      return targetUsd === null || targetUsd === undefined ? sum : sum + targetUsd;
+    }, 0);
+    return total > 0 ? Number(total.toFixed(4)) : null;
+  }
+
+  recoveryAttemptsTotalPnlUsd(row: RecoveryQueueRow): number | null {
+    const attempts = this.recoveryAttemptsFor(row).filter(
+      (attempt) => attempt.pnlUsd !== null && attempt.pnlUsd !== undefined && attempt.status === 'SETTLED',
+    );
+    if (!attempts.length) return null;
+    const total = attempts.reduce((sum, attempt) => sum + Number(attempt.pnlUsd || 0), 0);
+    return Number(total.toFixed(4));
+  }
+
+  recoveryCreditsTotalAllocatedUsd(row: RecoveryQueueRow): number | null {
+    const credits = this.recoveryCreditsFor(row);
+    if (!credits.length) return null;
+    const total = credits.reduce((sum, credit) => sum + Number(credit.allocatedRecoveryUsd || 0), 0);
+    return Number(total.toFixed(4));
+  }
+
+  recoveryCreditsTotalPnlUsd(row: RecoveryQueueRow): number | null {
+    const credits = this.recoveryCreditsFor(row).filter((credit) => credit.pnlUsd !== null && credit.pnlUsd !== undefined);
+    if (!credits.length) return null;
+    const total = credits.reduce((sum, credit) => sum + Number(credit.pnlUsd || 0), 0);
+    return Number(total.toFixed(4));
   }
 
   statusClass(status: string | undefined): string {

@@ -11,8 +11,8 @@ const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
-const { getRuntimeConfig, readOverrides, OVERRIDES_PATH, setOverride, unsetOverride } = require('./runtimeConfig');
-const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice } = require('./strategy');
+const { getRuntimeConfig, readOverrides, resolveRuntimeConfig, OVERRIDES_PATH, setOverride, setOverrides, unsetOverride } = require('./runtimeConfig');
+const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice, isRecoveryTradeSetup } = require('./strategy');
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
@@ -20,6 +20,7 @@ const {
   resolveSoccerCompetitionScope,
 } = require('./kalshiLiveSoccer');
 const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy } = require('./recoveryQueue');
+const { buildClosedTradesFromSettlements, getTradeLegsForEvent } = require('./tradeLedger');
 
 const app = express();
 app.use(cors());
@@ -29,7 +30,13 @@ const logger = createLogger(config.logLevel);
 const port = Number(process.env.MONITOR_PORT || 8787);
 const logsPath = path.resolve('logs/trading-actions.ndjson');
 const statePath = path.resolve(config.stateFile || 'data/state.json');
-const RECOVERY_MAX_BET_CAP_USD = 50;
+const MIN_DAILY_STOP_LOSS_USD = 1;
+const DEFAULT_MAX_DAILY_LOSS_USD = 50;
+const MIN_STAKE_USD = 0.1;
+const DEFAULT_STAKE_USD = 1;
+const ABSOLUTE_BET_CAP_USD = 20;
+const DEFAULT_RECOVERY_MAX_STAKE_USD = ABSOLUTE_BET_CAP_USD;
+const RECOVERY_MAX_BET_CAP_USD = ABSOLUTE_BET_CAP_USD;
 const VALID_AGENT_STATUSES = [
   'STARTING',
   'UP_TRADING',
@@ -352,7 +359,7 @@ function computeTradeAnalytics(closedTrades) {
 }
 
 function computeRecoveryAnalytics(closedTrades, runtime) {
-  const baseStake = Number(runtime.stakeUsd || 1);
+  const baseStake = Math.min(Number(runtime.stakeUsd || 1), ABSOLUTE_BET_CAP_USD);
   const queueState = buildRecoveryQueue(closedTrades || []);
   return {
     enabled: Boolean(runtime.recoveryModeEnabled),
@@ -364,6 +371,43 @@ function computeRecoveryAnalytics(closedTrades, runtime) {
     unresolvedLossCount: queueState.unresolvedLossCount,
     queue: queueState.queue,
   };
+}
+
+function candidateCanUseRecoverySizing(candidate) {
+  return Boolean(
+    candidate &&
+      candidate.signalRule?.outcomeType === 'leader' &&
+      (candidate.recoverySizingEligible || isRecoveryTradeSetup(candidate.game)),
+  );
+}
+
+function canPlaceSameEventRecoveryAddOn(candidate, recovery, state) {
+  const eventTicker = candidate?.event?.event_ticker;
+  const marketTicker = candidate?.market?.ticker;
+  if (!eventTicker || !marketTicker) return false;
+  if (!recovery?.enabled || Number(recovery.nextTargetProfitUsd || 0) <= 0) return false;
+  if (!candidateCanUseRecoverySizing(candidate)) return false;
+
+  const tradeLegs = getTradeLegsForEvent(state, eventTicker);
+  if (!tradeLegs.length) return false;
+  const hasRecoveryTrade = tradeLegs.some((leg) => {
+    const sizingMode = String(leg?.sizingMode || '').toUpperCase();
+    return Boolean(leg?.recoveryQueueId) || sizingMode.startsWith('RECOVERY');
+  });
+  if (hasRecoveryTrade) return false;
+
+  return tradeLegs.some((leg) => {
+    const sizingMode = String(leg?.sizingMode || '').toUpperCase();
+    const isRecoveryLeg = Boolean(leg?.recoveryQueueId) || sizingMode.startsWith('RECOVERY');
+    return !isRecoveryLeg && String(leg?.marketTicker || '') === String(marketTicker);
+  });
+}
+
+function shouldConsiderCandidate(candidate, recovery, state) {
+  const eventTicker = candidate?.event?.event_ticker;
+  if (!eventTicker) return false;
+  if (!getTradeLegsForEvent(state, eventTicker).length) return true;
+  return canPlaceSameEventRecoveryAddOn(candidate, recovery, state);
 }
 
 function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
@@ -386,7 +430,7 @@ function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
   const ask = Number(candidate.ask || 0);
   if (!Number.isFinite(ask) || ask <= 0 || ask >= 1) return false;
 
-  if (recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
+  if (candidateCanUseRecoverySizing(candidate) && recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
     const targetProfitUsd = Number(recovery.nextTargetProfitUsd || 0);
     const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
@@ -399,7 +443,7 @@ function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
   }
 
   const stakeUsd = Number(runtime.stakeUsd || 0);
-  const maxSpendUsd = Math.min(stakeUsd, Number(balanceUsd));
+  const maxSpendUsd = Math.min(stakeUsd, ABSOLUTE_BET_CAP_USD, Number(balanceUsd));
   return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
 }
 
@@ -522,29 +566,34 @@ function inferCompetitionFromTicker(ticker) {
 function buildPlacementContextByEvent(actionLogs, runtime) {
   const byEvent = new Map();
   for (const log of actionLogs) {
-    if (log.action !== 'order_submit') continue;
+    if (!['order_submit', 'order_filled', 'order_resting', 'order_fill_detected_from_position'].includes(log.action)) {
+      continue;
+    }
     if (!log.eventTicker) continue;
+    const existing = byEvent.get(log.eventTicker) || {};
+    const derivedTriggerRule = log.triggerRule || (Number.isFinite(Number(log.minute)) ? deriveRuleFromMinute(log.minute, runtime) : null);
     byEvent.set(log.eventTicker, {
-      triggerRule: deriveRuleFromMinute(log.minute, runtime),
-      placedMinute: log.minute ?? null,
-      placedScore: log.score ?? null,
-      placedCards: log.cards ?? null,
-      placedLeaderVsTrailingCards: log.leaderVsTrailingCards ?? null,
-      stakeUsdTarget: Number.isFinite(Number(log.stakeUsd)) ? Number(log.stakeUsd) : null,
-      targetProfitUsd: Number.isFinite(Number(log.targetProfitUsd)) ? Number(log.targetProfitUsd) : null,
-      recoveryQueueId: log.recoveryQueueId || null,
-      recoveryRemainingUsd: Number.isFinite(Number(log.recoveryRemainingUsd)) ? Number(log.recoveryRemainingUsd) : null,
-      recoverySourceLossUsd: Number.isFinite(Number(log.recoverySourceLossUsd)) ? Number(log.recoverySourceLossUsd) : null,
-      recoverySourceEventTitle: log.recoverySourceEventTitle || null,
-      sizingMode: log.sizingMode || null,
-      leadingTeam: log.leadingTeam ?? null,
-      leadingTeamMaxLead: Number.isFinite(Number(log.leadingTeamMaxLead)) ? Number(log.leadingTeamMaxLead) : null,
-      competition: log.competition ?? null,
-      selectedOutcome: log.selectedOutcome || log.leadingTeam || null,
-      markedAt: log.ts || null,
-      marketTicker: log.marketTicker || null,
-      yesPrice: Number.isFinite(Number(log.ask)) ? Number(log.ask) : null,
-      fillCount: Number.isFinite(Number(log.count)) ? Number(log.count) : null,
+      ...existing,
+      triggerRule: derivedTriggerRule || existing.triggerRule || null,
+      placedMinute: log.minute ?? existing.placedMinute ?? null,
+      placedScore: log.score ?? existing.placedScore ?? null,
+      placedCards: log.cards ?? existing.placedCards ?? null,
+      placedLeaderVsTrailingCards: log.leaderVsTrailingCards ?? existing.placedLeaderVsTrailingCards ?? null,
+      stakeUsdTarget: Number.isFinite(Number(log.stakeUsd)) ? Number(log.stakeUsd) : existing.stakeUsdTarget ?? null,
+      targetProfitUsd: Number.isFinite(Number(log.targetProfitUsd)) ? Number(log.targetProfitUsd) : existing.targetProfitUsd ?? null,
+      recoveryQueueId: log.recoveryQueueId || existing.recoveryQueueId || null,
+      recoveryRemainingUsd: Number.isFinite(Number(log.recoveryRemainingUsd)) ? Number(log.recoveryRemainingUsd) : existing.recoveryRemainingUsd ?? null,
+      recoverySourceLossUsd: Number.isFinite(Number(log.recoverySourceLossUsd)) ? Number(log.recoverySourceLossUsd) : existing.recoverySourceLossUsd ?? null,
+      recoverySourceEventTitle: log.recoverySourceEventTitle || existing.recoverySourceEventTitle || null,
+      sizingMode: log.sizingMode || existing.sizingMode || null,
+      leadingTeam: log.leadingTeam ?? existing.leadingTeam ?? null,
+      leadingTeamMaxLead: Number.isFinite(Number(log.leadingTeamMaxLead)) ? Number(log.leadingTeamMaxLead) : existing.leadingTeamMaxLead ?? null,
+      competition: log.competition ?? existing.competition ?? null,
+      selectedOutcome: log.selectedOutcome || log.leadingTeam || existing.selectedOutcome || null,
+      markedAt: log.ts || existing.markedAt || null,
+      marketTicker: log.marketTicker || existing.marketTicker || null,
+      yesPrice: Number.isFinite(Number(log.ask)) ? Number(log.ask) : existing.yesPrice ?? null,
+      fillCount: Number.isFinite(Number(log.fillCount)) ? Number(log.fillCount) : Number.isFinite(Number(log.count)) ? Number(log.count) : existing.fillCount ?? null,
     });
   }
   return byEvent;
@@ -781,24 +830,12 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const filteredSettlements = settlements.filter(
     (s) => !isIgnoredSettlement(s, ignoredSettlementTickers) && settlementHasExposure(s),
   );
-  const closedTrades = filteredSettlements
-    .map((s) => ({
-      ticker: s.ticker,
-      event_ticker: s.event_ticker,
-      market_result: s.market_result,
-      yes_count_fp: s.yes_count_fp,
-      no_count_fp: s.no_count_fp,
-      revenue_cents: s.revenue,
-      fee_cost: s.fee_cost,
-      settled_time: s.settled_time,
-      pnl_usd: settlementPnlUsd(s),
-      total_cost_usd: parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars),
-      amount_bet_usd: parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars),
-      total_return_usd: Number((Number(s.revenue || 0) / 100).toFixed(4)),
-      roi_pct: null,
+  const closedTrades = buildClosedTradesFromSettlements(filteredSettlements, state)
+    .map((trade) => ({
+      ...trade,
       placed_context: mergePlacementContext(
-        (state.tradedEvents || {})[s.event_ticker],
-        placementContextByEvent.get(s.event_ticker),
+        trade.placed_context,
+        !trade.placed_context?.tradeLegId ? placementContextByEvent.get(trade.event_ticker) : null,
       ),
     }))
     .sort((a, b) => new Date(b.settled_time).getTime() - new Date(a.settled_time).getTime());
@@ -984,8 +1021,20 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
         };
       }
 
-      const alreadyBet = Boolean(tradedEventsMap[eventTicker]);
-      const candidate = event ? eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet }) : null;
+      const alreadyBet = getTradeLegsForEvent(state, eventTicker).length > 0;
+      const repeatCandidate = event
+        ? eligibleTradeCandidate(
+            event,
+            runtime,
+            {
+              hasTradedEvent: () => false,
+              hasRecentEventRejection: () => false,
+            },
+            { allowRepeatEvent: true },
+          )
+        : null;
+      const sameGameRecoveryEligible = Boolean(repeatCandidate && canPlaceSameEventRecoveryAddOn(repeatCandidate, recovery, state));
+      const candidate = repeatCandidate && shouldConsiderCandidate(repeatCandidate, recovery, state) ? repeatCandidate : null;
       const hasOrderCapacity = candidate ? canSizeCandidate(candidate, balanceUsd, runtime, recovery) : false;
 
       let status = 'WATCHING';
@@ -993,6 +1042,12 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
 
       if (!event) {
         reason = 'Live soccer feed game found, but no open tradable Kalshi game market is attached yet';
+      } else if (sameGameRecoveryEligible && candidate && !hasOrderCapacity) {
+        status = 'RECOVERY_NO_CAPACITY';
+        reason = '75+ 2-goal leader setup qualifies for a same-game recovery add-on, but current balance or recovery cap cannot size it';
+      } else if (sameGameRecoveryEligible && candidate) {
+        status = 'RECOVERY_ELIGIBLE_NOW';
+        reason = '75+ 2-goal leader setup can place a same-game recovery add-on on top of the original base trade';
       } else if (alreadyBet) {
         status = 'ALREADY_BET';
         reason = 'Bot has already placed a filled trade on this event';
@@ -1132,12 +1187,12 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     recovery,
     leagueLeaderboard: analytics.leagueLeaderboard,
     strategyLeaderboard: analytics.strategyLeaderboard,
-    monitoredGamesSummary: {
-      total: monitoredGames.length,
-      eligibleNow: monitoredGames.filter((g) => g.status === 'ELIGIBLE_NOW').length,
-      alreadyBet: monitoredGames.filter((g) => g.status === 'ALREADY_BET').length,
-      noLiveData: monitoredGames.filter((g) => g.status === 'NO_LIVE_DATA').length,
-    },
+      monitoredGamesSummary: {
+        total: monitoredGames.length,
+        eligibleNow: monitoredGames.filter((g) => g.status === 'ELIGIBLE_NOW' || g.status === 'RECOVERY_ELIGIBLE_NOW').length,
+        alreadyBet: monitoredGames.filter((g) => g.status === 'ALREADY_BET').length,
+        noLiveData: monitoredGames.filter((g) => g.status === 'NO_LIVE_DATA').length,
+      },
     monitoredGames: monitoredGames.slice(0, 300),
     recentLogs: [...importantLogs].reverse(),
     recentCycleLogs: verboseLogs.slice(-100).reverse(),
@@ -1172,6 +1227,107 @@ app.post('/api/runtime/risk-halt', requireMonitorAuth, async (req, res) => {
       ok: false,
       error: 'runtime_override_failed',
       message: error.message || 'Failed to update risk halt override',
+    });
+  }
+});
+
+app.post('/api/runtime/sizing', requireMonitorAuth, async (req, res) => {
+  try {
+    const requestedStakeUsd = Number(req.body?.stakeUsd);
+    const requestedRecoveryMaxStakeUsd = Number(req.body?.recoveryMaxStakeUsd);
+    const requestedMaxDailyLossUsd = Number(req.body?.maxDailyLossUsd);
+
+    if (!Number.isFinite(requestedStakeUsd) || !Number.isFinite(requestedRecoveryMaxStakeUsd) || !Number.isFinite(requestedMaxDailyLossUsd)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: 'Body must include numeric fields "stakeUsd", "recoveryMaxStakeUsd", and "maxDailyLossUsd".',
+      });
+    }
+
+    if (requestedStakeUsd < MIN_STAKE_USD || requestedStakeUsd > ABSOLUTE_BET_CAP_USD) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Base stake must be between $${MIN_STAKE_USD.toFixed(2)} and $${ABSOLUTE_BET_CAP_USD.toFixed(2)}.`,
+      });
+    }
+
+    if (requestedRecoveryMaxStakeUsd < MIN_STAKE_USD || requestedRecoveryMaxStakeUsd > ABSOLUTE_BET_CAP_USD) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Recovery max must be between $${MIN_STAKE_USD.toFixed(2)} and $${ABSOLUTE_BET_CAP_USD.toFixed(2)}.`,
+      });
+    }
+
+    if (requestedMaxDailyLossUsd < MIN_DAILY_STOP_LOSS_USD) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Daily stop-loss must be at least $${MIN_DAILY_STOP_LOSS_USD.toFixed(2)}.`,
+      });
+    }
+
+    const previewRuntime = resolveRuntimeConfig(config, {
+      ...readOverrides(),
+      stakeUsd: requestedStakeUsd,
+      recoveryMaxStakeUsd: requestedRecoveryMaxStakeUsd,
+      maxDailyLossUsd: requestedMaxDailyLossUsd,
+    });
+
+    if (Number(previewRuntime.stakeUsd) !== requestedStakeUsd) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Base stake resolves to $${Number(previewRuntime.stakeUsd).toFixed(2)} after validation. Adjust the requested amount and try again.`,
+      });
+    }
+
+    if (Number(previewRuntime.recoveryMaxStakeUsd) !== requestedRecoveryMaxStakeUsd) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message:
+          `Recovery max must be at least $${Number(previewRuntime.recoveryStakeUsd || requestedStakeUsd).toFixed(2)} ` +
+          `and no more than $${ABSOLUTE_BET_CAP_USD.toFixed(2)} for the current runtime settings.`,
+      });
+    }
+
+    if (Number(previewRuntime.maxDailyLossUsd) !== requestedMaxDailyLossUsd) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Daily stop-loss resolves to $${Number(previewRuntime.maxDailyLossUsd).toFixed(2)} after validation. Adjust the requested amount and try again.`,
+      });
+    }
+
+    const overrides = setOverrides({
+      stakeUsd: requestedStakeUsd,
+      recoveryMaxStakeUsd: requestedRecoveryMaxStakeUsd,
+      maxDailyLossUsd: requestedMaxDailyLossUsd,
+    });
+
+    return res.json({
+      ok: true,
+      config: {
+        stakeUsd: previewRuntime.stakeUsd,
+        recoveryStakeUsd: previewRuntime.recoveryStakeUsd,
+        recoveryMaxStakeUsd: previewRuntime.recoveryMaxStakeUsd,
+        maxDailyLossUsd: previewRuntime.maxDailyLossUsd,
+      },
+      defaults: {
+        stakeUsd: DEFAULT_STAKE_USD,
+        recoveryMaxStakeUsd: DEFAULT_RECOVERY_MAX_STAKE_USD,
+        maxDailyLossUsd: DEFAULT_MAX_DAILY_LOSS_USD,
+      },
+      overrides,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: 'runtime_override_failed',
+      message: error.message || 'Failed to update runtime controls',
     });
   }
 });

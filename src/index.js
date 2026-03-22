@@ -5,11 +5,12 @@ const { createLogger } = require('./logger');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { StateStore } = require('./stateStore');
-const { eligibleTradeCandidate, computeDailyLossUsd, deriveSignalRule } = require('./strategy');
+const { eligibleTradeCandidate, computeDailyLossUsd, deriveSignalRule, isRecoveryTradeSetup } = require('./strategy');
 const { Notifier } = require('./notifier');
 const { appendAction, LOG_PATH } = require('./actionLog');
 const { getRuntimeConfig } = require('./runtimeConfig');
 const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy, kalshiImmediateFeeUsd } = require('./recoveryQueue');
+const { buildClosedTradesFromSettlements, settlementPnlUsd } = require('./tradeLedger');
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
@@ -22,7 +23,8 @@ const notifier = new Notifier(config, logger);
 const stateStore = new StateStore(config.stateFile);
 stateStore.load();
 const ORDER_REJECTION_COOLDOWN_MS = 10 * 60 * 1000;
-const RECOVERY_MAX_BET_CAP_USD = 50;
+const ABSOLUTE_BET_CAP_USD = 20;
+const RECOVERY_MAX_BET_CAP_USD = ABSOLUTE_BET_CAP_USD;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -101,14 +103,6 @@ async function getMarketDiagnostics(client, marketTicker) {
   }
 }
 
-function settlementPnlUsd(settlement) {
-  const revenue = Number(settlement.revenue || 0) / 100;
-  const costYes = parseFp(settlement.yes_total_cost_dollars);
-  const costNo = parseFp(settlement.no_total_cost_dollars);
-  const fee = parseFp(settlement.fee_cost);
-  return revenue - costYes - costNo - fee;
-}
-
 function settlementHasExposure(settlement) {
   const yesCount = Math.abs(parseFp(settlement?.yes_count_fp));
   const noCount = Math.abs(parseFp(settlement?.no_count_fp));
@@ -128,28 +122,13 @@ function isIgnoredSettlement(settlement, ignoredTickers = []) {
 
 function computeRecoveryState(settlements, stateStore, runtime) {
   const baseStake = Number(runtime.stakeUsd || 1);
-  const closedTrades = (settlements || [])
+  const closedTrades = buildClosedTradesFromSettlements(
+    (settlements || [])
     .filter((s) => !isIgnoredSettlement(s, runtime.ignoredSettlementTickers || []))
     .filter(settlementHasExposure)
-    .filter((s) => String(s?.event_ticker || '').includes('GAME'))
-    .map((s) => {
-      const meta = stateStore.getTradeMeta(s.event_ticker) || {};
-      const totalCostUsd = Number((parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars)).toFixed(4));
-      const pnlUsd = settlementPnlUsd(s);
-      return {
-        ticker: s.ticker,
-        event_ticker: s.event_ticker,
-        settled_time: s.settled_time,
-        pnl_usd: pnlUsd,
-        total_cost_usd: totalCostUsd,
-        amount_bet_usd: totalCostUsd,
-        total_return_usd: Number((Number(s.revenue || 0) / 100).toFixed(4)),
-        roi_pct: totalCostUsd > 0 ? pnlUsd / totalCostUsd : null,
-        placed_context: {
-          ...meta,
-        },
-      };
-    });
+    .filter((s) => String(s?.event_ticker || '').includes('GAME')),
+    stateStore,
+  );
 
   if (!runtime.recoveryModeEnabled) {
     return {
@@ -215,7 +194,7 @@ function computePendingRecoveryReservations(settlements, stateStore) {
     reservedByQueueId.set(key, roundRecoveryUsd((reservedByQueueId.get(key) || 0) + amount));
   }
 
-  for (const trade of stateStore.listTradedEvents()) {
+  for (const trade of stateStore.listTradeLegs()) {
     const queueId = String(trade?.recoveryQueueId || '');
     if (!queueId) continue;
     if (settledEventTickers.has(String(trade?.eventTicker || ''))) continue;
@@ -284,10 +263,40 @@ function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
   };
 }
 
+function candidateCanUseRecoverySizing(candidate) {
+  return Boolean(
+    candidate &&
+      candidate.signalRule?.outcomeType === 'leader' &&
+      (candidate.recoverySizingEligible || isRecoveryTradeSetup(candidate.game)),
+  );
+}
+
+function canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState) {
+  const eventTicker = candidate?.event?.event_ticker;
+  const marketTicker = candidate?.market?.ticker;
+  if (!eventTicker || !marketTicker) return false;
+  if (!recoveryState?.enabled || Number(recoveryState.nextTargetProfitUsd || 0) <= 0) return false;
+  if (!candidateCanUseRecoverySizing(candidate)) return false;
+  if (!stateStore.hasTradedEvent(eventTicker)) return false;
+  if (stateStore.hasRecoveryTradeForEvent(eventTicker)) return false;
+
+  return stateStore.getTradeLegs(eventTicker).some((leg) => {
+    const sizingMode = String(leg?.sizingMode || '').toUpperCase();
+    const isRecoveryLeg = Boolean(leg?.recoveryQueueId) || sizingMode.startsWith('RECOVERY');
+    return !isRecoveryLeg && String(leg?.marketTicker || '') === String(marketTicker);
+  });
+}
+
+function shouldConsiderCandidate(candidate, stateStore, recoveryState) {
+  if (!candidate?.event?.event_ticker) return false;
+  if (!stateStore.hasTradedEvent(candidate.event.event_ticker)) return true;
+  return canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState);
+}
+
 function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
   const ask = candidate.ask;
   const limitPrice = Number(candidate.signalRule.stageMaxYesPrice.toFixed(4));
-  const baseStakeUsd = Number(runtime.stakeUsd || 1);
+  const baseStakeUsd = Math.min(Number(runtime.stakeUsd || 1), ABSOLUTE_BET_CAP_USD);
 
   let sizingMode = 'BASE';
   let targetProfitUsd = 0;
@@ -297,7 +306,12 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
   let totalCostUsd = 0;
   let netProfitUsd = 0;
 
-  if (recoveryState?.enabled && Number(recoveryState.nextTargetProfitUsd || 0) > 0 && Array.isArray(recoveryState.queue)) {
+  if (
+    candidateCanUseRecoverySizing(candidate) &&
+    recoveryState?.enabled &&
+    Number(recoveryState.nextTargetProfitUsd || 0) > 0 &&
+    Array.isArray(recoveryState.queue)
+  ) {
     sizingMode = 'RECOVERY_QUEUE';
     targetProfitUsd = Number(recoveryState.nextTargetProfitUsd || 0);
     queueItem =
@@ -413,15 +427,28 @@ function syncRestingOrderState(restingOrders, stateStore, events) {
       orderId: order.order_id || order.id || null,
       marketTicker,
       clientOrderId,
+      triggerRule: existing.triggerRule || null,
+      eventTitle: existing.eventTitle || null,
+      competition: existing.competition || null,
+      selectedOutcome: existing.selectedOutcome || null,
+      yesPrice: existing.yesPrice ?? null,
       limitPrice: Number.parseFloat(order.yes_price_dollars || order.price || 0) || null,
       count: parseFp(order.count || order.count_fp),
       status: order.status || null,
+      stakeUsdTarget: existing.stakeUsdTarget ?? null,
       recoveryQueueId: existing.recoveryQueueId || null,
       recoveryRemainingUsd: existing.recoveryRemainingUsd ?? null,
       recoverySourceLossUsd: existing.recoverySourceLossUsd ?? null,
       recoverySourceEventTitle: existing.recoverySourceEventTitle || null,
       targetProfitUsd: existing.targetProfitUsd ?? null,
       reservedRecoveryUsd: existing.reservedRecoveryUsd ?? null,
+      sizingMode: existing.sizingMode || null,
+      placedMinute: existing.placedMinute ?? null,
+      placedScore: existing.placedScore || null,
+      placedCards: existing.placedCards || null,
+      placedLeaderVsTrailingCards: existing.placedLeaderVsTrailingCards || null,
+      leadingTeam: existing.leadingTeam || null,
+      leadingTeamMaxLead: existing.leadingTeamMaxLead ?? null,
     });
   }
 
@@ -508,16 +535,27 @@ async function runCycle(client) {
 
   for (const previousOrder of previousOpenOrders) {
     if (stateStore.getEventOpenOrder(previousOrder.eventTicker)) continue;
-    if (stateStore.hasTradedEvent(previousOrder.eventTicker)) continue;
+    if (previousOrder.orderId && stateStore.hasTradeLegForOrderId(previousOrder.orderId)) continue;
     const openPosition = openPositionByMarket.get(previousOrder.marketTicker);
     if (!openPosition) continue;
     const event = eventMap.get(previousOrder.eventTicker);
-    const priorTradeMeta = stateStore.getTradeMeta(previousOrder.eventTicker) || {};
+    const priorTradeMeta = {
+      ...(stateStore.getTradeMeta(previousOrder.eventTicker) || {}),
+      ...(previousOrder || {}),
+    };
     stateStore.markEventTraded(previousOrder.eventTicker, {
       orderId: previousOrder.orderId || null,
-      marketTicker: previousOrder.marketTicker || null,
+      marketTicker: previousOrder.marketTicker || priorTradeMeta.marketTicker || null,
       fillCount: Math.abs(parseFp(openPosition.position_fp)),
-      yesPrice: priorTradeMeta.yesPrice ?? null,
+      yesPrice: priorTradeMeta.yesPrice ?? priorTradeMeta.limitPrice ?? null,
+      stakeUsdTarget: priorTradeMeta.stakeUsdTarget ?? null,
+      targetProfitUsd: priorTradeMeta.targetProfitUsd ?? null,
+      reservedRecoveryUsd: priorTradeMeta.reservedRecoveryUsd ?? null,
+      recoveryQueueId: priorTradeMeta.recoveryQueueId || null,
+      recoveryRemainingUsd: priorTradeMeta.recoveryRemainingUsd ?? null,
+      recoverySourceLossUsd: priorTradeMeta.recoverySourceLossUsd ?? null,
+      recoverySourceEventTitle: priorTradeMeta.recoverySourceEventTitle || null,
+      sizingMode: priorTradeMeta.sizingMode || null,
       triggerRule: priorTradeMeta.triggerRule || null,
       executionDetail: 'GTC_RESTING_FILL',
       placedMinute: priorTradeMeta.placedMinute ?? null,
@@ -532,12 +570,19 @@ async function runCycle(client) {
         priorTradeMeta.selectedOutcome ||
         event?.markets?.find((market) => market.ticker === previousOrder.marketTicker)?.yes_sub_title ||
         null,
+      limitPrice: priorTradeMeta.limitPrice ?? priorTradeMeta.yesPrice ?? null,
     });
     appendAction('order_fill_detected_from_position', {
       eventTicker: previousOrder.eventTicker,
       marketTicker: previousOrder.marketTicker || null,
       orderId: previousOrder.orderId || null,
       fillCount: Math.abs(parseFp(openPosition.position_fp)),
+      targetProfitUsd: priorTradeMeta.targetProfitUsd ?? null,
+      recoveryQueueId: priorTradeMeta.recoveryQueueId || null,
+      recoveryRemainingUsd: priorTradeMeta.recoveryRemainingUsd ?? null,
+      recoverySourceLossUsd: priorTradeMeta.recoverySourceLossUsd ?? null,
+      recoverySourceEventTitle: priorTradeMeta.recoverySourceEventTitle || null,
+      sizingMode: priorTradeMeta.sizingMode || null,
       triggerRule: priorTradeMeta.triggerRule || null,
       executionDetail: 'GTC_RESTING_FILL',
     });
@@ -547,7 +592,8 @@ async function runCycle(client) {
 
   const candidates = enrichedEvents
     .filter((event) => eventLooksLikeSoccer(event, liveSoccerMap))
-    .map((event) => eligibleTradeCandidate(event, runtime, stateStore))
+    .map((event) => eligibleTradeCandidate(event, runtime, stateStore, { allowRepeatEvent: true }))
+    .filter((candidate) => shouldConsiderCandidate(candidate, stateStore, recovery))
     .filter(Boolean)
     .sort((a, b) => b.game.minute - a.game.minute);
   const candidateByEvent = new Map(candidates.map((candidate) => [candidate.event.event_ticker, candidate]));
@@ -566,7 +612,6 @@ async function runCycle(client) {
     for (const openOrder of activeRestingOrders) {
       const candidate = candidateByEvent.get(openOrder.eventTicker);
       const shouldCancel =
-        stateStore.hasTradedEvent(openOrder.eventTicker) ||
         !candidate ||
         candidate.market.ticker !== openOrder.marketTicker;
       if (shouldCancel) {
@@ -678,6 +723,7 @@ async function runCycle(client) {
     }
 
     const logMeta = {
+      triggerRule: deriveTriggerRule(candidate.game, runtime),
       eventTicker: candidate.event.event_ticker,
       eventTitle: candidate.event.title,
       competition: candidate.game.competition,
@@ -771,7 +817,6 @@ async function runCycle(client) {
     const remainingCount = parseFp(order.remaining_count_fp || order.resting_count_fp);
 
     if (fillCount > 0) {
-      const triggerRule = deriveTriggerRule(candidate.game, runtime);
       stateStore.clearEventRejection(candidate.event.event_ticker);
       stateStore.markEventTraded(candidate.event.event_ticker, {
         orderId: order.order_id,
@@ -786,7 +831,7 @@ async function runCycle(client) {
         recoverySourceLossUsd: orderPlan.sizing.recoverySourceLossUsd,
         recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
         sizingMode: orderPlan.sizing.sizingMode,
-        triggerRule,
+        triggerRule: logMeta.triggerRule,
         placedMinute: candidate.game.minute,
         placedScore: `${candidate.game.homeScore}-${candidate.game.awayScore}`,
         placedCards:
@@ -837,15 +882,34 @@ async function runCycle(client) {
         orderId: order.order_id,
         marketTicker: candidate.market.ticker,
         clientOrderId: order.client_order_id || orderPlan.order.client_order_id,
+        triggerRule: logMeta.triggerRule,
+        eventTitle: candidate.event.title || null,
+        competition: candidate.game.competition || null,
+        selectedOutcome: candidate.selectedOutcome || candidate.market.yes_sub_title || null,
+        yesPrice: candidate.ask,
         limitPrice: orderPlan.sizing.limitPrice,
         count: orderPlan.order.count,
         status: order.status || null,
+        stakeUsdTarget: orderPlan.sizing.totalCostUsd,
         recoveryQueueId: orderPlan.sizing.recoveryQueueId,
         recoveryRemainingUsd: orderPlan.sizing.recoveryRemainingUsd,
         recoverySourceLossUsd: orderPlan.sizing.recoverySourceLossUsd,
         recoverySourceEventTitle: orderPlan.sizing.recoverySourceEventTitle,
         targetProfitUsd: orderPlan.sizing.targetProfitUsd,
         reservedRecoveryUsd: orderPlan.sizing.reservedRecoveryUsd,
+        sizingMode: orderPlan.sizing.sizingMode,
+        placedMinute: candidate.game.minute,
+        placedScore: `${candidate.game.homeScore}-${candidate.game.awayScore}`,
+        placedCards:
+          candidate.game.homeRedCards !== null && candidate.game.awayRedCards !== null
+            ? `${candidate.game.homeRedCards}-${candidate.game.awayRedCards}`
+            : null,
+        placedLeaderVsTrailingCards:
+          candidate.game.leadingTeamRedCards !== null && candidate.game.trailingTeamRedCards !== null
+            ? `${candidate.game.leadingTeamRedCards}-${candidate.game.trailingTeamRedCards}`
+            : null,
+        leadingTeam: candidate.game.leadingTeam || null,
+        leadingTeamMaxLead: candidate.game.leadingTeamMaxLead ?? null,
       });
       logger.info({ ...logMeta, orderId: order.order_id, orderStatus: order.status }, 'Order resting on book');
       appendAction('order_resting', { ...logMeta, orderId: order.order_id, orderStatus: order.status || null });

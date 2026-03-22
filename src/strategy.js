@@ -369,7 +369,12 @@ function computeDailyLossUsd(settlements, timezone, ignoredTickers = []) {
   return dailyPnl < 0 ? Math.abs(dailyPnl) : 0;
 }
 
-function eligibleTradeCandidate(event, config, stateStore) {
+function isRecoveryTradeSetup(game) {
+  if (!game?.leadingTeam) return false;
+  return Number(game.minute || 0) >= 75 && Number(game.goalDiff || 0) >= 2;
+}
+
+function eligibleTradeCandidate(event, config, stateStore, options = {}) {
   const game = extractGameState(event);
   if (!game) return null;
   if (!isLeagueAllowed(game.competition, config)) return null;
@@ -377,7 +382,7 @@ function eligibleTradeCandidate(event, config, stateStore) {
   if (!signalRule) return null;
 
   if (game.homeRedCards === null || game.awayRedCards === null) return null;
-  if (stateStore.hasTradedEvent(event.event_ticker)) return null;
+  if (!options.allowRepeatEvent && stateStore.hasTradedEvent(event.event_ticker)) return null;
   if (typeof stateStore.hasRecentEventRejection === 'function' && stateStore.hasRecentEventRejection(event.event_ticker)) return null;
 
   if (signalRule.outcomeType === 'tie') {
@@ -397,6 +402,7 @@ function eligibleTradeCandidate(event, config, stateStore) {
       ask,
       signalRule,
       selectedOutcome: 'Tie',
+      recoverySizingEligible: false,
     };
   }
 
@@ -424,6 +430,7 @@ function eligibleTradeCandidate(event, config, stateStore) {
     ask,
     signalRule,
     selectedOutcome: game.leadingTeam,
+    recoverySizingEligible: isRecoveryTradeSetup(game),
   };
 }
 
@@ -431,6 +438,7 @@ module.exports = {
   computeDailyLossUsd,
   eligibleTradeCandidate,
   deriveSignalRule,
+  isRecoveryTradeSetup,
   marketAskPrice,
   extractGameState,
   isLeagueAllowed,
