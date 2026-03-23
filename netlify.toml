@@ -1,6 +1,10 @@
 [build]
-  command = "npm --prefix dashboard ci && npm --prefix dashboard run build"
+  command = "npm ci && npm --prefix dashboard ci && npm --prefix dashboard run build"
   publish = "dashboard/dist/dashboard/browser"
+
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "LOG_LEVEL,TIMEZONE,KALSHI_API_BASE_URL,ESTIMATED_WIN_PROBABILITY,FEE_BUFFER,POST80_MAX_YES_PRICE,STATE_FILE"
+  SECRETS_SCAN_OMIT_PATHS = ".env.example,README.md,dashboard/package-lock.json,dashboard/dist"
 
 [functions]
   directory = "netlify/functions"
