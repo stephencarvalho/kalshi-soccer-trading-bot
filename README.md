@@ -8,7 +8,34 @@ The bot scans live soccer events, applies rule-based entry logic, places IOC ord
 
 - Node.js `>= 20.19.0` (Angular 21 compatible)
 - npm
+- `mise` (recommended): <https://mise.jdx.dev/getting-started.html>
 - Kalshi API key ID + RSA private key in a local `.pem` file
+
+### Install `mise`
+
+macOS:
+
+```bash
+brew install mise
+```
+
+Windows (`winget`):
+
+```powershell
+winget install jdx.mise
+```
+
+Windows (`scoop`):
+
+```powershell
+scoop install mise
+```
+
+After install, restart your terminal and verify:
+
+```bash
+mise --version
+```
 
 Check versions:
 
@@ -22,6 +49,7 @@ npm -v
 - Never commit `.env` or `.pem` key files.
 - Rotate any key that was ever pasted into chat or logs.
 - Use `KALSHI_PRIVATE_KEY_PATH` (file path) instead of inline PEM in env.
+- Team standard: store local Kalshi PEMs under `./.certs/kalshi/`.
 
 ## Architecture
 
@@ -331,21 +359,63 @@ This project keeps historical trigger labels in persisted trade metadata and act
 
 ## Setup
 
-1. Install dependencies:
+1. Install the toolchain with `mise`:
 
 ```bash
-npm install
-cd dashboard && npm install && cd ..
+mise install
 ```
 
-2. Create local env file:
+2. Install project dependencies:
+
+```bash
+mise run setup
+```
+
+3. Create local env file:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Fill `.env` values (especially Kalshi credentials + key path).
+4. Fill `.env` values, especially Kalshi credentials and key path.
 
+Detailed local setup guide:
+
+- [docs/local-setup.md](/Users/ajaymarampalli/Desktop/projects/kalshi-soccer-trading-bot/docs/local-setup.md)
+- Kalshi API key guide: <https://docs.kalshi.com/getting_started/api_keys>
+- Kalshi account profile: <https://kalshi.com/account/profile>
+
+## Run With `mise`
+
+Task scripts are organized under `mise/tasks/` and loaded by `mise`, while `mise.toml` only pins the toolchain.
+
+Dry run, full stack:
+
+```bash
+mise run up:dry
+```
+
+Live mode, full stack:
+
+```bash
+mise run up:live
+```
+
+Individual services:
+
+```bash
+mise run start:bot:dry
+mise run start:bot:live
+mise run start:api
+mise run start:dashboard
+```
+
+## GitHub Workflows
+
+- CI: installs dependencies, runs backend syntax validation, and builds the Angular dashboard on pushes to `main` and on pull requests.
+- CodeQL: scans the JavaScript/TypeScript codebase on pushes to `main`, pull requests, and every Monday at 06:00 UTC.
+
+## Manual Run (3 terminals)
 ## Runner Handoff Checklist
 
 If someone else is going to run this project, hand them the following:
@@ -738,6 +808,11 @@ The dashboard will then read deposit history automatically from the saved web se
 - `RUNTIME_OVERRIDES_FILE`
   - Why: stores live override values layered on top of `.env` without restarting the whole config workflow.
   - Where to get it: local file path chosen by the operator. The app creates the file if missing.
+
+### Netlify / deployed dashboard
+
+- `DASHBOARD_API_BASE_URL` should be set to the public monitor API base URL for Netlify deploys and deploy previews.
+- If this is left blank, the dashboard only works in local development where `/api/*` is proxied to `http://localhost:8787`.
 
 ## Logs and Data Persistence
 

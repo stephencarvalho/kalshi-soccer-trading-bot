@@ -3,6 +3,11 @@
   command = "npm run build"
   publish = "dist/dashboard/browser"
 
+[build.environment]
+  # These values are ordinary app config, not secrets. Netlify secret scanning
+  # flags them because their values also appear in the built frontend bundle.
+  SECRETS_SCAN_OMIT_KEYS = "LOG_LEVEL,FEE_BUFFER,ESTIMATED_WIN_PROBABILITY"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
