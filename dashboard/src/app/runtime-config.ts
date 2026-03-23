@@ -1,6 +1,8 @@
 export interface DashboardRuntimeConfig {
   apiBaseUrl: string;
   apiToken: string;
+  supabaseUrl: string;
+  supabasePublishableKey: string;
 }
 
 declare global {
@@ -19,6 +21,8 @@ export function getDashboardRuntimeConfig(): DashboardRuntimeConfig {
   return {
     apiBaseUrl: sanitizeBaseUrl(runtime.apiBaseUrl),
     apiToken: String(runtime.apiToken || '').trim(),
+    supabaseUrl: sanitizeBaseUrl(runtime.supabaseUrl),
+    supabasePublishableKey: String(runtime.supabasePublishableKey || '').trim(),
   };
 }
 

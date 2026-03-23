@@ -1,13 +1,21 @@
 const fs = require('fs');
 const path = require('path');
+const dotenv = require('dotenv');
+
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const outputPath = path.resolve(__dirname, '..', 'public', 'runtime-config.js');
 const apiBaseUrl = String(process.env.DASHBOARD_API_BASE_URL || '').trim();
 const apiToken = String(process.env.DASHBOARD_API_TOKEN || '').trim();
+const supabaseUrl = String(process.env.SUPABASE_URL || '').trim();
+const supabasePublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY || '').trim();
 
 const payload = {
   apiBaseUrl,
   apiToken,
+  supabaseUrl,
+  supabasePublishableKey,
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });

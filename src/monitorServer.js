@@ -7,6 +7,7 @@ const cors = require('cors');
 
 const { config } = require('./config');
 const { createLogger } = require('./logger');
+const { getSupabaseConfig, getSupabaseUserForAccessToken, isSupabaseAuthConfigured } = require('./supabaseAuth');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
@@ -60,6 +61,38 @@ function requireMonitorAuth(req, res, next) {
     ok: false,
     error: 'unauthorized',
     message: 'Valid monitor API token required',
+  });
+}
+
+async function requireDashboardAuth(req, res, next) {
+  const token = extractBearerToken(req);
+
+  if (isSupabaseAuthConfigured()) {
+    try {
+      const user = await getSupabaseUserForAccessToken(token);
+      if (user) {
+        req.supabaseUser = user;
+        return next();
+      }
+    } catch (error) {
+      logger.warn({ err: error?.message || error }, 'Supabase auth token validation failed');
+    }
+  }
+
+  if (config.monitorApiToken && token === config.monitorApiToken) {
+    return next();
+  }
+
+  if (!isSupabaseAuthConfigured() && !config.monitorApiToken) {
+    return next();
+  }
+
+  return res.status(401).json({
+    ok: false,
+    error: 'unauthorized',
+    message: isSupabaseAuthConfigured()
+      ? 'Valid Supabase access token required'
+      : 'Valid monitor API token required',
   });
 }
 
@@ -683,7 +716,34 @@ app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
+app.get('/api/me', requireDashboardAuth, async (req, res) => {
+  const supabaseConfig = getSupabaseConfig();
+  const user = req.supabaseUser || null;
+
+  res.json({
+    ok: true,
+    auth: {
+      provider: user ? 'supabase' : config.monitorApiToken ? 'monitor-token' : 'none',
+      supabaseConfigured: isSupabaseAuthConfigured(),
+      monitorTokenConfigured: Boolean(config.monitorApiToken),
+    },
+    user: user
+      ? {
+          id: user.id,
+          email: user.email || null,
+          aud: user.aud || null,
+          role: user.role || null,
+        }
+      : null,
+    config: {
+      supabaseUrlConfigured: Boolean(supabaseConfig.url),
+      supabasePublishableKeyConfigured: Boolean(supabaseConfig.publishableKey),
+      supabaseSecretKeyConfigured: Boolean(supabaseConfig.secretKey),
+    },
+  });
+});
+
+app.get('/api/dashboard', requireDashboardAuth, async (_req, res) => {
   const runtime = getRuntimeConfig(config);
   const actionLogs = readActionLogs();
   const { important: importantLogs, verbose: verboseLogs } = splitLogs(actionLogs);

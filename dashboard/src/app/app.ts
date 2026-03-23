@@ -14,7 +14,9 @@ import {
   Tooltip,
   type ChartConfiguration,
 } from 'chart.js';
+import type { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 import { buildApiUrl, getDashboardRuntimeConfig } from './runtime-config';
+import { getSupabaseBrowserClient, isSupabaseBrowserAuthConfigured } from './supabase';
 
 interface DashboardPayload {
   generatedAt: string;
@@ -327,6 +329,11 @@ interface LogField {
   value: string;
 }
 
+interface PasswordRule {
+  label: string;
+  met: boolean;
+}
+
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
 
 @Component({
@@ -337,6 +344,7 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryS
 })
 export class App implements OnDestroy {
   private readonly http = inject(HttpClient);
+  private readonly supabase = getSupabaseBrowserClient();
   @ViewChild('pnlChart')
   set chartCanvasRef(value: ElementRef<HTMLCanvasElement> | undefined) {
     this.chartCanvas = value;
@@ -348,6 +356,7 @@ export class App implements OnDestroy {
   @ViewChild('chartWrap') private chartWrap?: ElementRef<HTMLElement>;
   private chartInstance: Chart<'line'> | null = null;
   private chartPoints: PnlPoint[] = [];
+  private dashboardRequestId = 0;
   private readonly chartSelectionPlugin = {
     id: 'selectionGuides',
     afterDatasetsDraw: (chart: ChartInstance<'line'>) => {
@@ -415,8 +424,20 @@ export class App implements OnDestroy {
   };
   private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private authSubscription?: { unsubscribe: () => void };
 
   readonly loading = signal(true);
+  readonly authLoading = signal(isSupabaseBrowserAuthConfigured());
+  readonly authError = signal<string | null>(null);
+  readonly authMessage = signal<string | null>(null);
+  readonly authEmail = signal('');
+  readonly authPassword = signal('');
+  readonly authConfirmPassword = signal('');
+  readonly authMode = signal<'login' | 'signup'>('login');
+  readonly showPassword = signal(false);
+  readonly userMenuOpen = signal(false);
+  readonly session = signal<Session | null>(null);
+  readonly user = signal<User | null>(null);
   readonly error = signal<string | null>(null);
   readonly data = signal<DashboardPayload | null>(null);
   readonly now = signal(new Date());
@@ -429,6 +450,53 @@ export class App implements OnDestroy {
   readonly logTimeRanges: LogTimeRange[] = ['TODAY', '24H', '7D', 'ALL'];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
   readonly selectedChartPoints = signal<PnlPoint[]>([]);
+  readonly passwordRules = computed<PasswordRule[]>(() => {
+    const password = this.authPassword();
+    return [
+      { label: 'At least 10 characters', met: password.length >= 10 },
+      { label: 'One uppercase letter', met: /[A-Z]/.test(password) },
+      { label: 'One lowercase letter', met: /[a-z]/.test(password) },
+      { label: 'One number', met: /\d/.test(password) },
+      { label: 'One special character', met: /[^A-Za-z0-9]/.test(password) },
+    ];
+  });
+  readonly passwordStrength = computed(() => {
+    const password = this.authPassword();
+    const metCount = this.passwordRules().filter((rule) => rule.met).length;
+
+    if (!password.length) {
+      return { label: 'Enter a password', tone: 'idle' as const, score: 0, percent: 0 };
+    }
+
+    if (metCount <= 2) {
+      return { label: 'Weak', tone: 'weak' as const, score: metCount, percent: 25 };
+    }
+
+    if (metCount === 3 || metCount === 4) {
+      return { label: 'Good', tone: 'good' as const, score: metCount, percent: 65 };
+    }
+
+    return { label: 'Strong', tone: 'strong' as const, score: metCount, percent: 100 };
+  });
+  readonly isSignupPasswordValid = computed(() => this.passwordRules().every((rule) => rule.met));
+  readonly passwordsMatch = computed(() => this.authPassword() === this.authConfirmPassword());
+  readonly showConfirmPasswordError = computed(() => this.authMode() === 'signup' && this.authConfirmPassword().length > 0 && !this.passwordsMatch());
+  readonly sessionStartedAtLabel = computed(() => {
+    const ts = this.session()?.user?.last_sign_in_at;
+    if (!ts) return 'Unavailable';
+    const date = new Date(ts);
+    return Number.isNaN(date.getTime())
+      ? 'Unavailable'
+      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  });
+  readonly sessionExpiresAtLabel = computed(() => {
+    const expiresAt = this.session()?.expires_at;
+    if (!expiresAt) return 'Unavailable';
+    const date = new Date(expiresAt * 1000);
+    return Number.isNaN(date.getTime())
+      ? 'Unavailable'
+      : date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  });
   readonly visibleLogs = computed(() => {
     const d = this.data();
     if (!d) return [] as LogRecord[];
@@ -916,6 +984,14 @@ export class App implements OnDestroy {
     const allTimePnl = this.allTimePnlStats().value;
     return Number((currentNetAccountValue - allTimePnl + this.chartStats().currentValue).toFixed(2));
   });
+  readonly authConfigured = computed(() => isSupabaseBrowserAuthConfigured());
+  readonly canFetchDashboard = computed(() => {
+    const runtime = getDashboardRuntimeConfig();
+    if (runtime.apiToken) return true;
+    if (!this.authConfigured()) return true;
+    return Boolean(this.session()?.access_token);
+  });
+  readonly authUserLabel = computed(() => this.user()?.email || this.user()?.id || 'Authenticated user');
 
   constructor() {
     effect(() => {
@@ -932,11 +1008,8 @@ export class App implements OnDestroy {
       document.body.setAttribute('data-theme', theme);
     });
 
-    this.fetchDashboard();
-    this.refreshTimer = setInterval(() => {
-      this.now.set(new Date());
-      this.fetchDashboard();
-    }, 5000);
+    void this.initializeAuth();
+    this.startRefreshLoop();
   }
 
   ngAfterViewInit(): void {
@@ -945,11 +1018,181 @@ export class App implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.authSubscription?.unsubscribe();
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.chartInstance) {
       this.chartInstance.destroy();
       this.chartInstance = null;
     }
+  }
+
+  async signIn(): Promise<void> {
+    if (!this.supabase) {
+      this.authError.set('Supabase auth is not configured. Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.');
+      return;
+    }
+
+    this.authLoading.set(true);
+    this.authError.set(null);
+    this.authMessage.set(null);
+
+    const { error } = await this.supabase.auth.signInWithPassword({
+      email: this.authEmail().trim(),
+      password: this.authPassword(),
+    });
+
+    this.authLoading.set(false);
+
+    if (error) {
+      this.authError.set(error.message);
+      return;
+    }
+
+    this.authPassword.set('');
+  }
+
+  async signUp(): Promise<void> {
+    if (!this.supabase) {
+      this.authError.set('Supabase auth is not configured. Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.');
+      return;
+    }
+
+    if (!this.isSignupPasswordValid()) {
+      this.authError.set('Use a stronger password to create your account.');
+      this.authMessage.set(null);
+      return;
+    }
+
+    if (!this.passwordsMatch()) {
+      this.authError.set('Passwords must match to create your account.');
+      this.authMessage.set(null);
+      return;
+    }
+
+    this.authLoading.set(true);
+    this.authError.set(null);
+    this.authMessage.set(null);
+
+    const { error } = await this.supabase.auth.signUp({
+      email: this.authEmail().trim(),
+      password: this.authPassword(),
+    });
+
+    this.authLoading.set(false);
+
+    if (error) {
+      this.authError.set(error.message);
+      return;
+    }
+
+    this.authMessage.set('Sign-up succeeded. Check your email if confirmation is enabled, then log in.');
+    this.authMode.set('login');
+    this.authPassword.set('');
+    this.authConfirmPassword.set('');
+  }
+
+  async signOut(): Promise<void> {
+    if (!this.supabase) return;
+
+    this.authLoading.set(true);
+    this.authError.set(null);
+    this.authMessage.set(null);
+
+    const { error } = await this.supabase.auth.signOut();
+    this.authLoading.set(false);
+
+    if (error) {
+      this.authError.set(error.message);
+      return;
+    }
+
+    this.applySession(null, 'SIGNED_OUT');
+  }
+
+  updateAuthField(field: 'email' | 'password' | 'confirmPassword', value: string): void {
+    if (field === 'email') {
+      this.authEmail.set(value);
+      return;
+    }
+
+    if (field === 'confirmPassword') {
+      this.authConfirmPassword.set(value);
+      return;
+    }
+
+    this.authPassword.set(value);
+  }
+
+  setAuthMode(mode: 'login' | 'signup'): void {
+    this.authMode.set(mode);
+    this.showPassword.set(false);
+    this.authError.set(null);
+    this.authMessage.set(null);
+    this.authPassword.set('');
+    this.authConfirmPassword.set('');
+  }
+
+  togglePasswordVisibility(): void {
+    this.showPassword.update((current) => !current);
+  }
+
+  toggleUserMenu(event?: Event): void {
+    event?.stopPropagation();
+    this.userMenuOpen.update((current) => !current);
+  }
+
+  closeUserMenu(): void {
+    this.userMenuOpen.set(false);
+  }
+
+  private async initializeAuth(): Promise<void> {
+    if (!this.supabase) {
+      this.authLoading.set(false);
+      this.fetchDashboard();
+      return;
+    }
+
+    const {
+      data: { session },
+      error,
+    } = await this.supabase.auth.getSession();
+
+    if (error) {
+      this.authError.set(error.message);
+    }
+
+    this.applySession(session, 'INITIAL_SESSION');
+
+    const subscription = this.supabase.auth.onAuthStateChange((event: AuthChangeEvent, nextSession: Session | null) => {
+      this.applySession(nextSession, event);
+    });
+    this.authSubscription = subscription.data.subscription;
+  }
+
+  private applySession(session: Session | null, _event: AuthChangeEvent | 'INITIAL_SESSION'): void {
+    this.dashboardRequestId += 1;
+    this.session.set(session);
+    this.user.set(session?.user ?? null);
+    this.userMenuOpen.set(false);
+    this.authLoading.set(false);
+
+    if (!session && this.authConfigured()) {
+      this.data.set(null);
+      this.loading.set(false);
+      this.error.set(null);
+      return;
+    }
+
+    this.loading.set(true);
+    this.fetchDashboard();
+  }
+
+  private startRefreshLoop(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = setInterval(() => {
+      this.now.set(new Date());
+      this.fetchDashboard();
+    }, 5000);
   }
 
   private loadTheme(): ThemeMode {
@@ -980,6 +1223,7 @@ export class App implements OnDestroy {
 
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: MouseEvent): void {
+    this.closeUserMenu();
     const target = event.target as Node | null;
     const chartWrapEl = this.chartWrap?.nativeElement;
     if (!target || !chartWrapEl) return;
@@ -1071,19 +1315,36 @@ export class App implements OnDestroy {
   }
 
   fetchDashboard(): void {
+    if (!this.canFetchDashboard()) {
+      this.loading.set(false);
+      this.data.set(null);
+      this.error.set(null);
+      return;
+    }
+
     const runtime = getDashboardRuntimeConfig();
-    const headers = runtime.apiToken ? { Authorization: `Bearer ${runtime.apiToken}` } : undefined;
+    const accessToken = this.session()?.access_token || runtime.apiToken;
+    const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+    const requestId = ++this.dashboardRequestId;
 
     this.http.get<DashboardPayload>(buildApiUrl('/api/dashboard'), { headers }).subscribe({
       next: (payload) => {
+        if (requestId !== this.dashboardRequestId || !this.canFetchDashboard()) return;
         this.data.set(payload);
         queueMicrotask(() => this.renderChart());
         this.loading.set(false);
         this.error.set(null);
       },
       error: (err) => {
+        if (requestId !== this.dashboardRequestId) return;
         this.loading.set(false);
-        this.error.set(err?.message || 'Failed to load dashboard data');
+        if (err?.status === 401) {
+          this.data.set(null);
+          this.error.set('Authentication required. Log in with Supabase to load dashboard data.');
+          return;
+        }
+        this.data.set(null);
+        this.error.set(err?.error?.message || err?.message || 'Failed to load dashboard data');
       },
     });
   }

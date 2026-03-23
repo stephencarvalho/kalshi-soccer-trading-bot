@@ -363,6 +363,9 @@ Localhost assumptions:
 - MONITOR_API_TOKEN=
 - DASHBOARD_API_BASE_URL=
 - DASHBOARD_API_TOKEN=
+- SUPABASE_URL=https://zmofffvxlodwxjwzclma.supabase.co
+- SUPABASE_PUBLISHABLE_KEY=
+- SUPABASE_SECRET_KEY=
 
 Kalshi web invested-capital tracking:
 - KALSHI_WEB_AUTH_STATE_PATH=./.kalshi-soccer-bot/kalshi-web-auth.json
