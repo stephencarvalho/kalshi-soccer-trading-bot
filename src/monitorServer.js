@@ -1095,6 +1095,14 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   });
 });
 
-app.listen(port, () => {
-  logger.info({ port }, 'Monitor API server listening');
-});
+function startMonitorServer() {
+  return app.listen(port, () => {
+    logger.info({ port }, 'Monitor API server listening');
+  });
+}
+
+if (require.main === module) {
+  startMonitorServer();
+}
+
+module.exports = { app, startMonitorServer };
