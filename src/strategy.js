@@ -1,6 +1,8 @@
 const { parseFp } = require('./kalshiClient');
 const { toISODateInTz } = require('./stateStore');
 const { isSoccerCompetitionName } = require('./kalshiLiveSoccer');
+const { isRecoverySizingEligible } = require('./recoveryConditions');
+const { parseTeamsFromEventTitle } = require('./teamTitleParser');
 
 function normalize(s) {
   return String(s || '')
@@ -33,13 +35,6 @@ function tryParseScoreString(value) {
   return { homeScore: Number(m[1]), awayScore: Number(m[2]) };
 }
 
-function parseTeamsFromTitle(title) {
-  const text = String(title || '');
-  const m = text.match(/^(.+?)\s+vs\.?\s+(.+?)(?:\?|$)/i) || text.match(/^(.+?)\s+v\.?\s+(.+?)(?:\?|$)/i);
-  if (!m) return null;
-  return { homeTeam: m[1].trim(), awayTeam: m[2].trim() };
-}
-
 function flatten(obj, prefix = '', out = {}) {
   if (!obj || typeof obj !== 'object') return out;
   for (const [k, v] of Object.entries(obj)) {
@@ -70,6 +65,10 @@ function extractGameState(event) {
         leadingSide === 'home' ? homeRedCards : leadingSide === 'away' ? awayRedCards : null;
       const trailingTeamRedCards =
         leadingSide === 'home' ? awayRedCards : leadingSide === 'away' ? homeRedCards : null;
+      const homeMaxLead = Number.isFinite(Number(live.homeMaxLead)) ? Number(live.homeMaxLead) : goalDiff;
+      const awayMaxLead = Number.isFinite(Number(live.awayMaxLead)) ? Number(live.awayMaxLead) : goalDiff;
+      const leadingTeamMaxLead =
+        leadingSide === 'home' ? homeMaxLead : leadingSide === 'away' ? awayMaxLead : 0;
       return {
         minute: live.minute,
         homeScore: live.homeScore,
@@ -81,6 +80,9 @@ function extractGameState(event) {
         awayRedCards,
         leadingTeamRedCards,
         trailingTeamRedCards,
+        homeMaxLead,
+        awayMaxLead,
+        leadingTeamMaxLead,
         competition: live.competition || null,
       };
     }
@@ -162,7 +164,7 @@ function extractGameState(event) {
     }
   }
 
-  const fromTitle = parseTeamsFromTitle(event.title || event.sub_title || '');
+  const fromTitle = parseTeamsFromEventTitle(event.title || event.sub_title || '');
   if (!homeTeam && fromTitle) homeTeam = fromTitle.homeTeam;
   if (!awayTeam && fromTitle) awayTeam = fromTitle.awayTeam;
 
@@ -183,6 +185,9 @@ function extractGameState(event) {
     leadingSide === 'home' ? homeRedCards : leadingSide === 'away' ? awayRedCards : null;
   const trailingTeamRedCards =
     leadingSide === 'home' ? awayRedCards : leadingSide === 'away' ? homeRedCards : null;
+  const homeMaxLead = leadingSide === 'home' ? goalDiff : 0;
+  const awayMaxLead = leadingSide === 'away' ? goalDiff : 0;
+  const leadingTeamMaxLead = goalDiff;
 
   return {
     minute,
@@ -195,8 +200,54 @@ function extractGameState(event) {
     awayRedCards,
     leadingTeamRedCards,
     trailingTeamRedCards,
+    homeMaxLead,
+    awayMaxLead,
+    leadingTeamMaxLead,
     competition: md.competition || null,
   };
+}
+
+function deriveSignalRule(game, config) {
+  if (!game) return null;
+
+  if (
+    game.homeScore === game.awayScore &&
+    game.minute >= config.post80StartMinute
+  ) {
+    return {
+      id: `POST_${config.post80StartMinute}_TIE_YES`,
+      requiredLead: 0,
+      stageMaxYesPrice: Math.min(config.maxYesPrice, config.post80MaxYesPrice),
+      bypassMinute: false,
+      outcomeType: 'tie',
+    };
+  }
+
+  if (!game.leadingTeam) return null;
+
+  if ((game.goalDiff || 0) >= config.minGoalLead) {
+    return {
+      id: `CURRENT_LEAD_${config.minGoalLead}`,
+      requiredLead: config.minGoalLead,
+      stageMaxYesPrice: Math.min(config.maxYesPrice, config.anytimeLargeLeadMaxYesPrice),
+      bypassMinute: false,
+      outcomeType: 'leader',
+    };
+  }
+
+  if (game.minute < config.minTriggerMinute) return null;
+
+  if (game.minute >= config.post80StartMinute) {
+    return {
+      id: `POST_${config.post80StartMinute}_LEAD_${config.post80MinGoalLead}`,
+      requiredLead: config.post80MinGoalLead,
+      stageMaxYesPrice: Math.min(config.maxYesPrice, config.post80MaxYesPrice),
+      bypassMinute: false,
+      outcomeType: 'leader',
+    };
+  }
+
+  return null;
 }
 
 function isLeagueAllowed(competition, config) {
@@ -219,6 +270,11 @@ function marketIsMatchWinner(market) {
   const combined = `${y} ${n}`;
   if (combined.includes('draw') || combined.includes('tie')) return false;
   return true;
+}
+
+function marketIsTieOutcome(market) {
+  const yes = normalize(market?.yes_sub_title || '');
+  return yes === 'tie' || yes === 'draw' || yes.includes(' tie') || yes.includes('draw');
 }
 
 function pickMarketForLeadingTeam(event, leadingTeam, config) {
@@ -249,6 +305,14 @@ function pickMarketForLeadingTeam(event, leadingTeam, config) {
   return null;
 }
 
+function pickTieMarket(event) {
+  const markets = (event.markets || [])
+    .filter((market) => market.status === 'active')
+    .filter((market) => marketIsTieOutcome(market))
+    .sort((a, b) => parseFp(b.liquidity_dollars) - parseFp(a.liquidity_dollars));
+  return markets[0] || null;
+}
+
 function marketAskPrice(market) {
   const yesAsk = parseFp(market.yes_ask_dollars);
   if (yesAsk > 0) return yesAsk;
@@ -265,6 +329,16 @@ function settlementPnlUsd(settlement) {
   return revenue - costYes - costNo - fee;
 }
 
+function settlementHasExposure(settlement) {
+  const yesCount = Math.abs(parseFp(settlement?.yes_count_fp));
+  const noCount = Math.abs(parseFp(settlement?.no_count_fp));
+  const yesCost = Math.abs(parseFp(settlement?.yes_total_cost_dollars));
+  const noCost = Math.abs(parseFp(settlement?.no_total_cost_dollars));
+  const revenue = Math.abs(Number(settlement?.revenue || 0));
+  const fee = Math.abs(parseFp(settlement?.fee_cost));
+  return yesCount > 0 || noCount > 0 || yesCost > 0 || noCost > 0 || revenue > 0 || fee > 0;
+}
+
 function isIgnoredSettlement(settlement, ignoredTickers = []) {
   const ignored = new Set((ignoredTickers || []).map((x) => String(x)));
   const ticker = String(settlement?.ticker || '');
@@ -279,6 +353,7 @@ function computeDailyLossUsd(settlements, timezone, ignoredTickers = []) {
   let dailyPnl = 0;
   for (const s of settlements) {
     if (isIgnoredSettlement(s, ignoredTickers)) continue;
+    if (!settlementHasExposure(s)) continue;
     const ts = new Date(s.settled_time).getTime();
     if (!Number.isFinite(ts)) continue;
     const key = toISODateInTz(ts, timezone);
@@ -289,17 +364,46 @@ function computeDailyLossUsd(settlements, timezone, ignoredTickers = []) {
   return dailyPnl < 0 ? Math.abs(dailyPnl) : 0;
 }
 
-function eligibleTradeCandidate(event, config, stateStore) {
+function isRecoveryTradeSetup(game) {
+  if (!game?.leadingTeam) return false;
+  return Number(game.minute || 0) >= 75 && Number(game.goalDiff || 0) >= 2;
+}
+
+function eligibleTradeCandidate(event, config, stateStore, options = {}) {
   const game = extractGameState(event);
   if (!game) return null;
   if (!isLeagueAllowed(game.competition, config)) return null;
-  if (game.minute < config.minTriggerMinute) return null;
+  const signalRule = deriveSignalRule(game, config);
+  if (!signalRule) return null;
 
-  const inPost80Window = game.minute >= config.post80StartMinute;
-  const requiredLead = inPost80Window ? config.post80MinGoalLead : config.minGoalLead;
-  const stageMaxYesPrice = inPost80Window ? Math.min(config.maxYesPrice, config.post80MaxYesPrice) : config.maxYesPrice;
+  if (game.homeRedCards === null || game.awayRedCards === null) return null;
+  if (!options.allowRepeatEvent && stateStore.hasTradedEvent(event.event_ticker)) return null;
+  if (typeof stateStore.hasRecentEventRejection === 'function' && stateStore.hasRecentEventRejection(event.event_ticker)) return null;
 
-  if (!game.leadingTeam || game.goalDiff < requiredLead) return null;
+  if (signalRule.outcomeType === 'tie') {
+    if (game.homeScore !== game.awayScore) return null;
+    if (game.homeRedCards !== game.awayRedCards) return null;
+
+    const market = pickTieMarket(event);
+    if (!market) return null;
+
+    const ask = marketAskPrice(market);
+    if (!ask || ask > signalRule.stageMaxYesPrice) return null;
+
+    return {
+      event,
+      game,
+      market,
+      ask,
+      signalRule,
+      selectedOutcome: 'Tie',
+      recoverySizingEligible: isRecoverySizingEligible({ game, signalRule }, config),
+    };
+  }
+
+  if (!game.leadingTeam) return null;
+  const signalLead = signalRule.bypassMinute ? game.leadingTeamMaxLead : game.goalDiff;
+  if (signalLead < signalRule.requiredLead) return null;
   if (
     game.leadingTeamRedCards !== null &&
     game.trailingTeamRedCards !== null &&
@@ -307,25 +411,29 @@ function eligibleTradeCandidate(event, config, stateStore) {
   ) {
     return null;
   }
-  if (stateStore.hasTradedEvent(event.event_ticker)) return null;
 
   const market = pickMarketForLeadingTeam(event, game.leadingTeam, config);
   if (!market) return null;
 
   const ask = marketAskPrice(market);
-  if (!ask || ask > stageMaxYesPrice) return null;
+  if (!ask || ask > signalRule.stageMaxYesPrice) return null;
 
   return {
     event,
     game,
     market,
     ask,
+    signalRule,
+    selectedOutcome: game.leadingTeam,
+    recoverySizingEligible: isRecoverySizingEligible({ game, signalRule }, config),
   };
 }
 
 module.exports = {
   computeDailyLossUsd,
   eligibleTradeCandidate,
+  deriveSignalRule,
+  isRecoveryTradeSetup,
   marketAskPrice,
   extractGameState,
   isLeagueAllowed,

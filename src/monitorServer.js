@@ -9,10 +9,20 @@ const { config } = require('./config');
 const { createLogger } = require('./logger');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
+const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
-const { getRuntimeConfig, readOverrides, OVERRIDES_PATH } = require('./runtimeConfig');
-const { eligibleTradeCandidate, extractGameState, isLeagueAllowed } = require('./strategy');
-const { getLiveSoccerEventData, attachLiveDataToEvents } = require('./kalshiLiveSoccer');
+const { getRuntimeConfig, readOverrides, resolveRuntimeConfig, OVERRIDES_PATH, setOverride, setOverrides, unsetOverride } = require('./runtimeConfig');
+const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice } = require('./strategy');
+const { isRecoverySizingEligible, formatRecoveryConditions } = require('./recoveryConditions');
+const { parseTeamsFromEventTitle } = require('./teamTitleParser');
+const {
+  getLiveSoccerEventData,
+  attachLiveDataToEvents,
+  eventLooksLikeSoccer,
+  resolveSoccerCompetitionScope,
+} = require('./kalshiLiveSoccer');
+const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy } = require('./recoveryQueue');
+const { buildClosedTradesFromSettlements, getTradeLegsForEvent } = require('./tradeLedger');
 
 const app = express();
 app.use(cors());
@@ -22,6 +32,14 @@ const logger = createLogger(config.logLevel);
 const port = Number(process.env.MONITOR_PORT || 8787);
 const logsPath = path.resolve('logs/trading-actions.ndjson');
 const statePath = path.resolve(config.stateFile || 'data/state.json');
+const MIN_DAILY_STOP_LOSS_USD = 1;
+const DEFAULT_MAX_DAILY_LOSS_USD = 50;
+const MIN_STAKE_USD = 0.1;
+const MIN_RECOVERY_MAX_STAKE_USD = 2;
+const DEFAULT_STAKE_USD = 1;
+const ABSOLUTE_BET_CAP_USD = 20;
+const DEFAULT_RECOVERY_MAX_STAKE_USD = 20;
+const RECOVERY_MAX_BET_CAP_USD = 100;
 const VALID_AGENT_STATUSES = [
   'STARTING',
   'UP_TRADING',
@@ -116,6 +134,16 @@ function settlementPnlUsd(settlement) {
   const costNo = parseFp(settlement.no_total_cost_dollars);
   const fee = parseFp(settlement.fee_cost);
   return Number((revenue - costYes - costNo - fee).toFixed(4));
+}
+
+function settlementHasExposure(settlement) {
+  const yesCount = Math.abs(parseFp(settlement?.yes_count_fp));
+  const noCount = Math.abs(parseFp(settlement?.no_count_fp));
+  const yesCost = Math.abs(parseFp(settlement?.yes_total_cost_dollars));
+  const noCost = Math.abs(parseFp(settlement?.no_total_cost_dollars));
+  const revenue = Math.abs(Number(settlement?.revenue || 0));
+  const fee = Math.abs(parseFp(settlement?.fee_cost));
+  return yesCount > 0 || noCount > 0 || yesCost > 0 || noCost > 0 || revenue > 0 || fee > 0;
 }
 
 function safeRatio(n, d) {
@@ -227,6 +255,7 @@ function computeTradeAnalytics(closedTrades) {
   }
 
   const leagueMap = new Map();
+  const strategyMap = new Map();
   for (const t of ordered) {
     const league = t.placed_context?.competition || 'Unknown';
     if (!leagueMap.has(league)) {
@@ -251,11 +280,48 @@ function computeTradeAnalytics(closedTrades) {
       row.roiSum += t.roi_pct;
       row.roiCount += 1;
     }
+
+    const strategy = t.placed_context?.triggerRule || 'UNKNOWN_RULE';
+    if (!strategyMap.has(strategy)) {
+      strategyMap.set(strategy, {
+        strategy,
+        trades: 0,
+        wins: 0,
+        losses: 0,
+        pushes: 0,
+        totalPnlUsd: 0,
+        roiSum: 0,
+        roiCount: 0,
+      });
+    }
+    const strategyRow = strategyMap.get(strategy);
+    strategyRow.trades += 1;
+    if (t.pnl_usd > 0) strategyRow.wins += 1;
+    else if (t.pnl_usd < 0) strategyRow.losses += 1;
+    else strategyRow.pushes += 1;
+    strategyRow.totalPnlUsd += t.pnl_usd;
+    if (t.roi_pct !== null && Number.isFinite(t.roi_pct)) {
+      strategyRow.roiSum += t.roi_pct;
+      strategyRow.roiCount += 1;
+    }
   }
 
   const leagueLeaderboard = Array.from(leagueMap.values())
     .map((r) => ({
       league: r.league,
+      trades: r.trades,
+      wins: r.wins,
+      losses: r.losses,
+      pushes: r.pushes,
+      winRate: safeRatio(r.wins, r.wins + r.losses),
+      totalPnlUsd: Number(r.totalPnlUsd.toFixed(4)),
+      avgRoiPct: r.roiCount > 0 ? r.roiSum / r.roiCount : null,
+    }))
+    .sort((a, b) => b.totalPnlUsd - a.totalPnlUsd);
+
+  const strategyLeaderboard = Array.from(strategyMap.values())
+    .map((r) => ({
+      strategy: r.strategy,
       trades: r.trades,
       wins: r.wins,
       losses: r.losses,
@@ -291,136 +357,95 @@ function computeTradeAnalytics(closedTrades) {
     longestWinStreak,
     longestLossStreak,
     leagueLeaderboard,
+    strategyLeaderboard,
   };
 }
 
-function roundToLadderStake(stakeUsd, ladder) {
-  if (!Number.isFinite(stakeUsd) || stakeUsd <= 0 || !ladder.length) return null;
-  let nearest = ladder[0];
-  for (const s of ladder) {
-    if (Math.abs(s - stakeUsd) < Math.abs(nearest - stakeUsd)) nearest = s;
-  }
-  return nearest;
-}
-
-function computeRecoveryAnalytics(closedTrades, openTrades, runtime) {
-  const baseStake = Number(runtime.stakeUsd || 1);
-  const recoveryStake = Math.max(baseStake, Number(runtime.recoveryStakeUsd || 2));
-  const maxStake = Math.max(recoveryStake, Number(runtime.recoveryMaxStakeUsd || 16));
-  const ladder = [baseStake];
-  let next = recoveryStake;
-  while (next <= maxStake + 1e-9) {
-    if (!ladder.includes(Number(next.toFixed(2)))) ladder.push(Number(next.toFixed(2)));
-    next *= 2;
-  }
-
-  const byStake = new Map(
-    ladder.map((s) => [
-      s,
-      {
-        stakeUsd: s,
-        trades: 0,
-        wins: 0,
-        losses: 0,
-        pushes: 0,
-        winUsd: 0,
-        lossUsdAbs: 0,
-        openWinUsd: 0,
-        openLossUsdAbs: 0,
-        netPnlUsd: 0,
-      },
-    ]),
-  );
-
-  const ordered = [...(closedTrades || [])].sort((a, b) => new Date(a.settled_time).getTime() - new Date(b.settled_time).getTime());
-  let lossStreak = 0;
-  for (const t of ordered) {
-    const rawStake = Number(t.placed_context?.stakeUsdTarget ?? t.total_cost_usd ?? 0);
-    const stake = roundToLadderStake(rawStake, ladder);
-    if (!stake || !byStake.has(stake)) continue;
-    const row = byStake.get(stake);
-    row.trades += 1;
-    row.netPnlUsd += Number(t.pnl_usd || 0);
-    if (t.pnl_usd > 0) {
-      row.wins += 1;
-      row.winUsd += Number(t.pnl_usd || 0);
-      lossStreak = 0;
-    } else if (t.pnl_usd < 0) {
-      row.losses += 1;
-      row.lossUsdAbs += Math.abs(Number(t.pnl_usd || 0));
-      lossStreak += 1;
-    } else {
-      row.pushes += 1;
-      lossStreak = 0;
-    }
-  }
-
-  for (const t of openTrades || []) {
-    const rawStake = Number(t.placed_context?.stakeUsdTarget ?? t.amount_bet_usd ?? 0);
-    const stake = roundToLadderStake(rawStake, ladder);
-    if (!stake || !byStake.has(stake)) continue;
-    const row = byStake.get(stake);
-    const pnl = Number(t.unrealized_pnl_usd || 0);
-    row.netPnlUsd += pnl;
-    if (pnl > 0) row.openWinUsd += pnl;
-    if (pnl < 0) row.openLossUsdAbs += Math.abs(pnl);
-  }
-
-  const remainingByTier = {};
-  for (let i = 0; i < ladder.length - 1; i += 1) {
-    const source = byStake.get(ladder[i]);
-    const offset = byStake.get(ladder[i + 1]);
-    const sourceLoss = source.lossUsdAbs + source.openLossUsdAbs;
-    const nextGain = offset.winUsd + offset.openWinUsd;
-    remainingByTier[ladder[i]] = Math.max(0, sourceLoss - nextGain);
-  }
-  const last = byStake.get(ladder[ladder.length - 1]);
-  remainingByTier[ladder[ladder.length - 1]] = Math.max(0, last.lossUsdAbs + last.openLossUsdAbs);
-
-  const recoveryLossBalanceUsd = Object.values(remainingByTier).reduce((acc, v) => acc + Number(v || 0), 0);
-  let nextStakeUsd = baseStake;
-  for (let i = ladder.length - 1; i >= 0; i -= 1) {
-    const tier = ladder[i];
-    const rem = remainingByTier[tier] || 0;
-    if (rem <= 0.0001) continue;
-    nextStakeUsd = i < ladder.length - 1 ? ladder[i + 1] : tier;
-    break;
-  }
-
-  const ladderRows = ladder.map((s, i) => {
-    const row = byStake.get(s);
-    const avgWinUsd = row.wins > 0 ? row.winUsd / row.wins : null;
-    const prev = i > 0 ? byStake.get(ladder[i - 1]) : null;
-    const prevLossUsd = prev ? prev.lossUsdAbs + prev.openLossUsdAbs : 0;
-    const winsNeededToOffsetPrevTierLosses =
-      i > 0 && avgWinUsd && avgWinUsd > 0 ? Math.ceil(prevLossUsd / avgWinUsd) : null;
-    return {
-      stakeUsd: s,
-      trades: row.trades,
-      wins: row.wins,
-      losses: row.losses,
-      pushes: row.pushes,
-      lossUsdAbs: Number((row.lossUsdAbs + row.openLossUsdAbs).toFixed(4)),
-      winUsd: Number((row.winUsd + row.openWinUsd).toFixed(4)),
-      netPnlUsd: Number(row.netPnlUsd.toFixed(4)),
-      avgWinUsd: avgWinUsd !== null ? Number(avgWinUsd.toFixed(4)) : null,
-      prevTierStakeUsd: i > 0 ? ladder[i - 1] : null,
-      prevTierLossUsd: Number(prevLossUsd.toFixed(4)),
-      remainingLossUsd: Number((remainingByTier[s] || 0).toFixed(4)),
-      winsNeededToOffsetPrevTierLosses,
-    };
-  });
-
+function computeRecoveryAnalytics(closedTrades, runtime) {
+  const baseStake = Math.min(Number(runtime.stakeUsd || 1), ABSOLUTE_BET_CAP_USD);
+  const queueState = buildRecoveryQueue(closedTrades || []);
   return {
     enabled: Boolean(runtime.recoveryModeEnabled),
+    strategy: 'closed_loss_queue',
     baseStakeUsd: baseStake,
-    recoveryStakeUsd: recoveryStake,
-    recoveryMaxStakeUsd: maxStake,
-    currentLossStreak: lossStreak,
-    recoveryLossBalanceUsd: Number(recoveryLossBalanceUsd.toFixed(4)),
-    nextStakeUsd: Number(nextStakeUsd.toFixed(2)),
-    ladder: ladderRows,
+    currentLossStreak: queueState.currentLossStreak,
+    recoveryLossBalanceUsd: Number(queueState.recoveryLossBalanceUsd.toFixed(4)),
+    nextTargetProfitUsd: Number(queueState.nextTargetProfitUsd.toFixed(4)),
+    unresolvedLossCount: queueState.unresolvedLossCount,
+    queue: queueState.queue,
   };
+}
+
+function candidateCanUseRecoverySizing(candidate, runtime) {
+  if (!candidate) return false;
+  if (typeof candidate.recoverySizingEligible === 'boolean') return candidate.recoverySizingEligible;
+  return isRecoverySizingEligible(candidate, runtime);
+}
+
+function canPlaceSameEventRecoveryAddOn(candidate, recovery, state, runtime) {
+  const eventTicker = candidate?.event?.event_ticker;
+  const marketTicker = candidate?.market?.ticker;
+  if (!eventTicker || !marketTicker) return false;
+  if (!recovery?.enabled || Number(recovery.nextTargetProfitUsd || 0) <= 0) return false;
+  if (!candidateCanUseRecoverySizing(candidate, runtime)) return false;
+
+  const tradeLegs = getTradeLegsForEvent(state, eventTicker);
+  if (!tradeLegs.length) return false;
+  const hasRecoveryTrade = tradeLegs.some((leg) => {
+    const sizingMode = String(leg?.sizingMode || '').toUpperCase();
+    return Boolean(leg?.recoveryQueueId) || sizingMode.startsWith('RECOVERY');
+  });
+  if (hasRecoveryTrade) return false;
+
+  return tradeLegs.some((leg) => {
+    const sizingMode = String(leg?.sizingMode || '').toUpperCase();
+    const isRecoveryLeg = Boolean(leg?.recoveryQueueId) || sizingMode.startsWith('RECOVERY');
+    return !isRecoveryLeg && String(leg?.marketTicker || '') === String(marketTicker);
+  });
+}
+
+function shouldConsiderCandidate(candidate, recovery, state, runtime) {
+  const eventTicker = candidate?.event?.event_ticker;
+  if (!eventTicker) return false;
+  if (!getTradeLegsForEvent(state, eventTicker).length) return true;
+  return canPlaceSameEventRecoveryAddOn(candidate, recovery, state, runtime);
+}
+
+function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
+  const budget = Number(maxSpendUsd || 0);
+  if (!Number.isFinite(budget) || budget <= 0) return null;
+
+  let candidateCount = 1;
+  let latestAffordable = null;
+  while (candidateCount <= 100000) {
+    const candidateCostUsd = totalCostForYesBuy(candidateCount, priceUsd);
+    if (candidateCostUsd === null || candidateCostUsd > budget + 1e-9) break;
+    latestAffordable = candidateCount;
+    candidateCount += 1;
+  }
+  return latestAffordable;
+}
+
+function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
+  if (!candidate || !Number.isFinite(Number(balanceUsd))) return true;
+  const ask = Number(candidate.ask || 0);
+  if (!Number.isFinite(ask) || ask <= 0 || ask >= 1) return false;
+
+  if (candidateCanUseRecoverySizing(candidate, runtime) && recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
+    const targetProfitUsd = Number(recovery.nextTargetProfitUsd || 0);
+    const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
+    const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
+    const maxSpendUsd =
+      Number.isFinite(maxRecoverySpendUsd) && maxRecoverySpendUsd > 0
+        ? Math.min(maxRecoverySpendUsd, RECOVERY_MAX_BET_CAP_USD, Number(balanceUsd))
+        : Math.min(RECOVERY_MAX_BET_CAP_USD, Number(balanceUsd));
+    if (sized && sized.totalCostUsd <= maxSpendUsd + 1e-9) return true;
+    return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
+  }
+
+  const stakeUsd = Number(runtime.stakeUsd || 0);
+  const maxSpendUsd = Math.min(stakeUsd, ABSOLUTE_BET_CAP_USD, Number(balanceUsd));
+  return Boolean(maxContractsWithinBudget(ask, maxSpendUsd));
 }
 
 function markPriceForPosition(position, market) {
@@ -444,6 +469,58 @@ function markPriceForPosition(position, market) {
   return null;
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildMonitoredPrices(event) {
+  const { homeTeam, awayTeam } = event?.__live || parseTeamsFromEventTitle(event?.title);
+  const markets = (event?.markets || []).filter((market) => String(market?.status || '').toLowerCase() === 'active');
+  const homeKey = normalizeText(homeTeam);
+  const awayKey = normalizeText(awayTeam);
+  const prices = {
+    homeTeam: homeTeam || null,
+    awayTeam: awayTeam || null,
+    homeYesPrice: null,
+    homeNoPrice: null,
+    awayYesPrice: null,
+    awayNoPrice: null,
+    tieYesPrice: null,
+    tieNoPrice: null,
+  };
+
+  for (const market of markets) {
+    const subtitle = normalizeText(market?.yes_sub_title);
+    const yesAsk = parseFp(market?.yes_ask_dollars);
+    const noAsk = parseFp(market?.no_ask_dollars);
+    const yesPrice = Number.isFinite(yesAsk) && yesAsk > 0
+      ? yesAsk
+      : marketAskPrice(market);
+    const noPrice = Number.isFinite(noAsk) && noAsk > 0
+      ? noAsk
+      : (Number.isFinite(yesPrice) && yesPrice > 0 && yesPrice < 1 ? Number((1 - yesPrice).toFixed(4)) : null);
+
+    if (homeKey && subtitle === homeKey) {
+      prices.homeYesPrice = yesPrice;
+      prices.homeNoPrice = noPrice;
+    }
+    if (awayKey && subtitle === awayKey) {
+      prices.awayYesPrice = yesPrice;
+      prices.awayNoPrice = noPrice;
+    }
+    if (subtitle === 'tie' || subtitle === 'draw') {
+      prices.tieYesPrice = yesPrice;
+      prices.tieNoPrice = noPrice;
+    }
+  }
+
+  return prices;
+}
+
 function splitLogs(actionLogs) {
   const noisyActions = new Set(['cycle_started', 'cycle_evaluated']);
   const verbose = actionLogs.filter((x) => noisyActions.has(x.action));
@@ -455,7 +532,7 @@ function deriveRuleFromMinute(minute, runtime) {
   if (!Number.isFinite(Number(minute))) return 'UNKNOWN_RULE';
   return Number(minute) >= Number(runtime.post80StartMinute)
     ? `POST_${runtime.post80StartMinute}_LEAD_${runtime.post80MinGoalLead}`
-    : `POST_${runtime.minTriggerMinute}_LEAD_${runtime.minGoalLead}`;
+    : `CURRENT_LEAD_${runtime.minGoalLead}`;
 }
 
 function inferCompetitionFromTicker(ticker) {
@@ -480,20 +557,34 @@ function inferCompetitionFromTicker(ticker) {
 function buildPlacementContextByEvent(actionLogs, runtime) {
   const byEvent = new Map();
   for (const log of actionLogs) {
-    if (log.action !== 'order_submit') continue;
+    if (!['order_submit', 'order_filled', 'order_resting', 'order_fill_detected_from_position'].includes(log.action)) {
+      continue;
+    }
     if (!log.eventTicker) continue;
+    const existing = byEvent.get(log.eventTicker) || {};
+    const derivedTriggerRule = log.triggerRule || (Number.isFinite(Number(log.minute)) ? deriveRuleFromMinute(log.minute, runtime) : null);
     byEvent.set(log.eventTicker, {
-      triggerRule: deriveRuleFromMinute(log.minute, runtime),
-      placedMinute: log.minute ?? null,
-      placedScore: log.score ?? null,
-      placedCards: log.cards ?? null,
-      placedLeaderVsTrailingCards: log.leaderVsTrailingCards ?? null,
-      stakeUsdTarget: Number.isFinite(Number(log.stakeUsd)) ? Number(log.stakeUsd) : null,
-      leadingTeam: log.leadingTeam ?? null,
-      competition: log.competition ?? null,
-      selectedOutcome: log.selectedOutcome || log.leadingTeam || null,
-      markedAt: log.ts || null,
-      marketTicker: log.marketTicker || null,
+      ...existing,
+      triggerRule: derivedTriggerRule || existing.triggerRule || null,
+      placedMinute: log.minute ?? existing.placedMinute ?? null,
+      placedScore: log.score ?? existing.placedScore ?? null,
+      placedCards: log.cards ?? existing.placedCards ?? null,
+      placedLeaderVsTrailingCards: log.leaderVsTrailingCards ?? existing.placedLeaderVsTrailingCards ?? null,
+      stakeUsdTarget: Number.isFinite(Number(log.stakeUsd)) ? Number(log.stakeUsd) : existing.stakeUsdTarget ?? null,
+      targetProfitUsd: Number.isFinite(Number(log.targetProfitUsd)) ? Number(log.targetProfitUsd) : existing.targetProfitUsd ?? null,
+      recoveryQueueId: log.recoveryQueueId || existing.recoveryQueueId || null,
+      recoveryRemainingUsd: Number.isFinite(Number(log.recoveryRemainingUsd)) ? Number(log.recoveryRemainingUsd) : existing.recoveryRemainingUsd ?? null,
+      recoverySourceLossUsd: Number.isFinite(Number(log.recoverySourceLossUsd)) ? Number(log.recoverySourceLossUsd) : existing.recoverySourceLossUsd ?? null,
+      recoverySourceEventTitle: log.recoverySourceEventTitle || existing.recoverySourceEventTitle || null,
+      sizingMode: log.sizingMode || existing.sizingMode || null,
+      leadingTeam: log.leadingTeam ?? existing.leadingTeam ?? null,
+      leadingTeamMaxLead: Number.isFinite(Number(log.leadingTeamMaxLead)) ? Number(log.leadingTeamMaxLead) : existing.leadingTeamMaxLead ?? null,
+      competition: log.competition ?? existing.competition ?? null,
+      selectedOutcome: log.selectedOutcome || log.leadingTeam || existing.selectedOutcome || null,
+      markedAt: log.ts || existing.markedAt || null,
+      marketTicker: log.marketTicker || existing.marketTicker || null,
+      yesPrice: Number.isFinite(Number(log.ask)) ? Number(log.ask) : existing.yesPrice ?? null,
+      fillCount: Number.isFinite(Number(log.fillCount)) ? Number(log.fillCount) : Number.isFinite(Number(log.count)) ? Number(log.count) : existing.fillCount ?? null,
     });
   }
   return byEvent;
@@ -511,16 +602,24 @@ function mergePlacementContext(stateCtx, logCtx) {
     placedLeaderVsTrailingCards:
       stateCtx?.placedLeaderVsTrailingCards || logCtx?.placedLeaderVsTrailingCards || null,
     stakeUsdTarget: stateCtx?.stakeUsdTarget ?? logCtx?.stakeUsdTarget ?? null,
+    targetProfitUsd: stateCtx?.targetProfitUsd ?? logCtx?.targetProfitUsd ?? null,
+    recoveryQueueId: stateCtx?.recoveryQueueId || logCtx?.recoveryQueueId || null,
+    recoveryRemainingUsd: stateCtx?.recoveryRemainingUsd ?? logCtx?.recoveryRemainingUsd ?? null,
+    recoverySourceLossUsd: stateCtx?.recoverySourceLossUsd ?? logCtx?.recoverySourceLossUsd ?? null,
+    recoverySourceEventTitle: stateCtx?.recoverySourceEventTitle || logCtx?.recoverySourceEventTitle || null,
+    sizingMode: stateCtx?.sizingMode || logCtx?.sizingMode || null,
     leadingTeam: stateCtx?.leadingTeam || logCtx?.leadingTeam || null,
+    leadingTeamMaxLead: stateCtx?.leadingTeamMaxLead ?? logCtx?.leadingTeamMaxLead ?? null,
     competition: stateCtx?.competition || logCtx?.competition || null,
     selectedOutcome: stateCtx?.selectedOutcome || logCtx?.selectedOutcome || null,
     markedAt: stateCtx?.markedAt || logCtx?.markedAt || null,
+    yesPrice: stateCtx?.yesPrice ?? logCtx?.yesPrice ?? null,
+    fillCount: stateCtx?.fillCount ?? logCtx?.fillCount ?? null,
   };
 }
 
 function isSoccerClosedTrade(trade) {
-  const competition = trade?.placed_context?.competition;
-  return Boolean(competition && competition !== 'Unknown');
+  return String(trade?.event_ticker || '').includes('GAME');
 }
 
 function computeAgentStatus({ actionLogs, state, runtime }) {
@@ -530,6 +629,7 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
   const staleThresholdMs = pollMs * 4 + 15000;
   const lastCycleMs = state.lastCycleAt ? new Date(state.lastCycleAt).getTime() : null;
   const riskHalted = actionLogs.some((x) => x.action === 'risk_halt' && toISODateInTz(new Date(x.ts).getTime(), config.timezone) === todayKey);
+  const riskHaltActive = riskHalted && !runtime.ignoreDailyLossLimit;
   const lastErr = [...actionLogs].reverse().find((x) => x.action === 'cycle_error' || x.action === 'fatal_error');
 
   if (!lastCycleMs || !Number.isFinite(lastCycleMs)) {
@@ -557,7 +657,7 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
     };
   }
 
-  if (riskHalted) {
+  if (riskHaltActive) {
     return {
       status: 'UP_BLOCKED_STOP_LOSS',
       reason: 'Daily stop-loss reached; trade execution blocked',
@@ -594,7 +694,7 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
 
   return {
     status: 'UP_TRADING',
-    reason: 'Bot is healthy and eligible to execute trades',
+    reason: runtime.ignoreDailyLossLimit ? 'Bot is trading with daily stop-loss override active' : 'Bot is healthy and eligible to execute trades',
     lastError: lastErr?.message || null,
   };
 }
@@ -618,6 +718,48 @@ function getClient() {
   }
 }
 
+function getWebClient() {
+  const auth = resolveWebSessionAuth(config);
+  if (!auth) return null;
+  try {
+    return new KalshiWebClient({
+      userId: auth.userId,
+      sessionCookie: auth.sessionCookie,
+      csrfToken: auth.csrfToken,
+      logger,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function parseIsoMs(value) {
+  const ms = Date.parse(String(value || ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function computeInvestedCapital(deposits, startDate) {
+  const appliedFromMs = parseIsoMs(startDate);
+  const eligibleDeposits = (deposits || []).filter((deposit) => {
+    const createdMs = parseIsoMs(deposit.created_ts);
+    return appliedFromMs === null || (createdMs !== null && createdMs >= appliedFromMs);
+  });
+
+  let investedUsd = 0;
+  for (const deposit of eligibleDeposits) {
+    if (String(deposit.status || '').toLowerCase() === 'applied') {
+      investedUsd += Number(deposit.amount_cents || 0) / 100;
+      continue;
+    }
+
+    if (String(deposit.immediate_status || '').toLowerCase() === 'applied') {
+      investedUsd += Number(deposit.immediate_amount || 0) / 100;
+    }
+  }
+
+  return Number(investedUsd.toFixed(2));
+}
+
 app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
@@ -628,7 +770,6 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const { important: importantLogs, verbose: verboseLogs } = splitLogs(actionLogs);
   const placementContextByEvent = buildPlacementContextByEvent(actionLogs, runtime);
   const state = safeReadJson(statePath, {});
-  const metrics = computeDerivedMetrics(actionLogs);
   const agentStatus = computeAgentStatus({ actionLogs, state, runtime });
 
   const client = getClient();
@@ -639,6 +780,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   let settlements = [];
   let events = [];
   let liveSoccerMap = new Map();
+  let investedCapitalUsd = null;
+  let investedCapitalStartDate = config.investedStartDate;
+  let investedCapitalSource = 'unavailable';
 
   if (client) {
     try {
@@ -653,34 +797,36 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       openPositions = positionsResp || [];
       settlements = settlementsResp || [];
       events = await client.getOpenEventsWithMarkets();
-      liveSoccerMap = await getLiveSoccerEventData(client, runtime.leagues || []);
+      const liveCompetitionScope = await resolveSoccerCompetitionScope(client, events, runtime.leagues || [], logger);
+      liveSoccerMap = await getLiveSoccerEventData(client, liveCompetitionScope);
       events = attachLiveDataToEvents(events, liveSoccerMap);
     } catch (error) {
       logger.warn({ err: error.message }, 'Dashboard API failed to fetch account data');
     }
   }
 
+  const webClient = getWebClient();
+  if (webClient) {
+    try {
+      const deposits = await webClient.getDeposits();
+      investedCapitalUsd = computeInvestedCapital(deposits, config.investedStartDate);
+      investedCapitalSource = 'kalshi_deposits';
+    } catch (error) {
+      logger.warn({ err: error.message }, 'Dashboard API failed to fetch Kalshi deposit history');
+    }
+  }
+
   const todayKey = toISODateInTz(Date.now(), config.timezone);
   const ignoredSettlementTickers = runtime.ignoredSettlementTickers || config.ignoredSettlementTickers || [];
-  const filteredSettlements = settlements.filter((s) => !isIgnoredSettlement(s, ignoredSettlementTickers));
-  const closedTrades = filteredSettlements
-    .map((s) => ({
-      ticker: s.ticker,
-      event_ticker: s.event_ticker,
-      market_result: s.market_result,
-      yes_count_fp: s.yes_count_fp,
-      no_count_fp: s.no_count_fp,
-      revenue_cents: s.revenue,
-      fee_cost: s.fee_cost,
-      settled_time: s.settled_time,
-      pnl_usd: settlementPnlUsd(s),
-      total_cost_usd: parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars),
-      amount_bet_usd: parseFp(s.yes_total_cost_dollars) + parseFp(s.no_total_cost_dollars),
-      total_return_usd: Number((Number(s.revenue || 0) / 100).toFixed(4)),
-      roi_pct: null,
+  const filteredSettlements = settlements.filter(
+    (s) => !isIgnoredSettlement(s, ignoredSettlementTickers) && settlementHasExposure(s),
+  );
+  const closedTrades = buildClosedTradesFromSettlements(filteredSettlements, state)
+    .map((trade) => ({
+      ...trade,
       placed_context: mergePlacementContext(
-        (state.tradedEvents || {})[s.event_ticker],
-        placementContextByEvent.get(s.event_ticker),
+        trade.placed_context,
+        !trade.placed_context?.tradeLegId ? placementContextByEvent.get(trade.event_ticker) : null,
       ),
     }))
     .sort((a, b) => new Date(b.settled_time).getTime() - new Date(a.settled_time).getTime());
@@ -702,6 +848,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   const marketBooks = client && marketTickers.length ? await client.getMarketsByTickers(marketTickers) : [];
   const marketMap = new Map(marketBooks.map((m) => [m.ticker, m]));
   const eventTitleMap = new Map((events || []).map((e) => [e.event_ticker, e.title]));
+  const eventMap = new Map((events || []).map((e) => [e.event_ticker, e]));
 
   const openTrades = (openPositions || [])
     .filter((p) => Math.abs(parseFp(p.position_fp)) > 0)
@@ -710,10 +857,13 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     const qty = parseFp(p.position_fp);
     const absQty = Math.abs(qty);
     const costBasisUsd = Math.abs(parseFp(p.market_exposure_dollars));
+    const entryContractCostUsd = absQty > 0 ? Number((costBasisUsd / absQty).toFixed(4)) : null;
     const market = marketMap.get(p.ticker);
     const marketStatus = market?.status ? String(market.status).toLowerCase() : 'unknown';
     const eventTicker = p.event_ticker || market?.event_ticker || null;
     const eventTitle = eventTicker ? eventTitleMap.get(eventTicker) || null : null;
+    const event = eventTicker ? eventMap.get(eventTicker) || null : null;
+    const game = event ? extractGameState(event) : null;
     const markPrice = markPriceForPosition(p, market);
     const markValueUsd = markPrice !== null ? absQty * markPrice : null;
     const unrealizedPnlUsd = markValueUsd !== null ? markValueUsd - costBasisUsd : null;
@@ -721,11 +871,17 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     const side = qty >= 0 ? 'YES' : 'NO';
     const selectionLabel = side === 'YES' ? market?.yes_sub_title || null : market?.no_sub_title || null;
 
-    const placedContext = eventTicker
+    const placedContextRaw = eventTicker
       ? mergePlacementContext(
           (state.tradedEvents || {})[eventTicker],
           placementContextByEvent.get(eventTicker),
         )
+      : null;
+    const placedContext = placedContextRaw
+      ? {
+          ...placedContextRaw,
+          yesPrice: entryContractCostUsd ?? placedContextRaw.yesPrice ?? null,
+        }
       : null;
 
     return {
@@ -740,6 +896,8 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       quantity: absQty,
       cost_basis_usd: Number(costBasisUsd.toFixed(4)),
       amount_bet_usd: Number(costBasisUsd.toFixed(4)),
+      current_score: game ? `${game.homeScore}-${game.awayScore}` : null,
+      current_contract_cost_usd: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_price: markPrice !== null ? Number(markPrice.toFixed(4)) : null,
       mark_value_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
       total_return_usd: markValueUsd !== null ? Number(markValueUsd.toFixed(4)) : null,
@@ -752,6 +910,10 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     };
     })
     .filter(Boolean);
+  const metrics = {
+    ...computeDerivedMetrics(actionLogs),
+    totalBetsPlaced: openTrades.length + closedTrades.length,
+  };
   const openUnrealizedPnlUsd = Number(
     openTrades.reduce((acc, t) => acc + (t.unrealized_pnl_usd || 0), 0).toFixed(4),
   );
@@ -759,10 +921,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     openTrades.reduce((acc, t) => acc + (t.cost_basis_usd || 0), 0).toFixed(4),
   );
   const openRoiPct = openCostBasisUsd > 0 ? Number((openUnrealizedPnlUsd / openCostBasisUsd).toFixed(6)) : null;
-  const soccerClosedTrades = closedTrades.filter(isSoccerClosedTrade);
-  const analytics = computeTradeAnalytics(soccerClosedTrades);
-  const soccerOpenTrades = openTrades.filter((t) => Boolean(t.placed_context?.competition && t.placed_context?.competition !== 'Unknown'));
-  const recovery = computeRecoveryAnalytics(soccerClosedTrades, soccerOpenTrades, runtime);
+  const strategyClosedTrades = closedTrades.filter(isSoccerClosedTrade);
+  const analytics = computeTradeAnalytics(strategyClosedTrades);
+  const recovery = computeRecoveryAnalytics(strategyClosedTrades, runtime);
 
   const closedTradesWithRecovery = closedTrades.map((t) => ({
     ...t,
@@ -773,48 +934,141 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
   }));
 
   const tradedEventsMap = state.tradedEvents || {};
-  const monitoredGames = (events || [])
-    .map((event) => {
-      const competition = (event.product_metadata || {}).competition || null;
-      if (!isLeagueAllowed(competition, runtime)) return null;
-      if (!String(event.event_ticker || '').includes('GAME')) return null;
-      if (!event.__live?.isLive) return null;
+  const monitoredGames = Array.from(liveSoccerMap.entries())
+    .map(([eventTicker, live]) => {
+      if (!live?.isLive) return null;
 
-      const game = extractGameState(event);
-      if (!game) {
+      const event = eventMap.get(eventTicker) || null;
+      const competition = live.competition || event?.product_metadata?.competition || null;
+      if (!isLeagueAllowed(competition, runtime)) return null;
+      if (event && !eventLooksLikeSoccer(event, liveSoccerMap)) return null;
+
+      const title = event?.title || live.title || eventTicker;
+      const prices = event ? buildMonitoredPrices(event) : {
+        ...parseTeamsFromEventTitle(title),
+        homeYesPrice: null,
+        homeNoPrice: null,
+        awayYesPrice: null,
+        awayNoPrice: null,
+        tieYesPrice: null,
+        tieNoPrice: null,
+      };
+      const game = event ? extractGameState(event) : {
+        competition,
+        minute: live.minute,
+        homeScore: live.homeScore,
+        awayScore: live.awayScore,
+        homeRedCards: live.homeRedCards,
+        awayRedCards: live.awayRedCards,
+        homeTeam: prices.homeTeam,
+        awayTeam: prices.awayTeam,
+        leadingTeam:
+          live.homeScore > live.awayScore ? prices.homeTeam :
+          live.awayScore > live.homeScore ? prices.awayTeam :
+          null,
+        trailingTeam:
+          live.homeScore > live.awayScore ? prices.awayTeam :
+          live.awayScore > live.homeScore ? prices.homeTeam :
+          null,
+        goalDiff:
+          Number.isFinite(live.homeScore) && Number.isFinite(live.awayScore)
+            ? Math.abs(live.homeScore - live.awayScore)
+            : null,
+        leadingTeamRedCards:
+          live.homeScore > live.awayScore ? live.homeRedCards :
+          live.awayScore > live.homeScore ? live.awayRedCards :
+          null,
+        trailingTeamRedCards:
+          live.homeScore > live.awayScore ? live.awayRedCards :
+          live.awayScore > live.homeScore ? live.homeRedCards :
+          null,
+        leadingTeamMaxLead:
+          live.homeScore > live.awayScore ? live.homeMaxLead :
+          live.awayScore > live.homeScore ? live.awayMaxLead :
+          0,
+      };
+
+      if (!game || !Number.isFinite(game.minute) || game.homeScore === null || game.awayScore === null) {
         return {
-          eventTicker: event.event_ticker,
-          title: event.title,
+          eventTicker,
+          title,
           competition: competition || '-',
           minute: null,
           score: '-',
+          homeTeam: prices.homeTeam,
+          awayTeam: prices.awayTeam,
+          homeYesPrice: prices.homeYesPrice,
+          homeNoPrice: prices.homeNoPrice,
+          awayYesPrice: prices.awayYesPrice,
+          awayNoPrice: prices.awayNoPrice,
+          tieYesPrice: prices.tieYesPrice,
+          tieNoPrice: prices.tieNoPrice,
           redCards: null,
           leadingVsTrailingRedCards: null,
           leadingTeam: '-',
           goalDiff: null,
           status: 'NO_LIVE_DATA',
-          reason: 'Kalshi event payload currently has no live minute/score fields for this game',
+          reason: 'Kalshi live feed currently has no usable minute/score fields for this game',
         };
       }
 
-      const alreadyBet = Boolean(tradedEventsMap[event.event_ticker]);
-      const candidate = eligibleTradeCandidate(event, runtime, { hasTradedEvent: () => alreadyBet });
+      const alreadyBet = getTradeLegsForEvent(state, eventTicker).length > 0;
+      const repeatCandidate = event
+        ? eligibleTradeCandidate(
+            event,
+            runtime,
+            {
+              hasTradedEvent: () => false,
+              hasRecentEventRejection: () => false,
+            },
+            { allowRepeatEvent: true },
+          )
+        : null;
+      const recoveryConditionLabel = formatRecoveryConditions(runtime);
+      const sameGameRecoveryEligible = Boolean(
+        repeatCandidate && canPlaceSameEventRecoveryAddOn(repeatCandidate, recovery, state, runtime),
+      );
+      const candidate = repeatCandidate && shouldConsiderCandidate(repeatCandidate, recovery, state, runtime)
+        ? repeatCandidate
+        : null;
+      const hasOrderCapacity = candidate ? canSizeCandidate(candidate, balanceUsd, runtime, recovery) : false;
 
       let status = 'WATCHING';
       let reason = 'Tracking game conditions';
 
-      if (alreadyBet) {
+      if (!event) {
+        reason = 'Live soccer feed game found, but no open tradable Kalshi game market is attached yet';
+      } else if (sameGameRecoveryEligible && candidate && !hasOrderCapacity) {
+        status = 'RECOVERY_NO_CAPACITY';
+        reason = `${recoveryConditionLabel} qualifies for a same-game recovery add-on, but current balance or recovery cap cannot size it`;
+      } else if (sameGameRecoveryEligible && candidate) {
+        status = 'RECOVERY_ELIGIBLE_NOW';
+        reason = `${recoveryConditionLabel} can place a same-game recovery add-on on top of the original base trade`;
+      } else if (alreadyBet) {
         status = 'ALREADY_BET';
         reason = 'Bot has already placed a filled trade on this event';
+      } else if (candidate && !hasOrderCapacity) {
+        status = 'ELIGIBLE_NO_CAPACITY';
+        reason = 'Signal passes, but current balance or stake cap cannot size a valid order';
       } else if (candidate) {
         status = 'ELIGIBLE_NOW';
         reason = 'Signal and market filters currently pass';
-      } else if (game.minute < runtime.minTriggerMinute) {
-        status = 'WATCHING';
-        reason = `Before trigger minute ${runtime.minTriggerMinute}`;
+      } else if (game.homeScore === game.awayScore && game.minute >= runtime.post80StartMinute) {
+        if (game.homeRedCards === null || game.awayRedCards === null) {
+          reason = 'Waiting for red-card data before allowing a late tie trade';
+        } else if (game.homeRedCards !== game.awayRedCards) {
+          status = 'FILTERED';
+          reason = 'Late tie trades require equal red cards for both teams';
+        } else if (!event) {
+          reason = 'Late tie signal may qualify, but no open tradable Kalshi game market is attached yet';
+        } else {
+          status = 'FILTERED';
+          reason = `Late tie signal failed price cap ${Math.round(Math.min(runtime.maxYesPrice, runtime.post80MaxYesPrice) * 100)}c or no matching Tie market`;
+        }
       } else if (!game.leadingTeam) {
-        status = 'WATCHING';
         reason = 'No leading team currently';
+      } else if (game.homeRedCards === null || game.awayRedCards === null) {
+        reason = 'Waiting for red-card data before allowing a trade';
       } else if (
         game.leadingTeamRedCards !== null &&
         game.trailingTeamRedCards !== null &&
@@ -822,23 +1076,35 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       ) {
         status = 'FILTERED';
         reason = 'Leading team has more red cards than trailing team';
-      } else if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
-        status = 'WATCHING';
-        reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
-      } else if (game.minute < runtime.post80StartMinute && game.goalDiff < runtime.minGoalLead) {
-        status = 'WATCHING';
-        reason = `Need lead >= ${runtime.minGoalLead} before minute ${runtime.post80StartMinute}`;
+      } else if (game.goalDiff < runtime.minGoalLead) {
+        if (game.minute >= runtime.post80StartMinute && game.goalDiff < runtime.post80MinGoalLead) {
+          reason = `Need lead >= ${runtime.post80MinGoalLead} after minute ${runtime.post80StartMinute}`;
+        } else {
+          reason = `Need current leader to be ahead by at least ${runtime.minGoalLead} goals`;
+        }
+      } else if (!event) {
+        reason = 'Signal may qualify, but no open tradable Kalshi game market is attached yet';
       } else {
         status = 'FILTERED';
-        reason = 'Price cap not satisfied or no matching team-winner market';
+        reason = `Current ${runtime.minGoalLead}+ goal lead signal failed price/market cap ${Math.round(
+          Math.min(runtime.maxYesPrice, runtime.anytimeLargeLeadMaxYesPrice) * 100,
+        )}c or no matching team-winner market`;
       }
 
       return {
-        eventTicker: event.event_ticker,
-        title: event.title,
+        eventTicker,
+        title,
         competition: game.competition || competition || '-',
         minute: game.minute,
         score: `${game.homeScore}-${game.awayScore}`,
+        homeTeam: prices.homeTeam,
+        awayTeam: prices.awayTeam,
+        homeYesPrice: prices.homeYesPrice,
+        homeNoPrice: prices.homeNoPrice,
+        awayYesPrice: prices.awayYesPrice,
+        awayNoPrice: prices.awayNoPrice,
+        tieYesPrice: prices.tieYesPrice,
+        tieNoPrice: prices.tieNoPrice,
         redCards:
           game.homeRedCards !== null && game.awayRedCards !== null
             ? `${game.homeRedCards}-${game.awayRedCards}`
@@ -856,6 +1122,12 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     .filter(Boolean)
     .sort((a, b) => (b.minute ?? -1) - (a.minute ?? -1));
 
+  const riskHaltLoggedToday = actionLogs.some(
+    (x) => x.action === 'risk_halt' && toISODateInTz(new Date(x.ts).getTime(), config.timezone) === todayKey,
+  );
+  const riskHaltOverrideActive = Boolean(runtime.ignoreDailyLossLimit);
+  const riskHaltActiveToday = riskHaltLoggedToday && !riskHaltOverrideActive;
+
   res.json({
     generatedAt: new Date().toISOString(),
     config: {
@@ -869,9 +1141,11 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       minVolume24hContracts: runtime.minVolume24hContracts,
       minLiquidityDollars: runtime.minLiquidityDollars,
       maxDailyLossUsd: runtime.maxDailyLossUsd,
+      ignoreDailyLossLimit: Boolean(runtime.ignoreDailyLossLimit),
       recoveryModeEnabled: runtime.recoveryModeEnabled,
       recoveryStakeUsd: runtime.recoveryStakeUsd,
       recoveryMaxStakeUsd: runtime.recoveryMaxStakeUsd,
+      recoveryConditions: runtime.recoveryConditions,
       leagues: runtime.leagues,
       timezone: config.timezone,
       runtimeOverridesPath: OVERRIDES_PATH,
@@ -881,6 +1155,9 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     account: {
       balanceUsd,
       portfolioValueUsd,
+      investedCapitalUsd,
+      investedCapitalStartDate,
+      investedCapitalSource,
       openPositionsCount: openTrades.length,
       pnlTodayUsd: Number(pnlToday.toFixed(2)),
       pnl14dUsd: Number(closedTrades.reduce((a, b) => a + b.pnl_usd, 0).toFixed(2)),
@@ -891,11 +1168,13 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     bot: {
       lastCycleAt: state.lastCycleAt || null,
       tradedEventsCount: Object.keys(state.tradedEvents || {}).length,
-      riskHaltedToday: actionLogs.some((x) => x.action === 'risk_halt' && toISODateInTz(new Date(x.ts).getTime(), config.timezone) === todayKey),
+      riskHaltedToday: riskHaltActiveToday,
+      riskHaltLoggedToday,
+      riskHaltOverrideActive,
       status: agentStatus.status,
       statusReason: agentStatus.reason,
       lastError: agentStatus.lastError,
-      currentStakeUsd: recovery.nextStakeUsd,
+      currentStakeUsd: runtime.stakeUsd,
       recoveryLossStreak: recovery.currentLossStreak,
       recoveryLossBalanceUsd: recovery.recoveryLossBalanceUsd,
       validStatuses: VALID_AGENT_STATUSES,
@@ -904,18 +1183,150 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     analytics,
     recovery,
     leagueLeaderboard: analytics.leagueLeaderboard,
-    monitoredGamesSummary: {
-      total: monitoredGames.length,
-      eligibleNow: monitoredGames.filter((g) => g.status === 'ELIGIBLE_NOW').length,
-      alreadyBet: monitoredGames.filter((g) => g.status === 'ALREADY_BET').length,
-      noLiveData: monitoredGames.filter((g) => g.status === 'NO_LIVE_DATA').length,
-    },
+    strategyLeaderboard: analytics.strategyLeaderboard,
+      monitoredGamesSummary: {
+        total: monitoredGames.length,
+        eligibleNow: monitoredGames.filter((g) => g.status === 'ELIGIBLE_NOW' || g.status === 'RECOVERY_ELIGIBLE_NOW').length,
+        alreadyBet: monitoredGames.filter((g) => g.status === 'ALREADY_BET').length,
+        noLiveData: monitoredGames.filter((g) => g.status === 'NO_LIVE_DATA').length,
+      },
     monitoredGames: monitoredGames.slice(0, 300),
     recentLogs: [...importantLogs].reverse(),
     recentCycleLogs: verboseLogs.slice(-100).reverse(),
     openTrades,
-    closedTrades: closedTradesWithRecovery.slice(0, 200),
+    closedTrades: closedTradesWithRecovery,
   });
+});
+
+app.post('/api/runtime/risk-halt', requireMonitorAuth, async (req, res) => {
+  try {
+    const requestedActive = req.body?.active;
+    if (typeof requestedActive !== 'boolean') {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: 'Body must include boolean field "active".',
+      });
+    }
+
+    const overrides = requestedActive
+      ? unsetOverride('ignoreDailyLossLimit')
+      : setOverride('ignoreDailyLossLimit', true);
+
+    return res.json({
+      ok: true,
+      riskHaltActive: requestedActive,
+      riskHaltOverrideActive: !requestedActive,
+      overrides,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: 'runtime_override_failed',
+      message: error.message || 'Failed to update risk halt override',
+    });
+  }
+});
+
+app.post('/api/runtime/sizing', requireMonitorAuth, async (req, res) => {
+  try {
+    const requestedStakeUsd = Number(req.body?.stakeUsd);
+    const requestedRecoveryMaxStakeUsd = Number(req.body?.recoveryMaxStakeUsd);
+    const requestedMaxDailyLossUsd = Number(req.body?.maxDailyLossUsd);
+
+    if (!Number.isFinite(requestedStakeUsd) || !Number.isFinite(requestedRecoveryMaxStakeUsd) || !Number.isFinite(requestedMaxDailyLossUsd)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: 'Body must include numeric fields "stakeUsd", "recoveryMaxStakeUsd", and "maxDailyLossUsd".',
+      });
+    }
+
+    if (requestedStakeUsd < MIN_STAKE_USD || requestedStakeUsd > ABSOLUTE_BET_CAP_USD) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Base stake must be between $${MIN_STAKE_USD.toFixed(2)} and $${ABSOLUTE_BET_CAP_USD.toFixed(2)}.`,
+      });
+    }
+
+    if (requestedRecoveryMaxStakeUsd < MIN_RECOVERY_MAX_STAKE_USD || requestedRecoveryMaxStakeUsd > RECOVERY_MAX_BET_CAP_USD) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Recovery max must be between $${MIN_RECOVERY_MAX_STAKE_USD.toFixed(2)} and $${RECOVERY_MAX_BET_CAP_USD.toFixed(2)}.`,
+      });
+    }
+
+    if (requestedMaxDailyLossUsd < MIN_DAILY_STOP_LOSS_USD) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Daily stop-loss must be at least $${MIN_DAILY_STOP_LOSS_USD.toFixed(2)}.`,
+      });
+    }
+
+    const previewRuntime = resolveRuntimeConfig(config, {
+      ...readOverrides(),
+      stakeUsd: requestedStakeUsd,
+      recoveryMaxStakeUsd: requestedRecoveryMaxStakeUsd,
+      maxDailyLossUsd: requestedMaxDailyLossUsd,
+    });
+
+    if (Number(previewRuntime.stakeUsd) !== requestedStakeUsd) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Base stake resolves to $${Number(previewRuntime.stakeUsd).toFixed(2)} after validation. Adjust the requested amount and try again.`,
+      });
+    }
+
+    if (Number(previewRuntime.recoveryMaxStakeUsd) !== requestedRecoveryMaxStakeUsd) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message:
+          `Recovery max must be at least $${Number(previewRuntime.recoveryStakeUsd || requestedStakeUsd).toFixed(2)} ` +
+          `and no more than $${RECOVERY_MAX_BET_CAP_USD.toFixed(2)} for the current runtime settings.`,
+      });
+    }
+
+    if (Number(previewRuntime.maxDailyLossUsd) !== requestedMaxDailyLossUsd) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_request',
+        message: `Daily stop-loss resolves to $${Number(previewRuntime.maxDailyLossUsd).toFixed(2)} after validation. Adjust the requested amount and try again.`,
+      });
+    }
+
+    const overrides = setOverrides({
+      stakeUsd: requestedStakeUsd,
+      recoveryMaxStakeUsd: requestedRecoveryMaxStakeUsd,
+      maxDailyLossUsd: requestedMaxDailyLossUsd,
+    });
+
+    return res.json({
+      ok: true,
+      config: {
+        stakeUsd: previewRuntime.stakeUsd,
+        recoveryStakeUsd: previewRuntime.recoveryStakeUsd,
+        recoveryMaxStakeUsd: previewRuntime.recoveryMaxStakeUsd,
+        maxDailyLossUsd: previewRuntime.maxDailyLossUsd,
+      },
+      defaults: {
+        stakeUsd: DEFAULT_STAKE_USD,
+        recoveryMaxStakeUsd: DEFAULT_RECOVERY_MAX_STAKE_USD,
+        maxDailyLossUsd: DEFAULT_MAX_DAILY_LOSS_USD,
+      },
+      overrides,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: 'runtime_override_failed',
+      message: error.message || 'Failed to update runtime controls',
+    });
+  }
 });
 
 app.listen(port, () => {

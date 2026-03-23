@@ -106,6 +106,14 @@ class KalshiClient {
           canRetry ? 'Kalshi API request failed, retrying' : 'Kalshi API request failed',
         );
 
+        error.kalshiRequest = {
+          method: methodUpper,
+          path: pathWithQuery,
+          status: status ?? null,
+          attempt,
+          maxAttempts,
+        };
+
         if (!canRetry) throw error;
         const backoffMs = 250 * 2 ** (attempt - 1);
         await new Promise((resolve) => setTimeout(resolve, backoffMs));
@@ -143,6 +151,27 @@ class KalshiClient {
       cursor = data.cursor || '';
     } while (cursor);
     return positions;
+  }
+
+  async getOrders(params = {}) {
+    const orders = [];
+    let cursor = '';
+    do {
+      const data = await this.request('GET', '/portfolio/orders', {
+        params: { ...params, limit: 200, cursor },
+      });
+      orders.push(...(data.orders || []));
+      cursor = data.cursor || '';
+    } while (cursor);
+    return orders;
+  }
+
+  async getOrder(orderId) {
+    return this.request('GET', `/portfolio/orders/${orderId}`);
+  }
+
+  async cancelOrder(orderId) {
+    return this.request('DELETE', `/portfolio/orders/${orderId}`);
   }
 
   async getOpenEventsWithMarkets() {
