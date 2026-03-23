@@ -94,51 +94,71 @@ let logCache = {
   parsed: [],
 };
 
-function createApiRateLimiter({ windowMs, max, message }) {
-  return rateLimit({
-    windowMs,
-    max,
-    standardHeaders: true,
-    legacyHeaders: false,
-    handler: (_req, res) => {
-      res.status(429).json({
-        ok: false,
-        error: "rate_limited",
-        message,
-      });
-    },
-  });
-}
-
-const dashboardIdentityLimiter = createApiRateLimiter({
+const dashboardIdentityLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 120,
-  message: "Too many authentication requests. Please retry shortly.",
+  statusCode: 429,
+  message: {
+    ok: false,
+    error: "rate_limited",
+    message: "Too many authentication requests. Please retry shortly.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-const dashboardReadLimiter = createApiRateLimiter({
+const dashboardReadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
-  message: "Too many dashboard requests. Please retry shortly.",
+  statusCode: 429,
+  message: {
+    ok: false,
+    error: "rate_limited",
+    message: "Too many dashboard requests. Please retry shortly.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-const dashboardMutationLimiter = createApiRateLimiter({
+const dashboardMutationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 120,
-  message: "Too many credential update requests. Please retry shortly.",
+  statusCode: 429,
+  message: {
+    ok: false,
+    error: "rate_limited",
+    message: "Too many credential update requests. Please retry shortly.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-const credentialCheckLimiter = createApiRateLimiter({
+const credentialCheckLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
-  message: "Too many credential check requests. Please retry shortly.",
+  statusCode: 429,
+  message: {
+    ok: false,
+    error: "rate_limited",
+    message: "Too many credential check requests. Please retry shortly.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-const monitorMutationLimiter = createApiRateLimiter({
+const monitorMutationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 120,
-  message: "Too many monitor API requests. Please retry shortly.",
+  statusCode: 429,
+  message: {
+    ok: false,
+    error: "rate_limited",
+    message: "Too many monitor API requests. Please retry shortly.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
+
 
 function extractBearerToken(req) {
   const auth = String(req.headers.authorization || "");

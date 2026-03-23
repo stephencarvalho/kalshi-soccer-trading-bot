@@ -3,8 +3,11 @@
   publish = "dashboard/dist/dashboard/browser"
 
 [build.environment]
+  NODE_VERSION = "20.19.0"
   SECRETS_SCAN_OMIT_KEYS = "LOG_LEVEL,TIMEZONE,KALSHI_API_BASE_URL,ESTIMATED_WIN_PROBABILITY,FEE_BUFFER,POST80_MAX_YES_PRICE,STATE_FILE"
   SECRETS_SCAN_OMIT_PATHS = ".env.example,README.md,dashboard/package-lock.json,dashboard/dist"
+  # These values are ordinary app config, not secrets. Netlify secret scanning
+  # flags them because their values also appear in the built frontend bundle.
 
 [functions]
   directory = "netlify/functions"
@@ -13,11 +16,6 @@
   from = "/api/*"
   to = "/.netlify/functions/monitor/:splat"
   status = 200
-
-[build.environment]
-  # These values are ordinary app config, not secrets. Netlify secret scanning
-  # flags them because their values also appear in the built frontend bundle.
-  SECRETS_SCAN_OMIT_KEYS = "LOG_LEVEL,FEE_BUFFER,ESTIMATED_WIN_PROBABILITY"
 
 [[redirects]]
   from = "/*"
