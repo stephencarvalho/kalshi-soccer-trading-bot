@@ -4,7 +4,230 @@
   [class.theme-light]="theme() === 'light'"
 >
   <div class="page-shell">
-    @if (data(); as d) {
+    @if (!session()) {
+    <section class="panel auth-panel">
+      <div class="auth-shell">
+        <div class="auth-brand">
+          <p class="auth-stage__eyebrow">KALSHI SOCCER DASHBOARD</p>
+        </div>
+
+        <section class="auth-card">
+          <div class="auth-card__head">
+            <p class="panel-subtitle">
+              {{ session() ? 'Your session is active.' : (authMode() === 'login'
+              ? 'Use your email and password to access the dashboard.' : 'Create
+              an account to start using the dashboard.') }}
+            </p>
+          </div>
+
+          @if (!authConfigured()) {
+          <div class="auth-empty">
+            <p class="muted">
+              Supabase auth is not configured yet. Add `SUPABASE_URL` and
+              `SUPABASE_PUBLISHABLE_KEY` to the dashboard runtime, and
+              `SUPABASE_SECRET_KEY` on the backend.
+            </p>
+          </div>
+          } @if (authConfigured() && !session()) {
+          <div class="auth-panel__form">
+            <label class="auth-field">
+              <span>Email address</span>
+              <input
+                type="email"
+                [value]="authEmail()"
+                (input)="updateAuthField('email', $any($event.target).value)"
+                autocomplete="email"
+                placeholder="name@example.com"
+              />
+            </label>
+            <label class="auth-field">
+              <span>Password</span>
+              <div class="auth-password-field">
+                <input
+                  [type]="showPassword() ? 'text' : 'password'"
+                  [value]="authPassword()"
+                  (input)="updateAuthField('password', $any($event.target).value)"
+                  [attr.autocomplete]="authMode() === 'login' ? 'current-password' : 'new-password'"
+                  placeholder="Enter your password"
+                />
+                <button
+                  type="button"
+                  class="auth-password-toggle"
+                  [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'"
+                  [attr.title]="showPassword() ? 'Hide password' : 'Show password'"
+                  (click)="togglePasswordVisibility()"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M2.2 12c2.2-4 5.8-6 9.8-6s7.6 2 9.8 6c-2.2 4-5.8 6-9.8 6s-7.6-2-9.8-6Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="3.1"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                    @if (showPassword()) {
+                    <path
+                      d="M4 4l16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                    }
+                  </svg>
+                </button>
+              </div>
+            </label>
+            @if (authMode() === 'signup') {
+            <div
+              class="password-strength"
+              [ngClass]="'password-strength--' + passwordStrength().tone"
+            >
+              <div class="password-strength__row">
+                <span>Password strength</span>
+                <strong>{{ passwordStrength().label }}</strong>
+              </div>
+              <div class="password-strength__bar" aria-hidden="true">
+                <span [style.width.%]="passwordStrength().percent"></span>
+              </div>
+              <div class="password-rules">
+                @for (rule of passwordRules(); track rule.label) {
+                <p class="password-rules__item" [class.is-met]="rule.met">
+                  <span class="password-rules__icon"
+                    >{{ rule.met ? '✓' : '•' }}</span
+                  >
+                  {{ rule.label }}
+                </p>
+                }
+              </div>
+            </div>
+            <label class="auth-field">
+              <span>Confirm password</span>
+              <div class="auth-password-field">
+                <input
+                  [type]="showPassword() ? 'text' : 'password'"
+                  [value]="authConfirmPassword()"
+                  (input)="updateAuthField('confirmPassword', $any($event.target).value)"
+                  autocomplete="new-password"
+                  placeholder="Re-enter your password"
+                />
+                <button
+                  type="button"
+                  class="auth-password-toggle"
+                  [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'"
+                  [attr.title]="showPassword() ? 'Hide password' : 'Show password'"
+                  (click)="togglePasswordVisibility()"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M2.2 12c2.2-4 5.8-6 9.8-6s7.6 2 9.8 6c-2.2 4-5.8 6-9.8 6s-7.6-2-9.8-6Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="3.1"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                    @if (showPassword()) {
+                    <path
+                      d="M4 4l16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                    }
+                  </svg>
+                </button>
+              </div>
+            </label>
+            @if (showConfirmPasswordError()) {
+            <p class="auth-inline-error">Passwords do not match yet.</p>
+            } }
+            <p class="auth-helper">
+              {{ authMode() === 'login' ? 'Use the credentials tied to your
+              dashboard account.' : 'Create your account with the same email you
+              plan to use for the dashboard.' }}
+            </p>
+            <div class="auth-panel__actions">
+              <button
+                type="button"
+                class="nav-toggle auth-cta"
+                [disabled]="authLoading() || (authMode() === 'signup' && (!isSignupPasswordValid() || !passwordsMatch()))"
+                (click)="authMode() === 'login' ? signIn() : signUp()"
+              >
+                {{ authLoading() ? 'Working...' : (authMode() === 'login' ?
+                'Sign in' : 'Create account') }}
+              </button>
+            </div>
+            <p class="auth-switch">
+              @if (authMode() === 'login') { New to Soccer trading Bot?
+              <button
+                type="button"
+                class="auth-switch__link"
+                (click)="setAuthMode('signup')"
+              >
+                Create an Account
+              </button>
+              } @else { Already have an account?
+              <button
+                type="button"
+                class="auth-switch__link"
+                (click)="setAuthMode('login')"
+              >
+                Sign in
+              </button>
+              }
+            </p>
+          </div>
+          } @if (session()) {
+          <div class="auth-panel__session">
+            <article class="account-metric">
+              <span>Signed In As</span>
+              <strong>{{ authUserLabel() }}</strong>
+            </article>
+            <article class="account-metric">
+              <span>User ID</span>
+              <strong>{{ user()?.id }}</strong>
+            </article>
+            <button
+              type="button"
+              class="nav-toggle auth-cta"
+              [disabled]="authLoading()"
+              (click)="signOut()"
+            >
+              Sign out
+            </button>
+          </div>
+          } @if (authMessage()) {
+          <p class="auth-panel__message auth-panel__message--info">
+            {{ authMessage() }}
+          </p>
+          } @if (authError()) {
+          <p class="auth-panel__message auth-panel__message--error">
+            {{ authError() }}
+          </p>
+          }
+        </section>
+      </div>
+    </section>
+    } @if (data(); as d) {
     <section class="account-strip">
       <div class="account-strip__row">
         <div class="account-strip__metrics">
@@ -20,7 +243,10 @@
             class="account-metric account-metric--status account-metric--time"
           >
             <span>Last Updated</span>
-            <strong>{{ now() | date:'mediumTime' }}</strong>
+            <strong>{{ dashboardLastUpdatedLabel() }}</strong>
+            <small class="account-metric__meta">
+              {{ viewerTimeZoneLabel }}
+            </small>
           </article>
           <article
             class="account-metric account-metric--status"
@@ -35,11 +261,411 @@
             [class.status-good]="!d.bot.riskHaltedToday"
           >
             <span>Stop-Loss</span>
-            <strong>
-              @if (d.bot.riskHaltOverrideActive) { Bypassed } @else { {{
-              d.bot.riskHaltedToday ? 'Active' : 'Off' }} }
-            </strong>
+            <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
           </article>
+          @if (session()) {
+          <div class="user-menu" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="user-menu__trigger"
+              [attr.aria-expanded]="userMenuOpen()"
+              aria-label="Open user menu"
+              (click)="toggleUserMenu($event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M4.5 20a7.5 7.5 0 0 1 15 0"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+            @if (userMenuOpen()) {
+            <div class="user-menu__panel">
+              <p class="user-menu__label">Signed in as</p>
+              <p class="user-menu__value">{{ authUserLabel() }}</p>
+              <p class="user-menu__label">Session started</p>
+              <p class="user-menu__value">{{ sessionStartedAtLabel() }}</p>
+              <p class="user-menu__label">Session expires</p>
+              <p class="user-menu__value">{{ sessionExpiresAtLabel() }}</p>
+              <p class="user-menu__label">User ID</p>
+              <p class="user-menu__id">{{ user()?.id }}</p>
+              <button
+                type="button"
+                class="user-menu__signout"
+                [disabled]="authLoading()"
+                (click)="signOut()"
+              >
+                Sign out
+              </button>
+            </div>
+            }
+          </div>
+          <div class="user-menu" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="user-menu__trigger"
+              [attr.aria-expanded]="credentialMenuOpen()"
+              aria-label="Open Kalshi credential settings"
+              (click)="toggleCredentialMenu($event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle
+                  cx="8.25"
+                  cy="12"
+                  r="3.25"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M11.5 12H21l-1.8 1.8 1.3 1.3-1.7 1.7-1.3-1.3-1.7 1.7-1.6-1.6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            @if (credentialMenuOpen()) {
+            <div class="user-menu__panel credential-menu__panel">
+              <p class="user-menu__label">Kalshi credentials</p>
+              @if (credentialsLoading()) {
+              <p class="user-menu__value">Loading status...</p>
+              } @else if (!credentialStorageConfigured() && credentialStatus())
+              {
+              <p class="user-menu__value">
+                Secure storage is not configured on the backend.
+              </p>
+              } @else { @if (credentialStatusError()) {
+              <p class="auth-helper">
+                Status is temporarily unavailable. You can still try uploading
+                your Kalshi API key ID and PEM file below.
+              </p>
+              }
+              <p class="user-menu__label">Status</p>
+              <div class="credential-status-row">
+                <span
+                  class="chip"
+                  [class.live]="hasStoredCredential() && !credentialStatusError()"
+                >
+                  {{ credentialStatusError() ? 'Status Unavailable' :
+                  (hasStoredCredential() ? 'Stored Securely' : 'Not Uploaded')
+                  }}
+                </span>
+              </div>
+              @if (!credentialStatusError() && hasStoredCredential() &&
+              !credentialReplaceMode()) {
+              <p class="user-menu__label">Kalshi API key ID</p>
+              <p class="user-menu__value">
+                {{ credentialStatus()?.kalshiApiKeyIdMasked }}
+              </p>
+              @if (credentialStatus()?.pemFileName) {
+              <p class="user-menu__label">Uploaded PEM file</p>
+              <p class="user-menu__value">
+                {{ credentialStatus()?.pemFileName }}
+              </p>
+              }
+              <div class="credential-panel__health">
+                <div class="credential-health__header">
+                  <p class="user-menu__label">Kalshi API check</p>
+                  <div class="credential-health__tools">
+                    <button
+                      type="button"
+                      class="credential-health__icon"
+                      [disabled]="credentialsSaving() || credentialHealthState() === 'checking'"
+                      (click)="rerunCredentialHealthCheck()"
+                      aria-label="Reload Kalshi API health check"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 12a8 8 0 1 1-2.34-5.66"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                        />
+                        <path
+                          d="M20 4v5h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <div
+                      class="credential-health__tooltip-wrap"
+                      [class.is-open]="credentialHealthInfoOpen()"
+                    >
+                      <button
+                        type="button"
+                        class="credential-health__icon credential-health__icon--info"
+                        (click)="toggleCredentialHealthInfo($event)"
+                        aria-label="Kalshi health check endpoint"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="9"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                          />
+                          <path
+                            d="M12 10.25v5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                          />
+                          <circle
+                            cx="12"
+                            cy="7.35"
+                            r="1.05"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <div class="credential-health__tooltip" role="tooltip">
+                        {{ credentialHealthEndpointLabel }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="credential-status-row">
+                  <span class="chip" [ngClass]="credentialHealthClass()"
+                    >{{ credentialHealthLabel() }}</span
+                  >
+                </div>
+                @if (credentialHealthMessage()) {
+                <p
+                  class="auth-helper"
+                  [class.credential-health__message--error]="credentialHealthState() === 'failed'"
+                >
+                  {{ credentialHealthMessage() }}
+                </p>
+                }
+              </div>
+              <div
+                class="credential-panel__actions credential-panel__actions--confirm"
+              >
+                @if (!credentialDeleteConfirm()) {
+                <button
+                  type="button"
+                  class="credential-action credential-action--replace"
+                  [disabled]="credentialsSaving()"
+                  (click)="beginReplaceCredential()"
+                >
+                  Replace credential
+                </button>
+                <button
+                  type="button"
+                  class="credential-action credential-action--remove"
+                  [disabled]="credentialsSaving()"
+                  (click)="beginDeleteCredential()"
+                >
+                  Remove credential
+                </button>
+                } @else {
+                <p class="user-menu__label credential-confirm__label">
+                  Remove credential?
+                </p>
+                <button
+                  type="button"
+                  class="credential-confirm credential-confirm--yes"
+                  [disabled]="credentialsSaving()"
+                  (click)="deleteCredential()"
+                  aria-label="Yes, remove credential"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M5 12.5 9.2 16.7 19 7"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  <span>Yes</span>
+                </button>
+                <button
+                  type="button"
+                  class="credential-confirm credential-confirm--no"
+                  [disabled]="credentialsSaving()"
+                  (click)="cancelDeleteCredential()"
+                  aria-label="No, keep credential"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M7 7 17 17M17 7 7 17"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <span>No</span>
+                </button>
+                }
+              </div>
+              } @else {
+              <label class="auth-field credential-menu__field">
+                <span>Kalshi API key ID</span>
+                <input
+                  type="text"
+                  [value]="credentialApiKeyId()"
+                  (input)="updateCredentialField('apiKeyId', $any($event.target).value)"
+                  placeholder="Paste your Kalshi API key ID"
+                  autocomplete="off"
+                />
+              </label>
+              <div class="credential-panel__upload">
+                <p class="user-menu__label">Private key PEM</p>
+                <label class="credential-upload">
+                  <input
+                    type="file"
+                    accept=".pem,.key,text/plain"
+                    (change)="handlePemFileSelected($event)"
+                  />
+                  <span
+                    >{{ credentialPemFileName() || 'Choose PEM File' }}</span
+                  >
+                </label>
+                <p class="auth-helper">
+                  {{ credentialPemFileName() ? 'Ready to upload.' : 'Choose your
+                  .pem file. It is read locally and uploaded only when you
+                  save.' }}
+                </p>
+              </div>
+              <div class="credential-panel__health">
+                <div class="credential-health__header">
+                  <p class="user-menu__label">Kalshi API check</p>
+                  <div class="credential-health__tools">
+                    <button
+                      type="button"
+                      class="credential-health__icon"
+                      [disabled]="credentialsSaving() || credentialHealthState() === 'checking'"
+                      (click)="rerunCredentialHealthCheck()"
+                      aria-label="Reload Kalshi API health check"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 12a8 8 0 1 1-2.34-5.66"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                        />
+                        <path
+                          d="M20 4v5h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <div
+                      class="credential-health__tooltip-wrap"
+                      [class.is-open]="credentialHealthInfoOpen()"
+                    >
+                      <button
+                        type="button"
+                        class="credential-health__icon credential-health__icon--info"
+                        (click)="toggleCredentialHealthInfo($event)"
+                        aria-label="Kalshi health check endpoint"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="9"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                          />
+                          <path
+                            d="M12 10.25v5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                          />
+                          <circle
+                            cx="12"
+                            cy="7.35"
+                            r="1.05"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <div class="credential-health__tooltip" role="tooltip">
+                        {{ credentialHealthEndpointLabel }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="credential-status-row">
+                  <span class="chip" [ngClass]="credentialHealthClass()"
+                    >{{ credentialHealthLabel() }}</span
+                  >
+                </div>
+                @if (credentialHealthMessage()) {
+                <p
+                  class="auth-helper"
+                  [class.credential-health__message--error]="credentialHealthState() === 'failed'"
+                >
+                  {{ credentialHealthMessage() }}
+                </p>
+                }
+              </div>
+              <div class="credential-panel__actions">
+                @if (hasStoredCredential() && credentialReplaceMode()) {
+                <button
+                  type="button"
+                  class="credential-action credential-action--secondary"
+                  [disabled]="credentialsSaving()"
+                  (click)="cancelReplaceCredential()"
+                >
+                  Cancel replace
+                </button>
+                }
+                <button
+                  type="button"
+                  class="nav-toggle auth-cta credential-save"
+                  [disabled]="credentialsSaving() || !canSaveCredential()"
+                  (click)="saveCredential()"
+                >
+                  {{ credentialsSaving() ? 'Saving...' : (hasStoredCredential()
+                  ? 'Replace credential' : 'Save credential') }}
+                </button>
+              </div>
+              } } @if (credentialsMessage()) {
+              <p class="auth-panel__message auth-panel__message--info">
+                {{ credentialsMessage() }}
+              </p>
+              } @if (credentialsError()) {
+              <p class="auth-panel__message auth-panel__message--error">
+                {{ credentialsError() }}
+              </p>
+              }
+            </div>
+            }
+          </div>
           <button
             type="button"
             class="settings-trigger"
@@ -53,60 +679,134 @@
               aria-hidden="true"
             ></fa-icon>
           </button>
+          }
         </div>
       </div>
     </section>
-    } @if (loading()) {
-    <section class="panel loading">Loading terminal data...</section>
+    } @if (loading() && !data()) {
+    <section class="panel loading-shell" aria-live="polite">
+      <div class="loading-shell__head">
+        <p class="loading-shell__eyebrow">Dashboard Sync</p>
+        <span class="loading-shell__elapsed"
+          >{{ dashboardLoadingElapsedLabel() }}</span
+        >
+      </div>
+      <div class="loading-shell__hero">
+        <div class="loading-shell__beacon" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="loading-shell__copy">
+          <h2 class="loading-shell__title">{{ dashboardLoadingTitle() }}</h2>
+          <p class="loading-shell__subtitle">
+            {{ dashboardLoadingSubtitle() }}
+          </p>
+        </div>
+      </div>
+      <div class="loading-shell__bar" aria-hidden="true">
+        <span [style.width.%]="dashboardLoadingProgress()"></span>
+      </div>
+      <div class="loading-shell__steps">
+        @for (step of dashboardLoadingSteps(); track step.label) {
+        <article
+          class="loading-shell__step"
+          [class.is-active]="step.status === 'active'"
+          [class.is-complete]="step.status === 'complete'"
+        >
+          <span class="loading-shell__step-dot" aria-hidden="true"></span>
+          <div>
+            <strong>{{ step.label }}</strong>
+            <p>{{ step.detail }}</p>
+          </div>
+        </article>
+        }
+      </div>
+      <p class="loading-shell__hint">{{ dashboardLoadingHint() }}</p>
+    </section>
     } @if (error()) {
     <section class="panel error">{{ error() }}</section>
     } @if (data(); as d) {
-    <section class="hero panel">
-      <div class="hero-head">
-        <div>
-          <h2>
-            {{ chartNetAccountValue() === null ? '-' : (chartNetAccountValue() |
-            currency:'USD':'symbol':'1.2-2') }}
-          </h2>
-          <p
-            class="delta"
-            [class.pos]="chartReadout().value >= 0"
-            [class.neg]="chartReadout().value < 0"
-          >
-            {{ chartReadout().value >= 0 ? '+' : '' }}{{ chartReadout().value |
-            currency:'USD':'symbol':'1.2-2' }} @if (chartReadout().pct !== null)
-            { ({{ (chartReadout().pct ?? 0) >= 0 ? '+' : '' }}{{
-            (chartReadout().pct ?? 0) | percent:'1.1-2' }}) }
-          </p>
+    <div class="dashboard-main">
+      @if (credentialBanner(); as banner) {
+      <article
+        class="panel credential-banner"
+        [class.credential-banner--attention]="banner.tone === 'attention'"
+      >
+        <div class="credential-banner__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            />
+            <path
+              d="M12 10v5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+            <circle cx="12" cy="7.2" r="1.1" fill="currentColor" />
+          </svg>
         </div>
-        <div class="hero-side">
-          <span class="chip live"
-            >{{ d.config.dryRun ? 'DRY RUN' : 'LIVE TRADING' }}</span
-          >
-          <span class="chip"
-            >Buying Power {{ d.account.balanceUsd |
-            currency:'USD':'symbol':'1.2-2' }}</span
-          >
+        <div class="credential-banner__content">
+          <strong>{{ banner.title }}</strong>
+          <p class="panel-subtitle">{{ banner.subtitle }}</p>
         </div>
-      </div>
+      </article>
+      }
 
-      <div class="chart-wrap" #chartWrap>
-        <canvas #pnlChart></canvas>
-      </div>
+      <section class="hero panel">
+        <div class="hero-head">
+          <div>
+            <h2>
+              {{ chartNetAccountValue() === null ? "-" : (chartNetAccountValue()
+              | currency: "USD" : "symbol" : "1.2-2") }}
+            </h2>
+            <p
+              class="delta"
+              [class.pos]="chartReadout().value >= 0"
+              [class.neg]="chartReadout().value < 0"
+            >
+              {{ chartReadout().value >= 0 ? "+" : "" }}{{ chartReadout().value
+              | currency: "USD" : "symbol" : "1.2-2" }} @if (chartReadout().pct
+              !== null) { ({{ (chartReadout().pct ?? 0) >= 0 ? "+" : "" }}{{
+              (chartReadout().pct ?? 0) | percent: "1.1-2" }}) }
+            </p>
+          </div>
+          <div class="hero-side">
+            <span class="chip live"
+              >{{ d.config.dryRun ? "DRY RUN" : "LIVE TRADING" }}</span
+            >
+            <span class="chip"
+              >Buying Power {{ d.account.balanceUsd | currency: "USD" : "symbol"
+              : "1.2-2" }}</span
+            >
+          </div>
+        </div>
 
-      <div class="ranges">
-        @for (r of chartRanges; track r) {
-        <button
-          type="button"
-          class="range"
-          [class.active]="chartRange() === r"
-          (click)="setChartRange(r)"
-        >
-          {{ r }}
-        </button>
-        }
-      </div>
-    </section>
+        <div class="chart-wrap" #chartWrap>
+          <canvas #pnlChart></canvas>
+        </div>
+
+        <div class="ranges">
+          @for (r of chartRanges; track r) {
+          <button
+            type="button"
+            class="range"
+            [class.active]="chartRange() === r"
+            (click)="setChartRange(r)"
+          >
+            {{ r }}
+          </button>
+          }
+        </div>
+      </section>
+    </div>
 
     <section class="desk-layout">
       <article class="panel desk-main">

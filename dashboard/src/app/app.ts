@@ -19,6 +19,12 @@ import {
 } from "@angular/core";
 import { FontAwesomeModule } from "@fortawesome/angular-fontawesome";
 import { faGear } from "@fortawesome/free-solid-svg-icons";
+import type {
+  AuthChangeEvent,
+  RealtimeChannel,
+  Session,
+  User,
+} from "@supabase/supabase-js";
 import {
   CategoryScale,
   Chart,
@@ -33,6 +39,10 @@ import {
   type ChartConfiguration,
 } from "chart.js";
 import { buildApiUrl, getDashboardRuntimeConfig } from "./runtime-config";
+import {
+  getSupabaseBrowserClient,
+  isSupabaseBrowserAuthConfigured,
+} from "./supabase";
 
 interface DashboardPayload {
   generatedAt: string;
@@ -114,6 +124,10 @@ interface DashboardPayload {
   recentCycleLogs: LogRecord[];
   openTrades: TradeRecord[];
   closedTrades: ClosedTradeRecord[];
+}
+
+interface DashboardSnapshotRecord {
+  payload: DashboardPayload | null;
 }
 
 interface RuntimeSizingResponse {
@@ -455,6 +469,29 @@ interface LogField {
   value: string;
 }
 
+interface PasswordRule {
+  label: string;
+  met: boolean;
+}
+
+interface CredentialStatus {
+  configured: boolean;
+  hasCredential: boolean;
+  kalshiApiKeyIdMasked: string | null;
+  pemFileName: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  keyVersion: number | null;
+}
+
+interface CredentialBannerState {
+  tone: "attention" | "setup";
+  title: string;
+  subtitle: string;
+}
+
+type CredentialHealthState = "idle" | "checking" | "healthy" | "failed";
+
 Chart.register(
   LineController,
   LineElement,
@@ -480,6 +517,7 @@ Chart.register(
 })
 export class App implements OnDestroy {
   private readonly http = inject(HttpClient);
+  private readonly supabase = getSupabaseBrowserClient();
   readonly faGear = faGear;
   @ViewChild("pnlChart")
   set chartCanvasRef(value: ElementRef<HTMLCanvasElement> | undefined) {
@@ -492,6 +530,7 @@ export class App implements OnDestroy {
   @ViewChild("chartWrap") private chartWrap?: ElementRef<HTMLElement>;
   private chartInstance: Chart<"line"> | null = null;
   private chartPoints: PnlPoint[] = [];
+  private dashboardRequestId = 0;
   private readonly chartSelectionPlugin = {
     id: "selectionGuides",
     afterDatasetsDraw: (chart: ChartInstance<"line">) => {
@@ -578,8 +617,43 @@ export class App implements OnDestroy {
   };
   private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private authSubscription?: { unsubscribe: () => void };
+  private dashboardSnapshotChannel: RealtimeChannel | null = null;
+  private dashboardSnapshotUserId: string | null = null;
+  private credentialHealthTimer: ReturnType<typeof setTimeout> | null = null;
+  private credentialHealthRequestId = 0;
+  private dashboardLoadingTimer: ReturnType<typeof setInterval> | null = null;
+  private dashboardFetchInFlight = false;
+  private dashboardRefreshQueued = false;
 
   readonly loading = signal(true);
+  readonly dashboardLoadingElapsedSeconds = signal(0);
+  readonly authLoading = signal(isSupabaseBrowserAuthConfigured());
+  readonly authError = signal<string | null>(null);
+  readonly authMessage = signal<string | null>(null);
+  readonly authEmail = signal("");
+  readonly authPassword = signal("");
+  readonly authConfirmPassword = signal("");
+  readonly authMode = signal<"login" | "signup">("login");
+  readonly showPassword = signal(false);
+  readonly credentialMenuOpen = signal(false);
+  readonly userMenuOpen = signal(false);
+  readonly session = signal<Session | null>(null);
+  readonly user = signal<User | null>(null);
+  readonly credentialsLoading = signal(false);
+  readonly credentialsSaving = signal(false);
+  readonly credentialsError = signal<string | null>(null);
+  readonly credentialsMessage = signal<string | null>(null);
+  readonly credentialStatusError = signal<string | null>(null);
+  readonly credentialStatus = signal<CredentialStatus | null>(null);
+  readonly credentialApiKeyId = signal("");
+  readonly credentialPem = signal("");
+  readonly credentialPemFileName = signal("");
+  readonly credentialReplaceMode = signal(false);
+  readonly credentialHealthInfoOpen = signal(false);
+  readonly credentialHealthState = signal<CredentialHealthState>("idle");
+  readonly credentialHealthMessage = signal<string | null>(null);
+  readonly credentialDeleteConfirm = signal(false);
   readonly error = signal<string | null>(null);
   readonly data = signal<DashboardPayload | null>(null);
   readonly now = signal(new Date());
@@ -622,6 +696,110 @@ export class App implements OnDestroy {
   readonly logTimeRanges: LogTimeRange[] = ["TODAY", "24H", "7D", "ALL"];
   readonly hoveredPoint = signal<PnlPoint | null>(null);
   readonly selectedChartPoints = signal<PnlPoint[]>([]);
+  readonly passwordRules = computed<PasswordRule[]>(() => {
+    const password = this.authPassword();
+    return [
+      { label: "At least 10 characters", met: password.length >= 10 },
+      { label: "One uppercase letter", met: /[A-Z]/.test(password) },
+      { label: "One lowercase letter", met: /[a-z]/.test(password) },
+      { label: "One number", met: /\d/.test(password) },
+      { label: "One special character", met: /[^A-Za-z0-9]/.test(password) },
+    ];
+  });
+  readonly passwordStrength = computed(() => {
+    const password = this.authPassword();
+    const metCount = this.passwordRules().filter((rule) => rule.met).length;
+
+    if (!password.length) {
+      return {
+        label: "Enter a password",
+        tone: "idle" as const,
+        score: 0,
+        percent: 0,
+      };
+    }
+
+    if (metCount <= 2) {
+      return {
+        label: "Weak",
+        tone: "weak" as const,
+        score: metCount,
+        percent: 25,
+      };
+    }
+
+    if (metCount === 3 || metCount === 4) {
+      return {
+        label: "Good",
+        tone: "good" as const,
+        score: metCount,
+        percent: 65,
+      };
+    }
+
+    return {
+      label: "Strong",
+      tone: "strong" as const,
+      score: metCount,
+      percent: 100,
+    };
+  });
+  readonly isSignupPasswordValid = computed(() =>
+    this.passwordRules().every((rule) => rule.met),
+  );
+  readonly passwordsMatch = computed(
+    () => this.authPassword() === this.authConfirmPassword(),
+  );
+  readonly showConfirmPasswordError = computed(
+    () =>
+      this.authMode() === "signup" &&
+      this.authConfirmPassword().length > 0 &&
+      !this.passwordsMatch(),
+  );
+  readonly viewerTimeZoneLabel = (() => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return timeZone && timeZone.trim() ? timeZone.trim() : "Local time";
+  })();
+  readonly dashboardLastUpdatedLabel = computed(() => {
+    const generatedAt = this.data()?.generatedAt;
+    if (!generatedAt) return "Unavailable";
+
+    const date = new Date(generatedAt);
+    return Number.isNaN(date.getTime())
+      ? "Unavailable"
+      : date.toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+  });
+  readonly sessionStartedAtLabel = computed(() => {
+    const ts = this.session()?.user?.last_sign_in_at;
+    if (!ts) return "Unavailable";
+    const date = new Date(ts);
+    return Number.isNaN(date.getTime())
+      ? "Unavailable"
+      : date.toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+  });
+  readonly sessionExpiresAtLabel = computed(() => {
+    const expiresAt = this.session()?.expires_at;
+    if (!expiresAt) return "Unavailable";
+    const date = new Date(expiresAt * 1000);
+    return Number.isNaN(date.getTime())
+      ? "Unavailable"
+      : date.toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+  });
   readonly visibleLogs = computed(() => {
     const d = this.data();
     if (!d) return [] as LogRecord[];
@@ -1584,6 +1762,146 @@ export class App implements OnDestroy {
       ).toFixed(2),
     );
   });
+  readonly authConfigured = computed(() => isSupabaseBrowserAuthConfigured());
+  readonly credentialStorageConfigured = computed(
+    () => this.credentialStatus()?.configured ?? false,
+  );
+  readonly hasStoredCredential = computed(
+    () => this.credentialStatus()?.hasCredential ?? false,
+  );
+  readonly canSaveCredential = computed(() =>
+    Boolean(
+      (this.credentialStorageConfigured() || this.credentialStatusError()) &&
+      this.credentialApiKeyId().trim() &&
+      this.credentialPem().trim() &&
+      this.credentialPemFileName().trim(),
+    ),
+  );
+  readonly credentialBanner = computed<CredentialBannerState | null>(() => {
+    if (!this.session()) return null;
+
+    if (this.credentialStatusError()) {
+      return {
+        tone: "attention",
+        title:
+          this.credentialStatusError() || "Kalshi credentials need attention.",
+        subtitle:
+          "Use the key icon in the top-right header to open Kalshi credentials.",
+      };
+    }
+
+    if (this.credentialStorageConfigured() && !this.hasStoredCredential()) {
+      return {
+        tone: "setup",
+        title: "Add your Kalshi credentials to unlock account data.",
+        subtitle:
+          "Use the key icon in the top-right header to upload your API key ID and PEM file.",
+      };
+    }
+
+    return null;
+  });
+  readonly credentialHealthLabel = computed(() => {
+    switch (this.credentialHealthState()) {
+      case "checking":
+        return "Checking...";
+      case "healthy":
+        return "Connected";
+      case "failed":
+        return "Failed";
+      default:
+        return "Not Checked";
+    }
+  });
+  readonly credentialHealthClass = computed(() => {
+    switch (this.credentialHealthState()) {
+      case "checking":
+        return "status-info";
+      case "healthy":
+        return "status-good";
+      case "failed":
+        return "status-bad";
+      default:
+        return "status-neutral";
+    }
+  });
+  readonly credentialHealthEndpointLabel =
+    "Kalshi endpoint: GET /portfolio/balance";
+  readonly canFetchDashboard = computed(() => {
+    const runtime = getDashboardRuntimeConfig();
+    if (runtime.apiToken) return true;
+    if (!this.authConfigured()) return true;
+    return Boolean(this.session()?.access_token);
+  });
+  readonly authUserLabel = computed(
+    () => this.user()?.email || this.user()?.id || "Authenticated user",
+  );
+  readonly dashboardLoadingStage = computed<"connect" | "account" | "market">(
+    () => {
+      const elapsed = this.dashboardLoadingElapsedSeconds();
+      if (elapsed >= 9) return "market";
+      if (elapsed >= 4) return "account";
+      return "connect";
+    },
+  );
+  readonly dashboardLoadingTitle = computed(() => {
+    const stage = this.dashboardLoadingStage();
+    if (stage === "connect") return "Connecting to your trading workspace";
+    if (stage === "account")
+      return "Loading balances, positions, and settlements";
+    return "Preparing the live market view";
+  });
+  readonly dashboardLoadingSubtitle = computed(() => {
+    const stage = this.dashboardLoadingStage();
+    if (stage === "connect") {
+      return "The first dashboard sync starts right after sign-in and waits for a fresh backend response.";
+    }
+    if (stage === "account") {
+      return "We are pulling your latest Kalshi account state before rendering the dashboard.";
+    }
+    return "Live market context and recent activity are being stitched into the dashboard now.";
+  });
+  readonly dashboardLoadingProgress = computed(() =>
+    Math.min(94, 22 + this.dashboardLoadingElapsedSeconds() * 9),
+  );
+  readonly dashboardLoadingSteps = computed(() => {
+    const stage = this.dashboardLoadingStage();
+    return [
+      {
+        label: "Secure session check",
+        detail:
+          "Verifying the current session and opening the dashboard request.",
+        status: stage === "connect" ? "active" : "complete",
+      },
+      {
+        label: "Kalshi account sync",
+        detail: "Fetching fresh balances, positions, and recent settlements.",
+        status:
+          stage === "account"
+            ? "active"
+            : stage === "market"
+              ? "complete"
+              : "pending",
+      },
+      {
+        label: "Market context build",
+        detail: "Loading live market data and assembling the trading view.",
+        status: stage === "market" ? "active" : "pending",
+      },
+    ];
+  });
+  readonly dashboardLoadingHint = computed(() => {
+    if (this.dashboardLoadingElapsedSeconds() < 8)
+      return "This only affects the first sync after login.";
+    return "This first load can take longer because the dashboard waits for fresh account and market data together.";
+  });
+  readonly dashboardLoadingElapsedLabel = computed(() => {
+    const elapsed = this.dashboardLoadingElapsedSeconds();
+    if (elapsed < 60) return `${Math.max(1, elapsed)}s elapsed`;
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    return `${minutes}m ${seconds}s elapsed`;
+  });
 
   constructor() {
     effect(() => {
@@ -1600,11 +1918,8 @@ export class App implements OnDestroy {
       document.body.setAttribute("data-theme", theme);
     });
 
-    this.fetchDashboard();
-    this.refreshTimer = setInterval(() => {
-      this.now.set(new Date());
-      this.fetchDashboard();
-    }, 5000);
+    void this.initializeAuth();
+    this.startRefreshLoop();
   }
 
   ngAfterViewInit(): void {
@@ -1613,11 +1928,443 @@ export class App implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.authSubscription?.unsubscribe();
+    this.unsubscribeDashboardSnapshot();
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.credentialHealthTimer) clearTimeout(this.credentialHealthTimer);
+    if (this.dashboardLoadingTimer) clearInterval(this.dashboardLoadingTimer);
     if (this.chartInstance) {
       this.chartInstance.destroy();
       this.chartInstance = null;
     }
+  }
+
+  async signIn(): Promise<void> {
+    if (!this.supabase) {
+      this.authError.set(
+        "Supabase auth is not configured. Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.",
+      );
+      return;
+    }
+
+    this.authLoading.set(true);
+    this.authError.set(null);
+    this.authMessage.set(null);
+
+    const { error } = await this.supabase.auth.signInWithPassword({
+      email: this.authEmail().trim(),
+      password: this.authPassword(),
+    });
+
+    this.authLoading.set(false);
+
+    if (error) {
+      this.authError.set(error.message);
+      return;
+    }
+
+    this.authPassword.set("");
+  }
+
+  async signUp(): Promise<void> {
+    if (!this.supabase) {
+      this.authError.set(
+        "Supabase auth is not configured. Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.",
+      );
+      return;
+    }
+
+    if (!this.isSignupPasswordValid()) {
+      this.authError.set("Use a stronger password to create your account.");
+      this.authMessage.set(null);
+      return;
+    }
+
+    if (!this.passwordsMatch()) {
+      this.authError.set("Passwords must match to create your account.");
+      this.authMessage.set(null);
+      return;
+    }
+
+    this.authLoading.set(true);
+    this.authError.set(null);
+    this.authMessage.set(null);
+
+    const { error } = await this.supabase.auth.signUp({
+      email: this.authEmail().trim(),
+      password: this.authPassword(),
+    });
+
+    this.authLoading.set(false);
+
+    if (error) {
+      this.authError.set(error.message);
+      return;
+    }
+
+    this.authMessage.set(
+      "Sign-up succeeded. Check your email if confirmation is enabled, then log in.",
+    );
+    this.authMode.set("login");
+    this.authPassword.set("");
+    this.authConfirmPassword.set("");
+  }
+
+  async signOut(): Promise<void> {
+    if (!this.supabase) return;
+
+    this.authLoading.set(true);
+    this.authError.set(null);
+    this.authMessage.set(null);
+
+    const { error } = await this.supabase.auth.signOut();
+    this.authLoading.set(false);
+
+    if (error) {
+      this.authError.set(error.message);
+      return;
+    }
+
+    this.applySession(null, "SIGNED_OUT");
+  }
+
+  updateAuthField(
+    field: "email" | "password" | "confirmPassword",
+    value: string,
+  ): void {
+    if (field === "email") {
+      this.authEmail.set(value);
+      return;
+    }
+
+    if (field === "confirmPassword") {
+      this.authConfirmPassword.set(value);
+      return;
+    }
+
+    this.authPassword.set(value);
+  }
+
+  setAuthMode(mode: "login" | "signup"): void {
+    this.authMode.set(mode);
+    this.showPassword.set(false);
+    this.authError.set(null);
+    this.authMessage.set(null);
+    this.authPassword.set("");
+    this.authConfirmPassword.set("");
+  }
+
+  togglePasswordVisibility(): void {
+    this.showPassword.update((current) => !current);
+  }
+
+  toggleUserMenu(event?: Event): void {
+    event?.stopPropagation();
+    this.userMenuOpen.update((current) => !current);
+    this.credentialMenuOpen.set(false);
+  }
+
+  closeUserMenu(): void {
+    this.userMenuOpen.set(false);
+  }
+
+  toggleCredentialMenu(event?: Event): void {
+    event?.stopPropagation();
+    this.credentialMenuOpen.update((current) => !current);
+    this.userMenuOpen.set(false);
+    this.credentialDeleteConfirm.set(false);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  closeCredentialMenu(): void {
+    this.credentialMenuOpen.set(false);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  updateCredentialField(field: "apiKeyId" | "pem", value: string): void {
+    if (field === "apiKeyId") {
+      this.credentialApiKeyId.set(value);
+      if (this.credentialPem().trim() && this.credentialPemFileName().trim()) {
+        this.scheduleDraftCredentialHealthCheck();
+      } else {
+        this.scheduleStoredCredentialHealthCheck(0);
+      }
+      return;
+    }
+
+    this.credentialPem.set(value);
+    this.scheduleStoredCredentialHealthCheck(0);
+  }
+
+  beginDeleteCredential(): void {
+    this.credentialDeleteConfirm.set(true);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  cancelDeleteCredential(): void {
+    this.credentialDeleteConfirm.set(false);
+  }
+
+  beginReplaceCredential(): void {
+    this.credentialReplaceMode.set(true);
+    this.credentialDeleteConfirm.set(false);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  cancelReplaceCredential(): void {
+    this.credentialReplaceMode.set(false);
+    this.credentialApiKeyId.set("");
+    this.credentialPem.set("");
+    this.credentialPemFileName.set("");
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialHealthInfoOpen.set(false);
+    this.scheduleStoredCredentialHealthCheck(0);
+  }
+
+  toggleCredentialHealthInfo(event?: Event): void {
+    event?.stopPropagation();
+    this.credentialHealthInfoOpen.update((current) => !current);
+  }
+
+  async handlePemFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (!file) return;
+
+    try {
+      const pemText = await file.text();
+      this.credentialPem.set(pemText);
+      this.credentialPemFileName.set(file.name);
+      this.credentialReplaceMode.set(this.hasStoredCredential());
+      this.credentialsError.set(null);
+      this.credentialsMessage.set(
+        `Loaded ${file.name}. Save to encrypt and store it on the server.`,
+      );
+      this.scheduleDraftCredentialHealthCheck(0);
+    } catch {
+      this.credentialsError.set("Failed to read the selected PEM file.");
+      this.resetCredentialHealthCheck(
+        "failed",
+        "Kalshi API health check could not start because the PEM file could not be read.",
+      );
+    } finally {
+      if (input) input.value = "";
+    }
+  }
+
+  saveCredential(): void {
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.credentialsError.set("Sign in before saving Kalshi credentials.");
+      return;
+    }
+
+    this.credentialsSaving.set(true);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+
+    this.http
+      .post<{ ok: boolean; message?: string; credentials?: CredentialStatus }>(
+        buildApiUrl("/api/credentials"),
+        {
+          kalshiApiKeyId: this.credentialApiKeyId().trim(),
+          privateKeyPem: this.credentialPem(),
+          pemFileName: this.credentialPemFileName(),
+        },
+        { headers },
+      )
+      .subscribe({
+        next: (response) => {
+          const priorHealthState = this.credentialHealthState();
+          this.credentialsSaving.set(false);
+          this.credentialStatus.set(response.credentials || null);
+          this.credentialApiKeyId.set("");
+          this.credentialPem.set("");
+          this.credentialPemFileName.set("");
+          this.credentialReplaceMode.set(false);
+          if (priorHealthState === "healthy") {
+            this.credentialHealthState.set("healthy");
+            this.credentialHealthMessage.set(
+              "Stored Kalshi credentials verified successfully.",
+            );
+          } else {
+            this.scheduleStoredCredentialHealthCheck(0);
+          }
+          this.credentialDeleteConfirm.set(false);
+          this.credentialsMessage.set(
+            response.message || "Kalshi credential saved securely.",
+          );
+          this.fetchDashboard();
+        },
+        error: (err) => {
+          this.credentialsSaving.set(false);
+          this.credentialsError.set(
+            this.describeCredentialError(
+              err,
+              "Failed to save Kalshi credential",
+            ),
+          );
+        },
+      });
+  }
+
+  deleteCredential(): void {
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.credentialsError.set("Sign in before deleting Kalshi credentials.");
+      return;
+    }
+
+    this.credentialsSaving.set(true);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+
+    this.http
+      .delete<{
+        ok: boolean;
+        message?: string;
+        credentials?: CredentialStatus;
+      }>(buildApiUrl("/api/credentials"), { headers })
+      .subscribe({
+        next: (response) => {
+          this.credentialsSaving.set(false);
+          this.credentialStatus.set(response.credentials || null);
+          this.credentialApiKeyId.set("");
+          this.credentialPem.set("");
+          this.credentialPemFileName.set("");
+          this.credentialReplaceMode.set(false);
+          this.resetCredentialHealthCheck();
+          this.credentialDeleteConfirm.set(false);
+          this.credentialsMessage.set(
+            response.message || "Kalshi credential removed.",
+          );
+          this.fetchDashboard();
+        },
+        error: (err) => {
+          this.credentialsSaving.set(false);
+          this.credentialsError.set(
+            this.describeCredentialError(
+              err,
+              "Failed to delete Kalshi credential",
+            ),
+          );
+        },
+      });
+  }
+
+  private async initializeAuth(): Promise<void> {
+    if (!this.supabase) {
+      this.authLoading.set(false);
+      this.startDashboardLoading();
+      this.fetchDashboard();
+      return;
+    }
+
+    const {
+      data: { session },
+      error,
+    } = await this.supabase.auth.getSession();
+
+    if (error) {
+      this.authError.set(error.message);
+    }
+
+    this.applySession(session, "INITIAL_SESSION");
+
+    const subscription = this.supabase.auth.onAuthStateChange(
+      (event: AuthChangeEvent, nextSession: Session | null) => {
+        this.applySession(nextSession, event);
+      },
+    );
+    this.authSubscription = subscription.data.subscription;
+  }
+
+  private applySession(
+    session: Session | null,
+    event: AuthChangeEvent | "INITIAL_SESSION",
+  ): void {
+    const previousSession = this.session();
+    const previousUserId = previousSession?.user?.id || null;
+    const nextUserId = session?.user?.id || null;
+    const userChanged = previousUserId !== nextUserId;
+    const sessionPresenceChanged = Boolean(previousSession) !== Boolean(session);
+
+    if (userChanged || sessionPresenceChanged) {
+      this.dashboardRequestId += 1;
+    }
+
+    if (userChanged && this.dashboardSnapshotChannel) {
+      this.unsubscribeDashboardSnapshot();
+    }
+
+    this.session.set(session);
+    this.user.set(session?.user ?? null);
+    this.userMenuOpen.set(false);
+    this.credentialMenuOpen.set(false);
+    this.authLoading.set(false);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialStatusError.set(null);
+
+    if (!session && this.authConfigured()) {
+      this.unsubscribeDashboardSnapshot();
+      this.data.set(null);
+      this.credentialStatus.set(null);
+      this.credentialApiKeyId.set("");
+      this.credentialPem.set("");
+      this.credentialPemFileName.set("");
+      this.credentialReplaceMode.set(false);
+      this.resetCredentialHealthCheck();
+      this.credentialDeleteConfirm.set(false);
+      this.dashboardRefreshQueued = false;
+      this.stopDashboardLoading();
+      this.error.set(null);
+      return;
+    }
+
+    if (session) {
+      if (
+        userChanged ||
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        !this.credentialStatus()
+      ) {
+        this.fetchCredentialStatus();
+      }
+
+      if (
+        userChanged ||
+        !this.dashboardSnapshotChannel ||
+        this.dashboardSnapshotUserId !== session.user.id
+      ) {
+        this.subscribeDashboardSnapshot(session.user.id);
+      }
+    }
+
+    const shouldShowInitialLoading =
+      !this.data() ||
+      userChanged ||
+      event === "INITIAL_SESSION" ||
+      event === "SIGNED_IN";
+    if (shouldShowInitialLoading) {
+      this.startDashboardLoading();
+      void this.loadDashboardSnapshotOrApi();
+    }
+  }
+
+  private startRefreshLoop(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = setInterval(() => {
+      this.now.set(new Date());
+      if (!this.shouldUseRealtimeDashboard()) {
+        this.fetchDashboard();
+      }
+    }, 5000);
   }
 
   private loadTheme(): ThemeMode {
@@ -1658,6 +2405,8 @@ export class App implements OnDestroy {
 
   @HostListener("document:click", ["$event"])
   onDocumentClick(event: MouseEvent): void {
+    this.closeCredentialMenu();
+    this.closeUserMenu();
     const target = event.target as Node | null;
     const chartWrapEl = this.chartWrap?.nativeElement;
     if (!target || !chartWrapEl) return;
@@ -1686,6 +2435,152 @@ export class App implements OnDestroy {
   private canUseRelativeApiUrl(): boolean {
     const host = window.location.hostname;
     return host === "localhost" || host === "127.0.0.1";
+  }
+
+  private logDashboardRealtime(message: string, details?: unknown): void {
+    if (details === undefined) {
+      console.info(`[dashboard-realtime] ${message}`);
+      return;
+    }
+
+    console.info(`[dashboard-realtime] ${message}`, details);
+  }
+
+  private shouldUseRealtimeDashboard(): boolean {
+    return Boolean(this.supabase && this.session()?.user?.id);
+  }
+
+  private applyDashboardPayload(payload: DashboardPayload): void {
+    if (!this.sizingDirty() && !this.sizingBusy()) {
+      this.syncRuntimeSizingInputs(
+        payload?.config?.stakeUsd,
+        payload?.config?.recoveryMaxStakeUsd,
+        payload?.config?.maxDailyLossUsd,
+      );
+    }
+
+    this.data.set(payload);
+    queueMicrotask(() => this.renderChart());
+    this.stopDashboardLoading();
+    this.error.set(null);
+  }
+
+  private async loadDashboardSnapshot(): Promise<boolean> {
+    if (!this.supabase || !this.session()?.user?.id) return false;
+
+    try {
+      const { data, error } = await this.supabase
+        .from("dashboard_snapshots")
+        .select("payload")
+        .eq("user_id", this.session()!.user.id)
+        .maybeSingle<DashboardSnapshotRecord>();
+
+      if (error || !data?.payload) {
+        this.logDashboardRealtime("No Supabase snapshot available yet", {
+          userId: this.session()!.user.id,
+          hasError: Boolean(error),
+        });
+        return false;
+      }
+
+      if (!this.canFetchDashboard()) {
+        this.logDashboardRealtime(
+          "Snapshot was loaded but dashboard fetch conditions no longer allow apply",
+        );
+        return false;
+      }
+
+      this.logDashboardRealtime("Loaded dashboard from Supabase snapshot", {
+        userId: this.session()!.user.id,
+        generatedAt: data.payload.generatedAt,
+      });
+      this.applyDashboardPayload(data.payload);
+      return true;
+    } catch {
+      this.logDashboardRealtime(
+        "Snapshot bootstrap failed, falling back to /api/dashboard",
+      );
+      return false;
+    }
+  }
+
+  private async loadDashboardSnapshotOrApi(): Promise<void> {
+    if (this.shouldUseRealtimeDashboard()) {
+      const loadedSnapshot = await this.loadDashboardSnapshot();
+      if (loadedSnapshot) return;
+    }
+
+    this.logDashboardRealtime("Falling back to /api/dashboard fetch");
+    this.fetchDashboard();
+  }
+
+  private subscribeDashboardSnapshot(userId: string): void {
+    if (!this.supabase) return;
+
+    if (
+      this.dashboardSnapshotChannel &&
+      this.dashboardSnapshotUserId === userId
+    ) {
+      this.logDashboardRealtime(
+        "Realtime channel already active for current user",
+        { userId },
+      );
+      return;
+    }
+
+    this.logDashboardRealtime("Subscribing to dashboard snapshot channel", {
+      userId,
+    });
+
+    this.dashboardSnapshotUserId = userId;
+    this.dashboardSnapshotChannel = this.supabase
+      .channel(`dashboard-snapshot:${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "dashboard_snapshots",
+          filter: `user_id=eq.${userId}`,
+        },
+        (eventPayload) => {
+          if (!this.canFetchDashboard()) return;
+
+          if (eventPayload.eventType === "DELETE") {
+            this.logDashboardRealtime(
+              "Snapshot row deleted, reloading via /api/dashboard",
+            );
+            queueMicrotask(() => this.fetchDashboard());
+            return;
+          }
+
+          const payload = (
+            eventPayload.new as { payload?: DashboardPayload } | null
+          )?.payload;
+
+          if (payload) {
+            this.logDashboardRealtime("Received Realtime dashboard snapshot", {
+              eventType: eventPayload.eventType,
+              generatedAt: payload.generatedAt,
+            });
+            this.applyDashboardPayload(payload);
+          }
+        },
+      )
+      .subscribe((status) => {
+        this.logDashboardRealtime("Realtime channel status changed", {
+          userId,
+          status,
+        });
+      });
+  }
+
+  private unsubscribeDashboardSnapshot(): void {
+    if (!this.dashboardSnapshotChannel || !this.supabase) return;
+    this.logDashboardRealtime("Unsubscribing from dashboard snapshot channel");
+    void this.supabase.removeChannel(this.dashboardSnapshotChannel);
+    this.dashboardSnapshotChannel = null;
+    this.dashboardSnapshotUserId = null;
   }
 
   private formatDashboardLoadError(
@@ -1927,37 +2822,319 @@ export class App implements OnDestroy {
   }
 
   fetchDashboard(): void {
+    if (!this.canFetchDashboard()) {
+      this.dashboardFetchInFlight = false;
+      this.dashboardRefreshQueued = false;
+      this.stopDashboardLoading();
+      this.data.set(null);
+      this.error.set(null);
+      return;
+    }
+
+    if (this.dashboardFetchInFlight) {
+      this.dashboardRefreshQueued = true;
+      return;
+    }
+
+    const requestId = ++this.dashboardRequestId;
+    const shouldShowInitialLoading = !this.data();
+    if (shouldShowInitialLoading) {
+      this.startDashboardLoading();
+    }
+    this.dashboardFetchInFlight = true;
     const runtime = getDashboardRuntimeConfig();
-    const headers = runtime.apiToken
-      ? { Authorization: `Bearer ${runtime.apiToken}` }
-      : undefined;
+    const headers = this.getAuthHeaders();
     const apiUrl = buildApiUrl("/api/dashboard");
 
+    const finishRequest = () => {
+      this.dashboardFetchInFlight = false;
+      if (!this.dashboardRefreshQueued) return;
+      this.dashboardRefreshQueued = false;
+      queueMicrotask(() => this.fetchDashboard());
+    };
+
     if (!runtime.apiBaseUrl && !this.canUseRelativeApiUrl()) {
-      this.loading.set(false);
+      this.dashboardFetchInFlight = false;
+      this.dashboardRefreshQueued = false;
+      this.stopDashboardLoading();
       this.error.set(this.formatDashboardLoadError(null, runtime.apiBaseUrl));
       return;
     }
 
+    this.logDashboardRealtime("Requesting /api/dashboard over HTTP", {
+      apiUrl,
+      hasSession: Boolean(this.session()),
+      reason: this.shouldUseRealtimeDashboard()
+        ? "realtime_fallback"
+        : "polling_or_local_mode",
+    });
     this.http.get<DashboardPayload>(apiUrl, { headers }).subscribe({
       next: (payload) => {
-        if (!this.sizingDirty() && !this.sizingBusy()) {
-          this.syncRuntimeSizingInputs(
-            payload?.config?.stakeUsd,
-            payload?.config?.recoveryMaxStakeUsd,
-            payload?.config?.maxDailyLossUsd,
-          );
+        if (requestId === this.dashboardRequestId && this.canFetchDashboard()) {
+          this.logDashboardRealtime("HTTP /api/dashboard response applied", {
+            generatedAt: payload.generatedAt,
+          });
+          this.applyDashboardPayload(payload);
         }
-        this.data.set(payload);
-        queueMicrotask(() => this.renderChart());
-        this.loading.set(false);
-        this.error.set(null);
+        finishRequest();
       },
       error: (err) => {
-        this.loading.set(false);
-        this.error.set(this.formatDashboardLoadError(err, runtime.apiBaseUrl));
+        if (requestId === this.dashboardRequestId) {
+          this.logDashboardRealtime("HTTP /api/dashboard request failed", {
+            status: err?.status ?? null,
+            message: err?.error?.message || err?.message || null,
+          });
+          this.stopDashboardLoading();
+          if (err?.status === 401) {
+            this.data.set(null);
+            this.error.set(
+              "Authentication required. Log in with Supabase to load dashboard data.",
+            );
+            finishRequest();
+            return;
+          }
+          this.data.set(null);
+          this.error.set(
+            err?.error?.message ||
+              err?.message ||
+              "Failed to load dashboard data",
+          );
+        }
+        finishRequest();
       },
     });
+  }
+
+  private startDashboardLoading(): void {
+    this.loading.set(true);
+    this.dashboardLoadingElapsedSeconds.set(0);
+    if (this.dashboardLoadingTimer) clearInterval(this.dashboardLoadingTimer);
+    this.dashboardLoadingTimer = setInterval(() => {
+      this.dashboardLoadingElapsedSeconds.update((value) => value + 1);
+    }, 1000);
+  }
+
+  private stopDashboardLoading(): void {
+    this.loading.set(false);
+    this.dashboardLoadingElapsedSeconds.set(0);
+    if (this.dashboardLoadingTimer) {
+      clearInterval(this.dashboardLoadingTimer);
+      this.dashboardLoadingTimer = null;
+    }
+  }
+
+  private fetchCredentialStatus(): void {
+    const headers = this.getAuthHeaders();
+    if (!headers || !this.session()) {
+      this.credentialStatus.set(null);
+      return;
+    }
+
+    this.credentialsLoading.set(true);
+    this.credentialsError.set(null);
+    this.credentialStatusError.set(null);
+
+    this.http
+      .get<{
+        ok: boolean;
+        credentials: CredentialStatus;
+      }>(buildApiUrl("/api/credentials"), { headers })
+      .subscribe({
+        next: (response) => {
+          this.credentialsLoading.set(false);
+          this.credentialStatusError.set(null);
+          this.credentialStatus.set(response.credentials || null);
+          if (response.credentials?.hasCredential) {
+            this.credentialApiKeyId.set("");
+            this.credentialPem.set("");
+            this.credentialPemFileName.set("");
+            this.credentialReplaceMode.set(false);
+            this.credentialDeleteConfirm.set(false);
+            if (this.credentialHealthState() !== "healthy") {
+              this.scheduleStoredCredentialHealthCheck(0);
+            }
+          } else {
+            this.resetCredentialHealthCheck();
+          }
+        },
+        error: (err) => {
+          this.credentialsLoading.set(false);
+          this.credentialStatus.set(null);
+          this.credentialStatusError.set(
+            this.describeCredentialStatusBanner(err),
+          );
+        },
+      });
+  }
+
+  private getAuthHeaders(): { Authorization: string } | undefined {
+    const runtime = getDashboardRuntimeConfig();
+    const accessToken = this.session()?.access_token || runtime.apiToken;
+    return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+  }
+
+  private describeCredentialError(
+    err: { status?: number; error?: { message?: string }; message?: string },
+    fallback: string,
+  ): string {
+    if (err?.status === 404) {
+      return "Credential API not found. Restart `npm run monitor:api` so the local backend picks up the new routes.";
+    }
+
+    return err?.error?.message || err?.message || fallback;
+  }
+
+  private describeCredentialStatusBanner(err: { status?: number }): string {
+    if (err?.status === 404) {
+      return "Kalshi credential tools are unavailable right now. Restart the local backend, then open the key icon in the top-right header.";
+    }
+
+    return "Kalshi credentials need attention. Open the key icon in the top-right header to review or upload your API key ID and PEM file.";
+  }
+
+  private resetCredentialHealthCheck(
+    state: CredentialHealthState = "idle",
+    message: string | null = null,
+  ): void {
+    if (this.credentialHealthTimer) {
+      clearTimeout(this.credentialHealthTimer);
+      this.credentialHealthTimer = null;
+    }
+    this.credentialHealthRequestId += 1;
+    this.credentialHealthState.set(state);
+    this.credentialHealthMessage.set(message);
+  }
+
+  private scheduleDraftCredentialHealthCheck(delayMs = 350): void {
+    this.resetCredentialHealthCheck();
+
+    if (!this.credentialPem().trim() || !this.credentialPemFileName().trim()) {
+      return;
+    }
+
+    if (!this.credentialApiKeyId().trim()) {
+      this.credentialHealthMessage.set(
+        "Add your Kalshi API key ID to run the Kalshi API health check.",
+      );
+      return;
+    }
+
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.credentialHealthState.set("failed");
+      this.credentialHealthMessage.set(
+        "Sign in before running the Kalshi API health check.",
+      );
+      return;
+    }
+
+    this.credentialHealthState.set("checking");
+    this.credentialHealthMessage.set(
+      "Checking the Kalshi API with the selected PEM file...",
+    );
+    const requestId = ++this.credentialHealthRequestId;
+
+    this.credentialHealthTimer = setTimeout(() => {
+      this.credentialHealthTimer = null;
+      this.runCredentialHealthCheck(requestId, headers, {
+        checkMode: "draft",
+        kalshiApiKeyId: this.credentialApiKeyId().trim(),
+        privateKeyPem: this.credentialPem(),
+      });
+    }, delayMs);
+  }
+
+  private scheduleStoredCredentialHealthCheck(delayMs = 350): void {
+    this.resetCredentialHealthCheck();
+
+    if (!this.hasStoredCredential() || this.credentialReplaceMode()) {
+      return;
+    }
+
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      return;
+    }
+
+    this.credentialHealthState.set("checking");
+    this.credentialHealthMessage.set(
+      "Checking the stored Kalshi credentials...",
+    );
+    const requestId = ++this.credentialHealthRequestId;
+
+    this.credentialHealthTimer = setTimeout(() => {
+      this.credentialHealthTimer = null;
+      this.runCredentialHealthCheck(requestId, headers, {
+        checkMode: "stored",
+      });
+    }, delayMs);
+  }
+
+  rerunCredentialHealthCheck(): void {
+    if (this.credentialsSaving()) return;
+    this.credentialHealthInfoOpen.set(false);
+
+    if (this.credentialPem().trim() && this.credentialPemFileName().trim()) {
+      this.scheduleDraftCredentialHealthCheck(0);
+      return;
+    }
+
+    if (this.hasStoredCredential() && !this.credentialReplaceMode()) {
+      this.scheduleStoredCredentialHealthCheck(0);
+      return;
+    }
+
+    if (this.credentialApiKeyId().trim()) {
+      this.resetCredentialHealthCheck(
+        "idle",
+        "Upload a PEM file to run the Kalshi API health check.",
+      );
+      return;
+    }
+
+    this.resetCredentialHealthCheck(
+      "idle",
+      "Add your Kalshi API key ID and PEM file to run the Kalshi API health check.",
+    );
+  }
+
+  private runCredentialHealthCheck(
+    requestId: number,
+    headers: { Authorization: string },
+    body: {
+      checkMode: "draft" | "stored";
+      kalshiApiKeyId?: string;
+      privateKeyPem?: string;
+    },
+  ): void {
+    this.http
+      .post<{
+        ok: boolean;
+        healthy: boolean;
+        checkedAt?: string;
+        message?: string;
+      }>(buildApiUrl("/api/credentials/check"), body, { headers })
+      .subscribe({
+        next: (response) => {
+          if (requestId !== this.credentialHealthRequestId) return;
+          this.credentialHealthState.set(
+            response.healthy ? "healthy" : "failed",
+          );
+          this.credentialHealthMessage.set(
+            response.message || "Kalshi API credentials verified successfully.",
+          );
+        },
+        error: (err) => {
+          if (requestId !== this.credentialHealthRequestId) return;
+          this.credentialHealthState.set("failed");
+          this.credentialHealthMessage.set(
+            this.describeCredentialError(
+              err,
+              "Kalshi API health check failed.",
+            ),
+          );
+        },
+      });
   }
 
   private syncRuntimeSizingInputs(

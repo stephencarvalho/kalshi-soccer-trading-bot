@@ -106,7 +106,7 @@ const config = {
 	privateKeyPath: process.env.KALSHI_PRIVATE_KEY_PATH || "",
 	privateKeyPem: process.env.KALSHI_PRIVATE_KEY_PEM || "",
 	dryRun: String(process.env.DRY_RUN || "false").toLowerCase() === "true",
-	pollSeconds: parseNumber(process.env.POLL_SECONDS, 10),
+	pollSeconds: parseNumber(process.env.POLL_SECONDS, 5),
 	retryUntilMinute: parseNumber(process.env.RETRY_UNTIL_MINUTE, 80),
 	minTriggerMinute: parseNumber(process.env.MIN_TRIGGER_MINUTE, 70),
 	minGoalLead: parseNumber(process.env.MIN_GOAL_LEAD, 2),
@@ -169,7 +169,7 @@ config.maxYesPrice =
 
 function validateConfig(cfg) {
 	const out = { ...cfg };
-	out.pollSeconds = Math.max(1, Number(out.pollSeconds) || 10);
+	out.pollSeconds = Math.max(1, Number(out.pollSeconds) || 5);
 	out.stakeUsd = clamp(Number(out.stakeUsd) || 1, 0.1, ABSOLUTE_STAKE_CAP_USD);
 	out.maxDailyLossUsd = Math.max(1, Number(out.maxDailyLossUsd) || 50);
 	out.recoveryModeEnabled = Boolean(out.recoveryModeEnabled);

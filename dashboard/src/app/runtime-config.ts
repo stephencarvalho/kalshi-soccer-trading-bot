@@ -1,6 +1,8 @@
 export interface DashboardRuntimeConfig {
   apiBaseUrl: string;
   apiToken: string;
+  supabaseUrl: string;
+  supabasePublishableKey: string;
   monitorPort: string;
 }
 
@@ -37,6 +39,8 @@ export function getDashboardRuntimeConfig(): DashboardRuntimeConfig {
   return {
     apiBaseUrl,
     apiToken: String(runtime.apiToken || '').trim(),
+    supabaseUrl: sanitizeBaseUrl(runtime.supabaseUrl),
+    supabasePublishableKey: String(runtime.supabasePublishableKey || '').trim(),
     monitorPort,
   };
 }

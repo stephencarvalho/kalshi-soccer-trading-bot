@@ -468,7 +468,7 @@ Kalshi API credentials:
 
 Trading mode and runtime defaults:
 - DRY_RUN=false
-- POLL_SECONDS=10
+- POLL_SECONDS=5
 - TIMEZONE=America/New_York
 - LOG_LEVEL=info
 
@@ -505,6 +505,10 @@ Localhost assumptions:
 - MONITOR_API_TOKEN=
 - DASHBOARD_API_BASE_URL=
 - DASHBOARD_API_TOKEN=
+- SUPABASE_URL=https://zmofffvxlodwxjwzclma.supabase.co
+- SUPABASE_PUBLISHABLE_KEY=
+- SUPABASE_SECRET_KEY=
+- PEM_ENCRYPTION_KEY=
 
 Kalshi web invested-capital tracking:
 - KALSHI_WEB_AUTH_STATE_PATH=./.kalshi-soccer-bot/kalshi-web-auth.json
