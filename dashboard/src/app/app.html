@@ -1,4 +1,8 @@
-<main class="terminal" [class.theme-dark]="theme() === 'dark'" [class.theme-light]="theme() === 'light'">
+<main
+  class="terminal"
+  [class.theme-dark]="theme() === 'dark'"
+  [class.theme-light]="theme() === 'light'"
+>
   <div class="page-shell">
     @if (!session()) {
     <section class="panel auth-panel">
@@ -10,452 +14,762 @@
         <section class="auth-card">
           <div class="auth-card__head">
             <p class="panel-subtitle">
-              {{ session() ? 'Your session is active.' : (authMode() === 'login' ? 'Use your email and password to access the dashboard.' : 'Create an account to start using the dashboard.') }}
+              {{ session() ? 'Your session is active.' : (authMode() === 'login'
+              ? 'Use your email and password to access the dashboard.' : 'Create
+              an account to start using the dashboard.') }}
             </p>
           </div>
 
           @if (!authConfigured()) {
-            <div class="auth-empty">
-              <p class="muted">
-                Supabase auth is not configured yet. Add `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` to the dashboard runtime, and `SUPABASE_SECRET_KEY` on the backend.
-              </p>
-            </div>
-          }
-
-          @if (authConfigured() && !session()) {
-            <div class="auth-panel__form">
-              <label class="auth-field">
-                <span>Email address</span>
-                <input type="email" [value]="authEmail()" (input)="updateAuthField('email', $any($event.target).value)" autocomplete="email" placeholder="name@example.com">
-              </label>
-              <label class="auth-field">
-                <span>Password</span>
-                <div class="auth-password-field">
-                  <input [type]="showPassword() ? 'text' : 'password'" [value]="authPassword()" (input)="updateAuthField('password', $any($event.target).value)" [attr.autocomplete]="authMode() === 'login' ? 'current-password' : 'new-password'" placeholder="Enter your password">
-                  <button type="button" class="auth-password-toggle" [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'" [attr.title]="showPassword() ? 'Hide password' : 'Show password'" (click)="togglePasswordVisibility()">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M2.2 12c2.2-4 5.8-6 9.8-6s7.6 2 9.8 6c-2.2 4-5.8 6-9.8 6s-7.6-2-9.8-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                      <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                      @if (showPassword()) {
-                        <path d="M4 4l16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                      }
-                    </svg>
-                  </button>
-                </div>
-              </label>
-              @if (authMode() === 'signup') {
-                <div class="password-strength" [ngClass]="'password-strength--' + passwordStrength().tone">
-                  <div class="password-strength__row">
-                    <span>Password strength</span>
-                    <strong>{{ passwordStrength().label }}</strong>
-                  </div>
-                  <div class="password-strength__bar" aria-hidden="true">
-                    <span [style.width.%]="passwordStrength().percent"></span>
-                  </div>
-                  <div class="password-rules">
-                    @for (rule of passwordRules(); track rule.label) {
-                      <p class="password-rules__item" [class.is-met]="rule.met">
-                        <span class="password-rules__icon">{{ rule.met ? '✓' : '•' }}</span>
-                        {{ rule.label }}
-                      </p>
+          <div class="auth-empty">
+            <p class="muted">
+              Supabase auth is not configured yet. Add `SUPABASE_URL` and
+              `SUPABASE_PUBLISHABLE_KEY` to the dashboard runtime, and
+              `SUPABASE_SECRET_KEY` on the backend.
+            </p>
+          </div>
+          } @if (authConfigured() && !session()) {
+          <div class="auth-panel__form">
+            <label class="auth-field">
+              <span>Email address</span>
+              <input
+                type="email"
+                [value]="authEmail()"
+                (input)="updateAuthField('email', $any($event.target).value)"
+                autocomplete="email"
+                placeholder="name@example.com"
+              />
+            </label>
+            <label class="auth-field">
+              <span>Password</span>
+              <div class="auth-password-field">
+                <input
+                  [type]="showPassword() ? 'text' : 'password'"
+                  [value]="authPassword()"
+                  (input)="updateAuthField('password', $any($event.target).value)"
+                  [attr.autocomplete]="authMode() === 'login' ? 'current-password' : 'new-password'"
+                  placeholder="Enter your password"
+                />
+                <button
+                  type="button"
+                  class="auth-password-toggle"
+                  [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'"
+                  [attr.title]="showPassword() ? 'Hide password' : 'Show password'"
+                  (click)="togglePasswordVisibility()"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M2.2 12c2.2-4 5.8-6 9.8-6s7.6 2 9.8 6c-2.2 4-5.8 6-9.8 6s-7.6-2-9.8-6Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="3.1"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                    @if (showPassword()) {
+                    <path
+                      d="M4 4l16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
                     }
-                  </div>
-                </div>
-                <label class="auth-field">
-                  <span>Confirm password</span>
-                  <div class="auth-password-field">
-                    <input [type]="showPassword() ? 'text' : 'password'" [value]="authConfirmPassword()" (input)="updateAuthField('confirmPassword', $any($event.target).value)" autocomplete="new-password" placeholder="Re-enter your password">
-                    <button type="button" class="auth-password-toggle" [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'" [attr.title]="showPassword() ? 'Hide password' : 'Show password'" (click)="togglePasswordVisibility()">
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M2.2 12c2.2-4 5.8-6 9.8-6s7.6 2 9.8 6c-2.2 4-5.8 6-9.8 6s-7.6-2-9.8-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                        <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                        @if (showPassword()) {
-                          <path d="M4 4l16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                        }
-                      </svg>
-                    </button>
-                  </div>
-                </label>
-                @if (showConfirmPasswordError()) {
-                  <p class="auth-inline-error">Passwords do not match yet.</p>
-                }
-              }
-              <p class="auth-helper">
-                {{ authMode() === 'login' ? 'Use the credentials tied to your dashboard account.' : 'Create your account with the same email you plan to use for the dashboard.' }}
-              </p>
-              <div class="auth-panel__actions">
-                <button type="button" class="nav-toggle auth-cta" [disabled]="authLoading() || (authMode() === 'signup' && (!isSignupPasswordValid() || !passwordsMatch()))" (click)="authMode() === 'login' ? signIn() : signUp()">
-                  {{ authLoading() ? 'Working...' : (authMode() === 'login' ? 'Sign in' : 'Create account') }}
+                  </svg>
                 </button>
               </div>
-              <p class="auth-switch">
-                @if (authMode() === 'login') {
-                  New to Soccer trading Bot?
-                  <button type="button" class="auth-switch__link" (click)="setAuthMode('signup')">Create an Account</button>
-                } @else {
-                  Already have an account?
-                  <button type="button" class="auth-switch__link" (click)="setAuthMode('login')">Sign in</button>
+            </label>
+            @if (authMode() === 'signup') {
+            <div
+              class="password-strength"
+              [ngClass]="'password-strength--' + passwordStrength().tone"
+            >
+              <div class="password-strength__row">
+                <span>Password strength</span>
+                <strong>{{ passwordStrength().label }}</strong>
+              </div>
+              <div class="password-strength__bar" aria-hidden="true">
+                <span [style.width.%]="passwordStrength().percent"></span>
+              </div>
+              <div class="password-rules">
+                @for (rule of passwordRules(); track rule.label) {
+                <p class="password-rules__item" [class.is-met]="rule.met">
+                  <span class="password-rules__icon"
+                    >{{ rule.met ? '✓' : '•' }}</span
+                  >
+                  {{ rule.label }}
+                </p>
                 }
-              </p>
+              </div>
             </div>
-          }
-
-          @if (session()) {
-            <div class="auth-panel__session">
-              <article class="account-metric">
-                <span>Signed In As</span>
-                <strong>{{ authUserLabel() }}</strong>
-              </article>
-              <article class="account-metric">
-                <span>User ID</span>
-                <strong>{{ user()?.id }}</strong>
-              </article>
-              <button type="button" class="nav-toggle auth-cta" [disabled]="authLoading()" (click)="signOut()">Sign out</button>
+            <label class="auth-field">
+              <span>Confirm password</span>
+              <div class="auth-password-field">
+                <input
+                  [type]="showPassword() ? 'text' : 'password'"
+                  [value]="authConfirmPassword()"
+                  (input)="updateAuthField('confirmPassword', $any($event.target).value)"
+                  autocomplete="new-password"
+                  placeholder="Re-enter your password"
+                />
+                <button
+                  type="button"
+                  class="auth-password-toggle"
+                  [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'"
+                  [attr.title]="showPassword() ? 'Hide password' : 'Show password'"
+                  (click)="togglePasswordVisibility()"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M2.2 12c2.2-4 5.8-6 9.8-6s7.6 2 9.8 6c-2.2 4-5.8 6-9.8 6s-7.6-2-9.8-6Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="3.1"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                    />
+                    @if (showPassword()) {
+                    <path
+                      d="M4 4l16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                    }
+                  </svg>
+                </button>
+              </div>
+            </label>
+            @if (showConfirmPasswordError()) {
+            <p class="auth-inline-error">Passwords do not match yet.</p>
+            } }
+            <p class="auth-helper">
+              {{ authMode() === 'login' ? 'Use the credentials tied to your
+              dashboard account.' : 'Create your account with the same email you
+              plan to use for the dashboard.' }}
+            </p>
+            <div class="auth-panel__actions">
+              <button
+                type="button"
+                class="nav-toggle auth-cta"
+                [disabled]="authLoading() || (authMode() === 'signup' && (!isSignupPasswordValid() || !passwordsMatch()))"
+                (click)="authMode() === 'login' ? signIn() : signUp()"
+              >
+                {{ authLoading() ? 'Working...' : (authMode() === 'login' ?
+                'Sign in' : 'Create account') }}
+              </button>
             </div>
-          }
-
-          @if (authMessage()) {
-            <p class="auth-panel__message auth-panel__message--info">{{ authMessage() }}</p>
-          }
-
-          @if (authError()) {
-            <p class="auth-panel__message auth-panel__message--error">{{ authError() }}</p>
+            <p class="auth-switch">
+              @if (authMode() === 'login') { New to Soccer trading Bot?
+              <button
+                type="button"
+                class="auth-switch__link"
+                (click)="setAuthMode('signup')"
+              >
+                Create an Account
+              </button>
+              } @else { Already have an account?
+              <button
+                type="button"
+                class="auth-switch__link"
+                (click)="setAuthMode('login')"
+              >
+                Sign in
+              </button>
+              }
+            </p>
+          </div>
+          } @if (session()) {
+          <div class="auth-panel__session">
+            <article class="account-metric">
+              <span>Signed In As</span>
+              <strong>{{ authUserLabel() }}</strong>
+            </article>
+            <article class="account-metric">
+              <span>User ID</span>
+              <strong>{{ user()?.id }}</strong>
+            </article>
+            <button
+              type="button"
+              class="nav-toggle auth-cta"
+              [disabled]="authLoading()"
+              (click)="signOut()"
+            >
+              Sign out
+            </button>
+          </div>
+          } @if (authMessage()) {
+          <p class="auth-panel__message auth-panel__message--info">
+            {{ authMessage() }}
+          </p>
+          } @if (authError()) {
+          <p class="auth-panel__message auth-panel__message--error">
+            {{ authError() }}
+          </p>
           }
         </section>
       </div>
     </section>
-    }
-
-    @if (data(); as d) {
-      <section class="account-strip">
-        <div class="account-strip__row">
-          <div class="account-strip__metrics">
-            @for (metric of headerMetrics(); track metric.label) {
-              <article class="account-metric">
-                <span>{{ metric.label }}</span>
-                <strong [ngClass]="metric.tone || ''">{{ metric.value }}</strong>
-              </article>
-            }
-          </div>
-          <div class="account-strip__actions">
-            <article class="account-metric account-metric--status account-metric--time">
-              <span>Last Updated</span>
-              <strong>{{ now() | date:'mediumTime' }}</strong>
-            </article>
-            <article class="account-metric account-metric--status" [ngClass]="statusClass(d.bot.status)">
-              <span>Agent Status</span>
-              <strong>{{ agentStatusLabel(d.bot.status) }}</strong>
-            </article>
-            <article class="account-metric account-metric--status account-metric--stop" [class.status-warn]="d.bot.riskHaltedToday" [class.status-good]="!d.bot.riskHaltedToday">
-              <span>Stop-Loss</span>
-              <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
-            </article>
-            @if (session()) {
-              <div class="user-menu" (click)="$event.stopPropagation()">
-                <button type="button" class="user-menu__trigger" [attr.aria-expanded]="credentialMenuOpen()" aria-label="Open Kalshi credential settings" (click)="toggleCredentialMenu($event)">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="8.25" cy="12" r="3.25" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                    <path d="M11.5 12H21l-1.8 1.8 1.3 1.3-1.7 1.7-1.3-1.3-1.7 1.7-1.6-1.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </button>
-                @if (credentialMenuOpen()) {
-                  <div class="user-menu__panel credential-menu__panel">
-                    <p class="user-menu__label">Kalshi credentials</p>
-                    @if (credentialsLoading()) {
-                      <p class="user-menu__value">Loading status...</p>
-                    } @else if (!credentialStorageConfigured() && credentialStatus()) {
-                      <p class="user-menu__value">Secure storage is not configured on the backend.</p>
-                    } @else {
-                      @if (credentialStatusError()) {
-                        <p class="auth-helper">Status is temporarily unavailable. You can still try uploading your Kalshi API key ID and PEM file below.</p>
-                      }
-                      <p class="user-menu__label">Status</p>
-                      <div class="credential-status-row">
-                        <span class="chip" [class.live]="hasStoredCredential() && !credentialStatusError()">
-                          {{ credentialStatusError() ? 'Status Unavailable' : (hasStoredCredential() ? 'Stored Securely' : 'Not Uploaded') }}
-                        </span>
-                      </div>
-                      @if (!credentialStatusError() && hasStoredCredential() && !credentialReplaceMode()) {
-                        <p class="user-menu__label">Kalshi API key ID</p>
-                        <p class="user-menu__value">{{ credentialStatus()?.kalshiApiKeyIdMasked }}</p>
-                        @if (credentialStatus()?.pemFileName) {
-                          <p class="user-menu__label">Uploaded PEM file</p>
-                          <p class="user-menu__value">{{ credentialStatus()?.pemFileName }}</p>
-                        }
-                        <div class="credential-panel__health">
-                          <div class="credential-health__header">
-                            <p class="user-menu__label">Kalshi API check</p>
-                            <div class="credential-health__tools">
-                              <button
-                                type="button"
-                                class="credential-health__icon"
-                                [disabled]="credentialsSaving() || credentialHealthState() === 'checking'"
-                                (click)="rerunCredentialHealthCheck()"
-                                aria-label="Reload Kalshi API health check">
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
-                                  <path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                              </button>
-                              <div class="credential-health__tooltip-wrap" [class.is-open]="credentialHealthInfoOpen()">
-                                <button
-                                  type="button"
-                                  class="credential-health__icon credential-health__icon--info"
-                                  (click)="toggleCredentialHealthInfo($event)"
-                                  aria-label="Kalshi health check endpoint">
-                                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                                    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                                    <path d="M12 10.25v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                                    <circle cx="12" cy="7.35" r="1.05" fill="currentColor"/>
-                                  </svg>
-                                </button>
-                                <div class="credential-health__tooltip" role="tooltip">
-                                  {{ credentialHealthEndpointLabel }}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                          <div class="credential-status-row">
-                            <span class="chip" [ngClass]="credentialHealthClass()">{{ credentialHealthLabel() }}</span>
-                          </div>
-                          @if (credentialHealthMessage()) {
-                            <p class="auth-helper" [class.credential-health__message--error]="credentialHealthState() === 'failed'">
-                              {{ credentialHealthMessage() }}
-                            </p>
-                          }
-                        </div>
-                        <div class="credential-panel__actions credential-panel__actions--confirm">
-                          @if (!credentialDeleteConfirm()) {
-                            <button
-                              type="button"
-                              class="credential-action credential-action--replace"
-                              [disabled]="credentialsSaving()"
-                              (click)="beginReplaceCredential()">
-                              Replace credential
-                            </button>
-                            <button
-                              type="button"
-                              class="credential-action credential-action--remove"
-                              [disabled]="credentialsSaving()"
-                              (click)="beginDeleteCredential()">
-                              Remove credential
-                            </button>
-                          } @else {
-                            <p class="user-menu__label credential-confirm__label">Remove credential?</p>
-                            <button
-                              type="button"
-                              class="credential-confirm credential-confirm--yes"
-                              [disabled]="credentialsSaving()"
-                              (click)="deleteCredential()"
-                              aria-label="Yes, remove credential">
-                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M5 12.5 9.2 16.7 19 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-                              </svg>
-                              <span>Yes</span>
-                            </button>
-                            <button
-                              type="button"
-                              class="credential-confirm credential-confirm--no"
-                              [disabled]="credentialsSaving()"
-                              (click)="cancelDeleteCredential()"
-                              aria-label="No, keep credential">
-                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M7 7 17 17M17 7 7 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
-                              </svg>
-                              <span>No</span>
-                            </button>
-                          }
-                        </div>
-                      } @else {
-                        <label class="auth-field credential-menu__field">
-                          <span>Kalshi API key ID</span>
-                          <input
-                            type="text"
-                            [value]="credentialApiKeyId()"
-                            (input)="updateCredentialField('apiKeyId', $any($event.target).value)"
-                            placeholder="Paste your Kalshi API key ID"
-                            autocomplete="off">
-                        </label>
-                        <div class="credential-panel__upload">
-                          <p class="user-menu__label">Private key PEM</p>
-                          <label class="credential-upload">
-                            <input type="file" accept=".pem,.key,text/plain" (change)="handlePemFileSelected($event)">
-                            <span>{{ credentialPemFileName() || 'Choose PEM File' }}</span>
-                          </label>
-                          <p class="auth-helper">
-                            {{ credentialPemFileName() ? 'Ready to upload.' : 'Choose your .pem file. It is read locally and uploaded only when you save.' }}
-                          </p>
-                        </div>
-                        <div class="credential-panel__health">
-                          <div class="credential-health__header">
-                            <p class="user-menu__label">Kalshi API check</p>
-                            <div class="credential-health__tools">
-                              <button
-                                type="button"
-                                class="credential-health__icon"
-                                [disabled]="credentialsSaving() || credentialHealthState() === 'checking'"
-                                (click)="rerunCredentialHealthCheck()"
-                                aria-label="Reload Kalshi API health check">
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
-                                  <path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-                                </svg>
-                              </button>
-                              <div class="credential-health__tooltip-wrap" [class.is-open]="credentialHealthInfoOpen()">
-                                <button
-                                  type="button"
-                                  class="credential-health__icon credential-health__icon--info"
-                                  (click)="toggleCredentialHealthInfo($event)"
-                                  aria-label="Kalshi health check endpoint">
-                                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                                    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                                    <path d="M12 10.25v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                                    <circle cx="12" cy="7.35" r="1.05" fill="currentColor"/>
-                                  </svg>
-                                </button>
-                                <div class="credential-health__tooltip" role="tooltip">
-                                  {{ credentialHealthEndpointLabel }}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                          <div class="credential-status-row">
-                            <span class="chip" [ngClass]="credentialHealthClass()">{{ credentialHealthLabel() }}</span>
-                          </div>
-                          @if (credentialHealthMessage()) {
-                            <p class="auth-helper" [class.credential-health__message--error]="credentialHealthState() === 'failed'">
-                              {{ credentialHealthMessage() }}
-                            </p>
-                          }
-                        </div>
-                        <div class="credential-panel__actions">
-                          @if (hasStoredCredential() && credentialReplaceMode()) {
-                            <button
-                              type="button"
-                              class="credential-action credential-action--secondary"
-                              [disabled]="credentialsSaving()"
-                              (click)="cancelReplaceCredential()">
-                              Cancel replace
-                            </button>
-                          }
-                          <button
-                            type="button"
-                            class="nav-toggle auth-cta credential-save"
-                            [disabled]="credentialsSaving() || !canSaveCredential()"
-                            (click)="saveCredential()">
-                            {{ credentialsSaving() ? 'Saving...' : (hasStoredCredential() ? 'Replace credential' : 'Save credential') }}
-                          </button>
-                        </div>
-                      }
-                    }
-
-                    @if (credentialsMessage()) {
-                      <p class="auth-panel__message auth-panel__message--info">{{ credentialsMessage() }}</p>
-                    }
-
-                    @if (credentialsError()) {
-                      <p class="auth-panel__message auth-panel__message--error">{{ credentialsError() }}</p>
-                    }
-                  </div>
-                }
-              </div>
-              <div class="user-menu" (click)="$event.stopPropagation()">
-                <button type="button" class="user-menu__trigger" [attr.aria-expanded]="userMenuOpen()" aria-label="Open user menu" (click)="toggleUserMenu($event)">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                    <path d="M4.5 20a7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                  </svg>
-                </button>
-                @if (userMenuOpen()) {
-                  <div class="user-menu__panel">
-                    <p class="user-menu__label">Signed in as</p>
-                    <p class="user-menu__value">{{ authUserLabel() }}</p>
-                    <p class="user-menu__label">Session started</p>
-                    <p class="user-menu__value">{{ sessionStartedAtLabel() }}</p>
-                    <p class="user-menu__label">Session expires</p>
-                    <p class="user-menu__value">{{ sessionExpiresAtLabel() }}</p>
-                    <p class="user-menu__label">User ID</p>
-                    <p class="user-menu__id">{{ user()?.id }}</p>
-                    <button type="button" class="user-menu__signout" [disabled]="authLoading()" (click)="signOut()">Sign out</button>
-                  </div>
-                }
-              </div>
-            }
-          </div>
-        </div>
-      </section>
-    }
-
-    @if (loading() && !data()) {
-      <section class="panel loading-shell" aria-live="polite">
-        <div class="loading-shell__head">
-          <p class="loading-shell__eyebrow">Dashboard Sync</p>
-          <span class="loading-shell__elapsed">{{ dashboardLoadingElapsedLabel() }}</span>
-        </div>
-        <div class="loading-shell__hero">
-          <div class="loading-shell__beacon" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-          <div class="loading-shell__copy">
-            <h2 class="loading-shell__title">{{ dashboardLoadingTitle() }}</h2>
-            <p class="loading-shell__subtitle">{{ dashboardLoadingSubtitle() }}</p>
-          </div>
-        </div>
-        <div class="loading-shell__bar" aria-hidden="true">
-          <span [style.width.%]="dashboardLoadingProgress()"></span>
-        </div>
-        <div class="loading-shell__steps">
-          @for (step of dashboardLoadingSteps(); track step.label) {
-            <article class="loading-shell__step" [class.is-active]="step.status === 'active'" [class.is-complete]="step.status === 'complete'">
-              <span class="loading-shell__step-dot" aria-hidden="true"></span>
-              <div>
-                <strong>{{ step.label }}</strong>
-                <p>{{ step.detail }}</p>
-              </div>
-            </article>
+    } @if (data(); as d) {
+    <section class="account-strip">
+      <div class="account-strip__row">
+        <div class="account-strip__metrics">
+          @for (metric of headerMetrics(); track metric.label) {
+          <article class="account-metric">
+            <span>{{ metric.label }}</span>
+            <strong [ngClass]="metric.tone || ''">{{ metric.value }}</strong>
+          </article>
           }
         </div>
-        <p class="loading-shell__hint">{{ dashboardLoadingHint() }}</p>
-      </section>
-    }
-
-    @if (error()) {
-      <section class="panel error">{{ error() }}</section>
-    }
-
-    @if (data(); as d) {
-      <div class="dashboard-main">
-        @if (credentialBanner(); as banner) {
-          <article class="panel credential-banner" [class.credential-banner--attention]="banner.tone === 'attention'">
-            <div class="credential-banner__icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                <path d="M12 10v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                <circle cx="12" cy="7.2" r="1.1" fill="currentColor"/>
-              </svg>
-            </div>
-            <div class="credential-banner__content">
-              <strong>{{ banner.title }}</strong>
-              <p class="panel-subtitle">{{ banner.subtitle }}</p>
-            </div>
+        <div class="account-strip__actions">
+          <article
+            class="account-metric account-metric--status account-metric--time"
+          >
+            <span>Last Updated</span>
+            <strong>{{ now() | date:'mediumTime' }}</strong>
           </article>
+          <article
+            class="account-metric account-metric--status"
+            [ngClass]="statusClass(d.bot.status)"
+          >
+            <span>Agent Status</span>
+            <strong>{{ agentStatusLabel(d.bot.status) }}</strong>
+          </article>
+          <article
+            class="account-metric account-metric--status account-metric--stop"
+            [class.status-warn]="d.bot.riskHaltedToday"
+            [class.status-good]="!d.bot.riskHaltedToday"
+          >
+            <span>Stop-Loss</span>
+            <strong>{{ d.bot.riskHaltedToday ? 'Active' : 'Off' }}</strong>
+          </article>
+          @if (session()) {
+          <div class="user-menu" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="user-menu__trigger"
+              [attr.aria-expanded]="credentialMenuOpen()"
+              aria-label="Open Kalshi credential settings"
+              (click)="toggleCredentialMenu($event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle
+                  cx="8.25"
+                  cy="12"
+                  r="3.25"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M11.5 12H21l-1.8 1.8 1.3 1.3-1.7 1.7-1.3-1.3-1.7 1.7-1.6-1.6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            @if (credentialMenuOpen()) {
+            <div class="user-menu__panel credential-menu__panel">
+              <p class="user-menu__label">Kalshi credentials</p>
+              @if (credentialsLoading()) {
+              <p class="user-menu__value">Loading status...</p>
+              } @else if (!credentialStorageConfigured() && credentialStatus())
+              {
+              <p class="user-menu__value">
+                Secure storage is not configured on the backend.
+              </p>
+              } @else { @if (credentialStatusError()) {
+              <p class="auth-helper">
+                Status is temporarily unavailable. You can still try uploading
+                your Kalshi API key ID and PEM file below.
+              </p>
+              }
+              <p class="user-menu__label">Status</p>
+              <div class="credential-status-row">
+                <span
+                  class="chip"
+                  [class.live]="hasStoredCredential() && !credentialStatusError()"
+                >
+                  {{ credentialStatusError() ? 'Status Unavailable' :
+                  (hasStoredCredential() ? 'Stored Securely' : 'Not Uploaded')
+                  }}
+                </span>
+              </div>
+              @if (!credentialStatusError() && hasStoredCredential() &&
+              !credentialReplaceMode()) {
+              <p class="user-menu__label">Kalshi API key ID</p>
+              <p class="user-menu__value">
+                {{ credentialStatus()?.kalshiApiKeyIdMasked }}
+              </p>
+              @if (credentialStatus()?.pemFileName) {
+              <p class="user-menu__label">Uploaded PEM file</p>
+              <p class="user-menu__value">
+                {{ credentialStatus()?.pemFileName }}
+              </p>
+              }
+              <div class="credential-panel__health">
+                <div class="credential-health__header">
+                  <p class="user-menu__label">Kalshi API check</p>
+                  <div class="credential-health__tools">
+                    <button
+                      type="button"
+                      class="credential-health__icon"
+                      [disabled]="credentialsSaving() || credentialHealthState() === 'checking'"
+                      (click)="rerunCredentialHealthCheck()"
+                      aria-label="Reload Kalshi API health check"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 12a8 8 0 1 1-2.34-5.66"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                        />
+                        <path
+                          d="M20 4v5h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <div
+                      class="credential-health__tooltip-wrap"
+                      [class.is-open]="credentialHealthInfoOpen()"
+                    >
+                      <button
+                        type="button"
+                        class="credential-health__icon credential-health__icon--info"
+                        (click)="toggleCredentialHealthInfo($event)"
+                        aria-label="Kalshi health check endpoint"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="9"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                          />
+                          <path
+                            d="M12 10.25v5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                          />
+                          <circle
+                            cx="12"
+                            cy="7.35"
+                            r="1.05"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <div class="credential-health__tooltip" role="tooltip">
+                        {{ credentialHealthEndpointLabel }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="credential-status-row">
+                  <span class="chip" [ngClass]="credentialHealthClass()"
+                    >{{ credentialHealthLabel() }}</span
+                  >
+                </div>
+                @if (credentialHealthMessage()) {
+                <p
+                  class="auth-helper"
+                  [class.credential-health__message--error]="credentialHealthState() === 'failed'"
+                >
+                  {{ credentialHealthMessage() }}
+                </p>
+                }
+              </div>
+              <div
+                class="credential-panel__actions credential-panel__actions--confirm"
+              >
+                @if (!credentialDeleteConfirm()) {
+                <button
+                  type="button"
+                  class="credential-action credential-action--replace"
+                  [disabled]="credentialsSaving()"
+                  (click)="beginReplaceCredential()"
+                >
+                  Replace credential
+                </button>
+                <button
+                  type="button"
+                  class="credential-action credential-action--remove"
+                  [disabled]="credentialsSaving()"
+                  (click)="beginDeleteCredential()"
+                >
+                  Remove credential
+                </button>
+                } @else {
+                <p class="user-menu__label credential-confirm__label">
+                  Remove credential?
+                </p>
+                <button
+                  type="button"
+                  class="credential-confirm credential-confirm--yes"
+                  [disabled]="credentialsSaving()"
+                  (click)="deleteCredential()"
+                  aria-label="Yes, remove credential"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M5 12.5 9.2 16.7 19 7"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  <span>Yes</span>
+                </button>
+                <button
+                  type="button"
+                  class="credential-confirm credential-confirm--no"
+                  [disabled]="credentialsSaving()"
+                  (click)="cancelDeleteCredential()"
+                  aria-label="No, keep credential"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M7 7 17 17M17 7 7 17"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <span>No</span>
+                </button>
+                }
+              </div>
+              } @else {
+              <label class="auth-field credential-menu__field">
+                <span>Kalshi API key ID</span>
+                <input
+                  type="text"
+                  [value]="credentialApiKeyId()"
+                  (input)="updateCredentialField('apiKeyId', $any($event.target).value)"
+                  placeholder="Paste your Kalshi API key ID"
+                  autocomplete="off"
+                />
+              </label>
+              <div class="credential-panel__upload">
+                <p class="user-menu__label">Private key PEM</p>
+                <label class="credential-upload">
+                  <input
+                    type="file"
+                    accept=".pem,.key,text/plain"
+                    (change)="handlePemFileSelected($event)"
+                  />
+                  <span
+                    >{{ credentialPemFileName() || 'Choose PEM File' }}</span
+                  >
+                </label>
+                <p class="auth-helper">
+                  {{ credentialPemFileName() ? 'Ready to upload.' : 'Choose your
+                  .pem file. It is read locally and uploaded only when you
+                  save.' }}
+                </p>
+              </div>
+              <div class="credential-panel__health">
+                <div class="credential-health__header">
+                  <p class="user-menu__label">Kalshi API check</p>
+                  <div class="credential-health__tools">
+                    <button
+                      type="button"
+                      class="credential-health__icon"
+                      [disabled]="credentialsSaving() || credentialHealthState() === 'checking'"
+                      (click)="rerunCredentialHealthCheck()"
+                      aria-label="Reload Kalshi API health check"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 12a8 8 0 1 1-2.34-5.66"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                        />
+                        <path
+                          d="M20 4v5h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.9"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <div
+                      class="credential-health__tooltip-wrap"
+                      [class.is-open]="credentialHealthInfoOpen()"
+                    >
+                      <button
+                        type="button"
+                        class="credential-health__icon credential-health__icon--info"
+                        (click)="toggleCredentialHealthInfo($event)"
+                        aria-label="Kalshi health check endpoint"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <circle
+                            cx="12"
+                            cy="12"
+                            r="9"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                          />
+                          <path
+                            d="M12 10.25v5"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                          />
+                          <circle
+                            cx="12"
+                            cy="7.35"
+                            r="1.05"
+                            fill="currentColor"
+                          />
+                        </svg>
+                      </button>
+                      <div class="credential-health__tooltip" role="tooltip">
+                        {{ credentialHealthEndpointLabel }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="credential-status-row">
+                  <span class="chip" [ngClass]="credentialHealthClass()"
+                    >{{ credentialHealthLabel() }}</span
+                  >
+                </div>
+                @if (credentialHealthMessage()) {
+                <p
+                  class="auth-helper"
+                  [class.credential-health__message--error]="credentialHealthState() === 'failed'"
+                >
+                  {{ credentialHealthMessage() }}
+                </p>
+                }
+              </div>
+              <div class="credential-panel__actions">
+                @if (hasStoredCredential() && credentialReplaceMode()) {
+                <button
+                  type="button"
+                  class="credential-action credential-action--secondary"
+                  [disabled]="credentialsSaving()"
+                  (click)="cancelReplaceCredential()"
+                >
+                  Cancel replace
+                </button>
+                }
+                <button
+                  type="button"
+                  class="nav-toggle auth-cta credential-save"
+                  [disabled]="credentialsSaving() || !canSaveCredential()"
+                  (click)="saveCredential()"
+                >
+                  {{ credentialsSaving() ? 'Saving...' : (hasStoredCredential()
+                  ? 'Replace credential' : 'Save credential') }}
+                </button>
+              </div>
+              } } @if (credentialsMessage()) {
+              <p class="auth-panel__message auth-panel__message--info">
+                {{ credentialsMessage() }}
+              </p>
+              } @if (credentialsError()) {
+              <p class="auth-panel__message auth-panel__message--error">
+                {{ credentialsError() }}
+              </p>
+              }
+            </div>
+            }
+          </div>
+          <div class="user-menu" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="user-menu__trigger"
+              [attr.aria-expanded]="userMenuOpen()"
+              aria-label="Open user menu"
+              (click)="toggleUserMenu($event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M4.5 20a7.5 7.5 0 0 1 15 0"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+            @if (userMenuOpen()) {
+            <div class="user-menu__panel">
+              <p class="user-menu__label">Signed in as</p>
+              <p class="user-menu__value">{{ authUserLabel() }}</p>
+              <p class="user-menu__label">Session started</p>
+              <p class="user-menu__value">{{ sessionStartedAtLabel() }}</p>
+              <p class="user-menu__label">Session expires</p>
+              <p class="user-menu__value">{{ sessionExpiresAtLabel() }}</p>
+              <p class="user-menu__label">User ID</p>
+              <p class="user-menu__id">{{ user()?.id }}</p>
+              <button
+                type="button"
+                class="user-menu__signout"
+                [disabled]="authLoading()"
+                (click)="signOut()"
+              >
+                Sign out
+              </button>
+            </div>
+            }
+          </div>
+          }
+        </div>
+      </div>
+    </section>
+    } @if (loading() && !data()) {
+    <section class="panel loading-shell" aria-live="polite">
+      <div class="loading-shell__head">
+        <p class="loading-shell__eyebrow">Dashboard Sync</p>
+        <span class="loading-shell__elapsed"
+          >{{ dashboardLoadingElapsedLabel() }}</span
+        >
+      </div>
+      <div class="loading-shell__hero">
+        <div class="loading-shell__beacon" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="loading-shell__copy">
+          <h2 class="loading-shell__title">{{ dashboardLoadingTitle() }}</h2>
+          <p class="loading-shell__subtitle">
+            {{ dashboardLoadingSubtitle() }}
+          </p>
+        </div>
+      </div>
+      <div class="loading-shell__bar" aria-hidden="true">
+        <span [style.width.%]="dashboardLoadingProgress()"></span>
+      </div>
+      <div class="loading-shell__steps">
+        @for (step of dashboardLoadingSteps(); track step.label) {
+        <article
+          class="loading-shell__step"
+          [class.is-active]="step.status === 'active'"
+          [class.is-complete]="step.status === 'complete'"
+        >
+          <span class="loading-shell__step-dot" aria-hidden="true"></span>
+          <div>
+            <strong>{{ step.label }}</strong>
+            <p>{{ step.detail }}</p>
+          </div>
+        </article>
         }
-	      <section class="hero panel">
+      </div>
+      <p class="loading-shell__hint">{{ dashboardLoadingHint() }}</p>
+    </section>
+    } @if (error()) {
+    <section class="panel error">{{ error() }}</section>
+    } @if (data(); as d) {
+    <div class="dashboard-main">
+      @if (credentialBanner(); as banner) {
+      <article
+        class="panel credential-banner"
+        [class.credential-banner--attention]="banner.tone === 'attention'"
+      >
+        <div class="credential-banner__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            />
+            <path
+              d="M12 10v5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+            <circle cx="12" cy="7.2" r="1.1" fill="currentColor" />
+          </svg>
+        </div>
+        <div class="credential-banner__content">
+          <strong>{{ banner.title }}</strong>
+          <p class="panel-subtitle">{{ banner.subtitle }}</p>
+        </div>
+      </article>
+      }
+
+      <section class="hero panel">
         <div class="hero-head">
           <div>
-            <h2>{{ chartNetAccountValue() === null ? '-' : (chartNetAccountValue() | currency:'USD':'symbol':'1.2-2') }}</h2>
-            <p class="delta" [class.pos]="chartReadout().value >= 0" [class.neg]="chartReadout().value < 0">
-              {{ chartReadout().value >= 0 ? '+' : '' }}{{ chartReadout().value | currency:'USD':'symbol':'1.2-2' }}
-              @if (chartReadout().pct !== null) {
-                ({{ (chartReadout().pct ?? 0) >= 0 ? '+' : '' }}{{ (chartReadout().pct ?? 0) | percent:'1.1-2' }})
-              }
+            <h2>
+              {{ chartNetAccountValue() === null ? "-" : (chartNetAccountValue()
+              | currency: "USD" : "symbol" : "1.2-2") }}
+            </h2>
+            <p
+              class="delta"
+              [class.pos]="chartReadout().value >= 0"
+              [class.neg]="chartReadout().value < 0"
+            >
+              {{ chartReadout().value >= 0 ? "+" : "" }}{{ chartReadout().value
+              | currency: "USD" : "symbol" : "1.2-2" }} @if (chartReadout().pct
+              !== null) { ({{ (chartReadout().pct ?? 0) >= 0 ? "+" : "" }}{{
+              (chartReadout().pct ?? 0) | percent: "1.1-2" }}) }
             </p>
           </div>
           <div class="hero-side">
-            <span class="chip live">{{ d.config.dryRun ? 'DRY RUN' : 'LIVE TRADING' }}</span>
-            <span class="chip">Buying Power {{ d.account.balanceUsd | currency:'USD':'symbol':'1.2-2' }}</span>
+            <span class="chip live"
+              >{{ d.config.dryRun ? "DRY RUN" : "LIVE TRADING" }}</span
+            >
+            <span class="chip"
+              >Buying Power {{ d.account.balanceUsd | currency: "USD" : "symbol"
+              : "1.2-2" }}</span
+            >
           </div>
         </div>
 
@@ -465,42 +779,58 @@
 
         <div class="ranges">
           @for (r of chartRanges; track r) {
-            <button type="button" class="range" [class.active]="chartRange() === r" (click)="setChartRange(r)">
-              {{ r }}
-            </button>
+          <button
+            type="button"
+            class="range"
+            [class.active]="chartRange() === r"
+            (click)="setChartRange(r)"
+          >
+            {{ r }}
+          </button>
           }
         </div>
       </section>
-      </div>
+    </div>
 
     <section class="desk-layout">
       <article class="panel desk-main">
         <div class="panel-title-row">
           <div>
             <h2>Live Trading Desk</h2>
-            <p class="panel-subtitle">Live match state and open exposure are grouped together so eligibility, fills, and risk can be checked in one scan.</p>
+            <p class="panel-subtitle">
+              Live match state and open exposure are grouped together so
+              eligibility, fills, and risk can be checked in one scan.
+            </p>
           </div>
-          <span class="chip">Total {{ d.monitoredGamesSummary.total }} | Eligible {{ d.monitoredGamesSummary.eligibleNow }} | Already Bet {{ d.monitoredGamesSummary.alreadyBet }}</span>
+          <span class="chip"
+            >Total {{ d.monitoredGamesSummary.total }} | Eligible {{
+            d.monitoredGamesSummary.eligibleNow }} | Already Bet {{
+            d.monitoredGamesSummary.alreadyBet }}</span
+          >
         </div>
         <div class="signal-grid signal-grid--six">
           @for (card of liveDeskMetrics(); track card.label) {
-            <article class="signal-card">
-              <h3>{{ card.label }}</h3>
-              @if (card.format === 'usd') {
-                <p [ngClass]="numberTone(card.value)">
-                  {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
-                  @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
-                    <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
-                  }
-                </p>
+          <article class="signal-card">
+            <h3>{{ card.label }}</h3>
+            @if (card.format === 'usd') {
+            <p [ngClass]="numberTone(card.value)">
+              {{ card.value === null ? '-' : (card.value |
+              currency:'USD':'symbol':'1.2-2') }} @if (card.secondaryPct !==
+              null && card.secondaryPct !== undefined) {
+              <span class="metric-secondary"
+                >{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct |
+                percent:'1.1-2' }}</span
+              >
               }
-              @if (card.format === 'pct') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-              }
-              @if (card.format === 'num') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
-              }
-            </article>
+            </p>
+            } @if (card.format === 'pct') {
+            <p [ngClass]="numberTone(card.value)">
+              {{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}
+            </p>
+            } @if (card.format === 'num') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+            }
+          </article>
           }
         </div>
         <div class="desk-split">
@@ -512,51 +842,217 @@
               <table>
                 <thead>
                   <tr>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'minute')">Minute <span>{{ sortIndicator('monitoredGames', 'minute') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'competition')">Competition <span>{{ sortIndicator('monitoredGames', 'competition') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'title')">Game <span>{{ sortIndicator('monitoredGames', 'title') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'score')">Score <span>{{ sortIndicator('monitoredGames', 'score') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'homeYesNo')">Home Yes/No <span>{{ sortIndicator('monitoredGames', 'homeYesNo') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'awayYesNo')">Away Yes/No <span>{{ sortIndicator('monitoredGames', 'awayYesNo') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'tieYesNo')">Tie Yes/No <span>{{ sortIndicator('monitoredGames', 'tieYesNo') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'redCards')">Red (H-A) <span>{{ sortIndicator('monitoredGames', 'redCards') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'leadingTeam')">Leader <span>{{ sortIndicator('monitoredGames', 'leadingTeam') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'goalDiff')">Diff <span>{{ sortIndicator('monitoredGames', 'goalDiff') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'status')">Status <span>{{ sortIndicator('monitoredGames', 'status') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('monitoredGames', 'reason')">Reason <span>{{ sortIndicator('monitoredGames', 'reason') }}</span></button></th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'minute')"
+                      >
+                        Minute
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'minute') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'competition')"
+                      >
+                        Competition
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'competition')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'title')"
+                      >
+                        Game
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'title') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'score')"
+                      >
+                        Score
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'score') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'homeYesNo')"
+                      >
+                        Home Yes/No
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'homeYesNo')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'awayYesNo')"
+                      >
+                        Away Yes/No
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'awayYesNo')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'tieYesNo')"
+                      >
+                        Tie Yes/No
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'tieYesNo')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'redCards')"
+                      >
+                        Red (H-A)
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'redCards')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'leadingTeam')"
+                      >
+                        Leader
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'leadingTeam')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'goalDiff')"
+                      >
+                        Diff
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'goalDiff')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'status')"
+                      >
+                        Status
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'status') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('monitoredGames', 'reason')"
+                      >
+                        Reason
+                        <span
+                          >{{ sortIndicator('monitoredGames', 'reason') }}</span
+                        >
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.monitoredGames.length) {
-                    <tr><td colspan="11" class="muted">No live tracked games right now</td></tr>
-                  }
-                  @for (g of sortedMonitoredGames().slice(0, 120); track g.eventTicker) {
-                    <tr>
-                      <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
-                      <td>{{ g.competition }}</td>
-                      <td>{{ g.title }}</td>
-                      <td>{{ g.score }}</td>
-                      <td class="market-pair">
-                        <span class="pos">{{ g.homeYesPrice === null || g.homeYesPrice === undefined ? '-' : (g.homeYesPrice | percent:'1.0-0') }}</span>
-                        <span class="market-pair__separator"> / </span>
-                        <span class="neg">{{ g.homeNoPrice === null || g.homeNoPrice === undefined ? '-' : (g.homeNoPrice | percent:'1.0-0') }}</span>
-                      </td>
-                      <td class="market-pair">
-                        <span class="pos">{{ g.awayYesPrice === null || g.awayYesPrice === undefined ? '-' : (g.awayYesPrice | percent:'1.0-0') }}</span>
-                        <span class="market-pair__separator"> / </span>
-                        <span class="neg">{{ g.awayNoPrice === null || g.awayNoPrice === undefined ? '-' : (g.awayNoPrice | percent:'1.0-0') }}</span>
-                      </td>
-                      <td class="market-pair">
-                        <span class="pos">{{ g.tieYesPrice === null || g.tieYesPrice === undefined ? '-' : (g.tieYesPrice | percent:'1.0-0') }}</span>
-                        <span class="market-pair__separator"> / </span>
-                        <span class="neg">{{ g.tieNoPrice === null || g.tieNoPrice === undefined ? '-' : (g.tieNoPrice | percent:'1.0-0') }}</span>
-                      </td>
-                      <td>{{ g.redCards || '-' }}</td>
-                      <td>{{ g.leadingTeam }}</td>
-                      <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
-                      <td><span class="chip">{{ g.status }}</span></td>
-                      <td>{{ g.reason }}</td>
-                    </tr>
+                  <tr>
+                    <td colspan="11" class="muted">
+                      No live tracked games right now
+                    </td>
+                  </tr>
+                  } @for (g of sortedMonitoredGames().slice(0, 120); track
+                  g.eventTicker) {
+                  <tr>
+                    <td>{{ g.minute === null ? '-' : (g.minute + "'") }}</td>
+                    <td>{{ g.competition }}</td>
+                    <td>{{ g.title }}</td>
+                    <td>{{ g.score }}</td>
+                    <td class="market-pair">
+                      <span class="pos"
+                        >{{ g.homeYesPrice === null || g.homeYesPrice ===
+                        undefined ? '-' : (g.homeYesPrice | percent:'1.0-0')
+                        }}</span
+                      >
+                      <span class="market-pair__separator"> / </span>
+                      <span class="neg"
+                        >{{ g.homeNoPrice === null || g.homeNoPrice ===
+                        undefined ? '-' : (g.homeNoPrice | percent:'1.0-0')
+                        }}</span
+                      >
+                    </td>
+                    <td class="market-pair">
+                      <span class="pos"
+                        >{{ g.awayYesPrice === null || g.awayYesPrice ===
+                        undefined ? '-' : (g.awayYesPrice | percent:'1.0-0')
+                        }}</span
+                      >
+                      <span class="market-pair__separator"> / </span>
+                      <span class="neg"
+                        >{{ g.awayNoPrice === null || g.awayNoPrice ===
+                        undefined ? '-' : (g.awayNoPrice | percent:'1.0-0')
+                        }}</span
+                      >
+                    </td>
+                    <td class="market-pair">
+                      <span class="pos"
+                        >{{ g.tieYesPrice === null || g.tieYesPrice ===
+                        undefined ? '-' : (g.tieYesPrice | percent:'1.0-0')
+                        }}</span
+                      >
+                      <span class="market-pair__separator"> / </span>
+                      <span class="neg"
+                        >{{ g.tieNoPrice === null || g.tieNoPrice === undefined
+                        ? '-' : (g.tieNoPrice | percent:'1.0-0') }}</span
+                      >
+                    </td>
+                    <td>{{ g.redCards || '-' }}</td>
+                    <td>{{ g.leadingTeam }}</td>
+                    <td>{{ g.goalDiff === null ? '-' : g.goalDiff }}</td>
+                    <td><span class="chip">{{ g.status }}</span></td>
+                    <td>{{ g.reason }}</td>
+                  </tr>
                   }
                 </tbody>
               </table>
@@ -571,66 +1067,288 @@
               <table>
                 <thead>
                   <tr>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'ticker')">Ticker <span>{{ sortIndicator('openTrades', 'ticker') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'eventTitle')">Game <span>{{ sortIndicator('openTrades', 'eventTitle') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'currentScore')">Score <span>{{ sortIndicator('openTrades', 'currentScore') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'selectionLabel')">Bet <span>{{ sortIndicator('openTrades', 'selectionLabel') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'marketStatus')">Mkt <span>{{ sortIndicator('openTrades', 'marketStatus') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'currentContractCostUsd')">Current Cost <span>{{ sortIndicator('openTrades', 'currentContractCostUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'entryPx')">Entry Cost <span>{{ sortIndicator('openTrades', 'entryPx') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'quantity')"># Contracts <span>{{ sortIndicator('openTrades', 'quantity') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('openTrades', 'amountBetUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('openTrades', 'totalReturnUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedPnlUsd')">PnL <span>{{ sortIndicator('openTrades', 'unrealizedPnlUsd') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'unrealizedRoiPct')">ROI <span>{{ sortIndicator('openTrades', 'unrealizedRoiPct') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'condition')">Condition <span>{{ sortIndicator('openTrades', 'condition') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'recovery')">Recovery <span>{{ sortIndicator('openTrades', 'recovery') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'cards')">Cards <span>{{ sortIndicator('openTrades', 'cards') }}</span></button></th>
-                    <th><button type="button" class="sort-button" (click)="setTableSort('openTrades', 'lastUpdated')">Update <span>{{ sortIndicator('openTrades', 'lastUpdated') }}</span></button></th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'ticker')"
+                      >
+                        Ticker
+                        <span>{{ sortIndicator('openTrades', 'ticker') }}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'eventTitle')"
+                      >
+                        Game
+                        <span
+                          >{{ sortIndicator('openTrades', 'eventTitle') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'currentScore')"
+                      >
+                        Score
+                        <span
+                          >{{ sortIndicator('openTrades', 'currentScore')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'selectionLabel')"
+                      >
+                        Bet
+                        <span
+                          >{{ sortIndicator('openTrades', 'selectionLabel')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'marketStatus')"
+                      >
+                        Mkt
+                        <span
+                          >{{ sortIndicator('openTrades', 'marketStatus')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'currentContractCostUsd')"
+                      >
+                        Current Cost
+                        <span
+                          >{{ sortIndicator('openTrades',
+                          'currentContractCostUsd') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'entryPx')"
+                      >
+                        Entry Cost
+                        <span
+                          >{{ sortIndicator('openTrades', 'entryPx') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'quantity')"
+                      >
+                        # Contracts
+                        <span
+                          >{{ sortIndicator('openTrades', 'quantity') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'amountBetUsd')"
+                      >
+                        Amt Bet
+                        <span
+                          >{{ sortIndicator('openTrades', 'amountBetUsd')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'totalReturnUsd')"
+                      >
+                        Total Return
+                        <span
+                          >{{ sortIndicator('openTrades', 'totalReturnUsd')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'unrealizedPnlUsd')"
+                      >
+                        PnL
+                        <span
+                          >{{ sortIndicator('openTrades', 'unrealizedPnlUsd')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'unrealizedRoiPct')"
+                      >
+                        ROI
+                        <span
+                          >{{ sortIndicator('openTrades', 'unrealizedRoiPct')
+                          }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'condition')"
+                      >
+                        Condition
+                        <span
+                          >{{ sortIndicator('openTrades', 'condition') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'recovery')"
+                      >
+                        Recovery
+                        <span
+                          >{{ sortIndicator('openTrades', 'recovery') }}</span
+                        >
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'cards')"
+                      >
+                        Cards
+                        <span>{{ sortIndicator('openTrades', 'cards') }}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        class="sort-button"
+                        (click)="setTableSort('openTrades', 'lastUpdated')"
+                      >
+                        Update
+                        <span
+                          >{{ sortIndicator('openTrades', 'lastUpdated')
+                          }}</span
+                        >
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   @if (!d.openTrades.length) {
-                    <tr><td colspan="16" class="muted">No open positions</td></tr>
-                  }
-                  @for (t of sortedOpenTrades(); track trackByTicker($index, t)) {
-                    <tr>
-                      <td>{{ t.ticker }}</td>
-                      <td>{{ t.event_title || t.event_ticker || '-' }}</td>
-                      <td>{{ t.current_score || '-' }}</td>
-                      <td>{{ t.selection_label || t.market_title || '-' }}</td>
-                      <td>{{ t.market_status || '-' }}</td>
-                      <td>{{ t.current_contract_cost_usd === null || t.current_contract_cost_usd === undefined ? '-' : (t.current_contract_cost_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.placed_context?.yesPrice === null || t.placed_context?.yesPrice === undefined ? '-' : (t.placed_context?.yesPrice | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.quantity ?? '-' }}</td>
-                      <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td>{{ t.total_return_usd === null || t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                      <td [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0" [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0">
-                        {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd === undefined ? '-' : (t.unrealized_pnl_usd | currency:'USD':'symbol':'1.2-2') }}
-                      </td>
-                      <td [class.pos]="(t.unrealized_roi_pct ?? 0) >= 0" [class.neg]="(t.unrealized_roi_pct ?? 0) < 0">
-                        {{ t.unrealized_roi_pct === null || t.unrealized_roi_pct === undefined ? '-' : (t.unrealized_roi_pct | percent:'1.1-2') }}
-                      </td>
-                      <td>
-                        @if (!t.placed_context) { - }
-                        @if (t.placed_context) {
-                          {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.selectedOutcome || t.placed_context.leadingTeam || '-' }}@if (t.placed_context.triggerRule !== 'POST_85_TIE_YES') { | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} } | Red (H-A) {{ t.placed_context.placedCards || '-' }}
-                        }
-                      </td>
-                      <td>
-                        @if (!t.placed_context?.recoveryQueueId) { Base }
-                        @if (t.placed_context?.recoveryQueueId) {
-                          {{ t.placed_context?.sizingMode === 'RECOVERY_QUEUE_CAPPED' ? 'Recovery (Capped)' : 'Recovery' }} | {{ t.placed_context?.recoveryQueueId }} | {{ t.placed_context?.recoverySourceEventTitle || '-' }}@if (t.placed_context?.targetProfitUsd !== null && t.placed_context?.targetProfitUsd !== undefined) { | Target {{ t.placed_context?.targetProfitUsd | currency:'USD':'symbol':'1.2-2' }} }
-                        }
-                      </td>
-                      <td>
-                        @if (!t.placed_context) { - }
-                        @if (t.placed_context) {
-                          {{ t.placed_context.placedCards || '-' }}
-                        }
-                      </td>
-                      <td>{{ t.last_updated_ts ? (t.last_updated_ts | date:'shortTime') : '-' }}</td>
-                    </tr>
+                  <tr>
+                    <td colspan="16" class="muted">No open positions</td>
+                  </tr>
+                  } @for (t of sortedOpenTrades(); track trackByTicker($index,
+                  t)) {
+                  <tr>
+                    <td>{{ t.ticker }}</td>
+                    <td>{{ t.event_title || t.event_ticker || '-' }}</td>
+                    <td>{{ t.current_score || '-' }}</td>
+                    <td>{{ t.selection_label || t.market_title || '-' }}</td>
+                    <td>{{ t.market_status || '-' }}</td>
+                    <td>
+                      {{ t.current_contract_cost_usd === null ||
+                      t.current_contract_cost_usd === undefined ? '-' :
+                      (t.current_contract_cost_usd |
+                      currency:'USD':'symbol':'1.2-2') }}
+                    </td>
+                    <td>
+                      {{ t.placed_context?.yesPrice === null ||
+                      t.placed_context?.yesPrice === undefined ? '-' :
+                      (t.placed_context?.yesPrice |
+                      currency:'USD':'symbol':'1.2-2') }}
+                    </td>
+                    <td>{{ t.quantity ?? '-' }}</td>
+                    <td>
+                      {{ t.amount_bet_usd === undefined ? '-' :
+                      (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}
+                    </td>
+                    <td>
+                      {{ t.total_return_usd === null || t.total_return_usd ===
+                      undefined ? '-' : (t.total_return_usd |
+                      currency:'USD':'symbol':'1.2-2') }}
+                    </td>
+                    <td
+                      [class.pos]="(t.unrealized_pnl_usd ?? 0) >= 0"
+                      [class.neg]="(t.unrealized_pnl_usd ?? 0) < 0"
+                    >
+                      {{ t.unrealized_pnl_usd === null || t.unrealized_pnl_usd
+                      === undefined ? '-' : (t.unrealized_pnl_usd |
+                      currency:'USD':'symbol':'1.2-2') }}
+                    </td>
+                    <td
+                      [class.pos]="(t.unrealized_roi_pct ?? 0) >= 0"
+                      [class.neg]="(t.unrealized_roi_pct ?? 0) < 0"
+                    >
+                      {{ t.unrealized_roi_pct === null || t.unrealized_roi_pct
+                      === undefined ? '-' : (t.unrealized_roi_pct |
+                      percent:'1.1-2') }}
+                    </td>
+                    <td>
+                      @if (!t.placed_context) { - } @if (t.placed_context) { {{
+                      t.placed_context.triggerRule || 'RULE' }} | {{
+                      t.placed_context.placedMinute ?? '-' }}' | {{
+                      t.placed_context.placedScore || '-' }} | {{
+                      t.placed_context.selectedOutcome ||
+                      t.placed_context.leadingTeam || '-' }}@if
+                      (t.placed_context.triggerRule !== 'POST_85_TIE_YES') { |
+                      Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }}
+                      } | Red (H-A) {{ t.placed_context.placedCards || '-' }} }
+                    </td>
+                    <td>
+                      @if (!t.placed_context?.recoveryQueueId) { Base } @if
+                      (t.placed_context?.recoveryQueueId) { {{
+                      t.placed_context?.sizingMode === 'RECOVERY_QUEUE_CAPPED' ?
+                      'Recovery (Capped)' : 'Recovery' }} | {{
+                      t.placed_context?.recoveryQueueId }} | {{
+                      t.placed_context?.recoverySourceEventTitle || '-' }}@if
+                      (t.placed_context?.targetProfitUsd !== null &&
+                      t.placed_context?.targetProfitUsd !== undefined) { |
+                      Target {{ t.placed_context?.targetProfitUsd |
+                      currency:'USD':'symbol':'1.2-2' }} } }
+                    </td>
+                    <td>
+                      @if (!t.placed_context) { - } @if (t.placed_context) { {{
+                      t.placed_context.placedCards || '-' }} }
+                    </td>
+                    <td>
+                      {{ t.last_updated_ts ? (t.last_updated_ts |
+                      date:'shortTime') : '-' }}
+                    </td>
+                  </tr>
                   }
                 </tbody>
               </table>
@@ -638,14 +1356,17 @@
           </section>
         </div>
       </article>
-
     </section>
 
     <section class="panel performance-shell">
       <div class="panel-title-row">
         <div>
           <h2>Performance</h2>
-          <p class="panel-subtitle">Capital state and strategy outcome metrics are grouped together because both inform whether the bot should keep trading and at what risk level.</p>
+          <p class="panel-subtitle">
+            Capital state and strategy outcome metrics are grouped together
+            because both inform whether the bot should keep trading and at what
+            risk level.
+          </p>
         </div>
       </div>
       <div class="performance-grid">
@@ -653,28 +1374,35 @@
           <div class="panel-title-row">
             <div>
               <h2>Bot Performance</h2>
-              <p class="panel-subtitle">Capital and PnL metrics define current trading capacity and realized account state.</p>
+              <p class="panel-subtitle">
+                Capital and PnL metrics define current trading capacity and
+                realized account state.
+              </p>
             </div>
           </div>
           <div class="signal-grid signal-grid--bot">
             @for (card of botPerformanceMetrics(); track card.label) {
-              <article class="signal-card">
-                <h3>{{ card.label }}</h3>
-                @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">
-                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
-                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
-                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
-                    }
-                  </p>
+            <article class="signal-card">
+              <h3>{{ card.label }}</h3>
+              @if (card.format === 'usd') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : (card.value |
+                currency:'USD':'symbol':'1.2-2') }} @if (card.secondaryPct !==
+                null && card.secondaryPct !== undefined) {
+                <span class="metric-secondary"
+                  >{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct |
+                  percent:'1.1-2' }}</span
+                >
                 }
-                @if (card.format === 'pct') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-                }
-                @if (card.format === 'num') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
-                }
-              </article>
+              </p>
+              } @if (card.format === 'pct') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}
+              </p>
+              } @if (card.format === 'num') {
+              <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+              }
+            </article>
             }
           </div>
         </article>
@@ -683,28 +1411,35 @@
           <div class="panel-title-row">
             <div>
               <h2>Trade Performance</h2>
-              <p class="panel-subtitle">Outcome quality and expectancy indicate whether the strategy itself is producing enough edge.</p>
+              <p class="panel-subtitle">
+                Outcome quality and expectancy indicate whether the strategy
+                itself is producing enough edge.
+              </p>
             </div>
           </div>
           <div class="signal-grid signal-grid--trade">
             @for (card of tradePerformanceMetrics(); track card.label) {
-              <article class="signal-card">
-                <h3>{{ card.label }}</h3>
-                @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">
-                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
-                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
-                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
-                    }
-                  </p>
+            <article class="signal-card">
+              <h3>{{ card.label }}</h3>
+              @if (card.format === 'usd') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : (card.value |
+                currency:'USD':'symbol':'1.2-2') }} @if (card.secondaryPct !==
+                null && card.secondaryPct !== undefined) {
+                <span class="metric-secondary"
+                  >{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct |
+                  percent:'1.1-2' }}</span
+                >
                 }
-                @if (card.format === 'pct') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-                }
-                @if (card.format === 'num') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
-                }
-              </article>
+              </p>
+              } @if (card.format === 'pct') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}
+              </p>
+              } @if (card.format === 'num') {
+              <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+              }
+            </article>
             }
           </div>
         </article>
@@ -713,34 +1448,49 @@
           <div class="panel-title-row">
             <div>
               <h2>Risk & Sustainability</h2>
-              <p class="panel-subtitle">These metrics matter because long-run survival depends on edge, payoff ratio, drawdown, and how much bankroll each bet consumes.</p>
+              <p class="panel-subtitle">
+                These metrics matter because long-run survival depends on edge,
+                payoff ratio, drawdown, and how much bankroll each bet consumes.
+              </p>
             </div>
-            <span class="chip" [class.warn]="riskStatus().ruinRisk !== 'Controlled'">
-              Edge {{ riskStatus().edge }} | Ruin Risk {{ riskStatus().ruinRisk }}
+            <span
+              class="chip"
+              [class.warn]="riskStatus().ruinRisk !== 'Controlled'"
+            >
+              Edge {{ riskStatus().edge }} | Ruin Risk {{ riskStatus().ruinRisk
+              }}
             </span>
           </div>
           <div class="signal-grid signal-grid--six">
             @for (card of riskMetrics(); track card.label) {
-              <article class="signal-card">
-                <h3>{{ card.label }}</h3>
-                @if (card.format === 'usd') {
-                  <p [ngClass]="numberTone(card.value)">
-                    {{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}
-                    @if (card.secondaryPct !== null && card.secondaryPct !== undefined) {
-                      <span class="metric-secondary">{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct | percent:'1.1-2' }}</span>
-                    }
-                  </p>
+            <article class="signal-card">
+              <h3>{{ card.label }}</h3>
+              @if (card.format === 'usd') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : (card.value |
+                currency:'USD':'symbol':'1.2-2') }} @if (card.secondaryPct !==
+                null && card.secondaryPct !== undefined) {
+                <span class="metric-secondary"
+                  >{{ card.secondaryPct >= 0 ? '+' : '' }}{{ card.secondaryPct |
+                  percent:'1.1-2' }}</span
+                >
                 }
-                @if (card.format === 'pct') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-                }
-                @if (card.format === 'num') {
-                  <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : card.value }}</p>
-                }
-              </article>
+              </p>
+              } @if (card.format === 'pct') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}
+              </p>
+              } @if (card.format === 'num') {
+              <p [ngClass]="numberTone(card.value)">
+                {{ card.value === null ? '-' : card.value }}
+              </p>
+              }
+            </article>
             }
           </div>
-          <p class="panel-subtitle" style="margin-top:0.7rem">{{ riskStatus().note }}</p>
+          <p class="panel-subtitle" style="margin-top: 0.7rem">
+            {{ riskStatus().note }}
+          </p>
         </article>
       </div>
     </section>
@@ -749,24 +1499,30 @@
       <div class="panel-title-row">
         <div>
           <h2>Recovery Overview</h2>
-          <p class="panel-subtitle">Closed losses enter a FIFO recovery queue, and the next trade targets the oldest unresolved loss using fee-aware sizing.</p>
+          <p class="panel-subtitle">
+            Closed losses enter a FIFO recovery queue, and the next trade
+            targets the oldest unresolved loss using fee-aware sizing.
+          </p>
         </div>
       </div>
       <article class="recovery-overview">
         <div class="signal-grid signal-grid--six">
           @for (card of recoveryMetrics(); track card.label) {
-            <article class="signal-card">
-              <h3>{{ card.label }}</h3>
-              @if (card.format === 'usd') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | currency:'USD':'symbol':'1.2-2') }}</p>
-              }
-              @if (card.format === 'pct') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}</p>
-              }
-              @if (card.format === 'num') {
-                <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
-              }
-            </article>
+          <article class="signal-card">
+            <h3>{{ card.label }}</h3>
+            @if (card.format === 'usd') {
+            <p [ngClass]="numberTone(card.value)">
+              {{ card.value === null ? '-' : (card.value |
+              currency:'USD':'symbol':'1.2-2') }}
+            </p>
+            } @if (card.format === 'pct') {
+            <p [ngClass]="numberTone(card.value)">
+              {{ card.value === null ? '-' : (card.value | percent:'1.1-2') }}
+            </p>
+            } @if (card.format === 'num') {
+            <p [ngClass]="numberTone(card.value)">{{ card.value ?? '-' }}</p>
+            }
+          </article>
           }
         </div>
       </article>
@@ -775,49 +1531,404 @@
         <div class="panel-title-row">
           <h2>Recovery Queue</h2>
           <span class="chip">
-            {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} |
-            Next Target {{ (d.recovery?.nextTargetProfitUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }} |
-            Streak {{ d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
-            Queue {{ (d.recovery?.recoveryLossBalanceUsd ?? d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2' }}
+            {{ d.recovery?.enabled ? 'Enabled' : 'Disabled' }} | Next Target {{
+            (d.recovery?.nextTargetProfitUsd ?? 0) |
+            currency:'USD':'symbol':'1.2-2' }} | Streak {{
+            d.recovery?.currentLossStreak ?? d.bot.recoveryLossStreak ?? 0 }} |
+            Queue {{ (d.recovery?.recoveryLossBalanceUsd ??
+            d.bot.recoveryLossBalanceUsd ?? 0) | currency:'USD':'symbol':'1.2-2'
+            }}
           </span>
         </div>
         <div class="table-wrap terminal-table">
           <table>
             <thead>
               <tr>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'queueId')">Queue ID <span>{{ sortIndicator('recoveryQueue', 'queueId') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'sourceEventTitle')">Loss Trade <span>{{ sortIndicator('recoveryQueue', 'sourceEventTitle') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'competition')">League <span>{{ sortIndicator('recoveryQueue', 'competition') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'lossUsd')">Loss $ <span>{{ sortIndicator('recoveryQueue', 'lossUsd') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveredUsd')">Recovered $ <span>{{ sortIndicator('recoveryQueue', 'recoveredUsd') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'remainingTargetUsd')">Remaining $ <span>{{ sortIndicator('recoveryQueue', 'remainingTargetUsd') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveryBet')">Recovery Bet <span>{{ sortIndicator('recoveryQueue', 'recoveryBet') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'stakeUsdTarget')">Bet Size <span>{{ sortIndicator('recoveryQueue', 'stakeUsdTarget') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'yesPrice')">Contract Px <span>{{ sortIndicator('recoveryQueue', 'yesPrice') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'recoveryBetResultUsd')">Bet Result <span>{{ sortIndicator('recoveryQueue', 'recoveryBetResultUsd') }}</span></button></th>
-                <th><button type="button" class="sort-button" (click)="setTableSort('recoveryQueue', 'status')">Status <span>{{ sortIndicator('recoveryQueue', 'status') }}</span></button></th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'queueId')"
+                  >
+                    Queue ID
+                    <span>{{ sortIndicator('recoveryQueue', 'queueId') }}</span>
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'sourceEventTitle')"
+                  >
+                    Loss Trade
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'sourceEventTitle')
+                      }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'competition')"
+                  >
+                    League
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'competition') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'lossUsd')"
+                  >
+                    Loss $
+                    <span>{{ sortIndicator('recoveryQueue', 'lossUsd') }}</span>
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'recoveredUsd')"
+                  >
+                    Recovered $
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'recoveredUsd')
+                      }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'remainingTargetUsd')"
+                  >
+                    Remaining $
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'remainingTargetUsd')
+                      }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'recoveryBet')"
+                  >
+                    Recovery Bet
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'recoveryBet') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'stakeUsdTarget')"
+                  >
+                    Bet Size
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'stakeUsdTarget')
+                      }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'yesPrice')"
+                  >
+                    Contract Px
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'yesPrice') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'recoveryBetResultUsd')"
+                  >
+                    Bet Result
+                    <span
+                      >{{ sortIndicator('recoveryQueue', 'recoveryBetResultUsd')
+                      }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('recoveryQueue', 'status')"
+                  >
+                    Status
+                    <span>{{ sortIndicator('recoveryQueue', 'status') }}</span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
               @if (!(d.recovery?.queue?.length)) {
-                <tr><td colspan="11" class="muted">No unresolved recovery queue items</td></tr>
-              }
-              @for (r of sortedRecoveryQueue(); track r.queueId) {
-                <tr>
-                  <td>{{ r.queueId }}</td>
-                  <td>{{ r.sourceEventTitle }}</td>
-                  <td>{{ r.competition }}</td>
-                  <td class="neg">{{ r.lossUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td class="pos">{{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td [class.neg]="r.remainingTargetUsd > 0">{{ r.remainingTargetUsd | currency:'USD':'symbol':'1.2-2' }}</td>
-                  <td>{{ r.recoveryBet?.eventTitle || '-' }}</td>
-                  <td>{{ r.recoveryBet?.stakeUsdTarget === null || r.recoveryBet?.stakeUsdTarget === undefined ? '-' : (r.recoveryBet?.stakeUsdTarget | currency:'USD':'symbol':'1.2-2') }}</td>
-                  <td>{{ r.recoveryBet?.yesPrice === null || r.recoveryBet?.yesPrice === undefined ? '-' : (r.recoveryBet?.yesPrice | percent:'1.0-0') }}</td>
-                  <td [class.pos]="(r.recoveryBetResultUsd || 0) > 0" [class.neg]="(r.recoveryBetResultUsd || 0) < 0">
-                    {{ r.recoveryBetResultUsd === null || r.recoveryBetResultUsd === undefined ? '-' : (r.recoveryBetResultUsd | currency:'USD':'symbol':'1.2-2') }}
-                  </td>
-                  <td>{{ r.status }}</td>
-                </tr>
+              <tr>
+                <td colspan="11" class="muted">
+                  No unresolved recovery queue items
+                </td>
+              </tr>
+              } @for (r of sortedRecoveryQueue(); track r.queueId) { @let
+              latestAttempt = latestRecoveryAttempt(r); @let attempts =
+              recoveryAttemptsFor(r); @let credits = recoveryCreditsFor(r);
+              <tr>
+                <td>{{ r.queueId }}</td>
+                <td>{{ r.sourceEventTitle }}</td>
+                <td>{{ r.competition }}</td>
+                <td class="neg">
+                  {{ r.lossUsd | currency:'USD':'symbol':'1.2-2' }}
+                </td>
+                <td class="pos">
+                  {{ r.recoveredUsd | currency:'USD':'symbol':'1.2-2' }}
+                </td>
+                <td [class.neg]="r.remainingTargetUsd > 0">
+                  {{ r.remainingTargetUsd | currency:'USD':'symbol':'1.2-2' }}
+                </td>
+                <td>{{ latestAttempt?.eventTitle || '-' }}</td>
+                <td>
+                  {{ recoveryAttemptStakeUsd(latestAttempt) === null ||
+                  recoveryAttemptStakeUsd(latestAttempt) === undefined ? '-' :
+                  (recoveryAttemptStakeUsd(latestAttempt) |
+                  currency:'USD':'symbol':'1.2-2') }}
+                </td>
+                <td>
+                  {{ latestAttempt?.yesPrice === null || latestAttempt?.yesPrice
+                  === undefined ? '-' : (latestAttempt?.yesPrice |
+                  percent:'1.0-0') }}
+                </td>
+                <td
+                  [class.pos]="(latestAttempt?.pnlUsd || 0) > 0"
+                  [class.neg]="(latestAttempt?.pnlUsd || 0) < 0"
+                >
+                  {{ latestAttempt?.pnlUsd === null || latestAttempt?.pnlUsd ===
+                  undefined ? '-' : (latestAttempt?.pnlUsd |
+                  currency:'USD':'symbol':'1.2-2') }}
+                </td>
+                <td>{{ r.status }}</td>
+              </tr>
+              <tr class="recovery-detail-row">
+                <td colspan="11" class="recovery-detail-cell">
+                  <div class="recovery-detail-shell">
+                    <div class="recovery-detail-head">
+                      <strong>Recovery Bets for {{ r.queueId }}</strong>
+                      <div class="recovery-detail-chips">
+                        <span class="chip"
+                          >{{ attempts.length }} direct bets</span
+                        >
+                        <span class="chip"
+                          >{{ credits.length }} recovery credits</span
+                        >
+                        <span class="chip"
+                          >Recovered {{ r.recoveredUsd |
+                          currency:'USD':'symbol':'1.2-2' }}</span
+                        >
+                        <span
+                          class="chip"
+                          [class.warn]="r.remainingTargetUsd > 0"
+                          >Remaining {{ r.remainingTargetUsd |
+                          currency:'USD':'symbol':'1.2-2' }}</span
+                        >
+                      </div>
+                    </div>
+                    <div class="recovery-section">
+                      <div class="recovery-section__title">
+                        Direct Recovery Bets Placed
+                      </div>
+                      <table class="recovery-subtable">
+                        <thead>
+                          <tr>
+                            <th>State</th>
+                            <th>Recovery Bet</th>
+                            <th>Observed</th>
+                            <th>Stake</th>
+                            <th>Target</th>
+                            <th>PnL</th>
+                            <th>Recovered</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @if (!attempts.length) {
+                          <tr>
+                            <td colspan="7" class="muted recovery-empty">
+                              No direct recovery bets have been placed for this
+                              queue item yet.
+                            </td>
+                          </tr>
+                          } @for (attempt of attempts; track attempt.tradeKey) {
+                          <tr>
+                            <td>
+                              <span
+                                class="recovery-attempt-state"
+                                [class.pos]="attempt.status === 'SETTLED' && (attempt.pnlUsd || 0) > 0"
+                                [class.neg]="attempt.status === 'SETTLED' && (attempt.pnlUsd || 0) < 0"
+                              >
+                                {{ recoveryAttemptResultLabel(attempt) }}
+                              </span>
+                            </td>
+                            <td>
+                              <div class="recovery-attempt-title">
+                                <strong>{{ attempt.eventTitle }}</strong>
+                                <span class="muted"
+                                  >{{ attempt.competition }}</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              {{ attempt.observedAt ? (attempt.observedAt |
+                              date:'short') : '-' }}
+                            </td>
+                            <td>
+                              {{ recoveryAttemptStakeUsd(attempt) === null ||
+                              recoveryAttemptStakeUsd(attempt) === undefined ?
+                              '-' : (recoveryAttemptStakeUsd(attempt) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td>
+                              {{ recoveryAttemptTargetUsd(attempt) === null ||
+                              recoveryAttemptTargetUsd(attempt) === undefined ?
+                              '-' : (recoveryAttemptTargetUsd(attempt) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td
+                              [class.pos]="(attempt.pnlUsd || 0) > 0"
+                              [class.neg]="(attempt.pnlUsd || 0) < 0"
+                            >
+                              {{ attempt.pnlUsd === null || attempt.pnlUsd ===
+                              undefined ? '-' : (attempt.pnlUsd |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td class="pos">
+                              {{ attempt.allocatedRecoveryUsd ?
+                              (attempt.allocatedRecoveryUsd |
+                              currency:'USD':'symbol':'1.2-2') : '-' }}
+                            </td>
+                          </tr>
+                          }
+                          <tr class="recovery-subtable__totals">
+                            <td colspan="2">Direct Bet Totals</td>
+                            <td>{{ attempts.length }} bets</td>
+                            <td>
+                              {{ recoveryAttemptsTotalStakeUsd(r) === null ||
+                              recoveryAttemptsTotalStakeUsd(r) === undefined ?
+                              '-' : (recoveryAttemptsTotalStakeUsd(r) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td>
+                              {{ recoveryAttemptsTotalTargetUsd(r) === null ||
+                              recoveryAttemptsTotalTargetUsd(r) === undefined ?
+                              '-' : (recoveryAttemptsTotalTargetUsd(r) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td
+                              [class.pos]="(recoveryAttemptsTotalPnlUsd(r) || 0) > 0"
+                              [class.neg]="(recoveryAttemptsTotalPnlUsd(r) || 0) < 0"
+                            >
+                              {{ recoveryAttemptsTotalPnlUsd(r) === null ||
+                              recoveryAttemptsTotalPnlUsd(r) === undefined ? '-'
+                              : (recoveryAttemptsTotalPnlUsd(r) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td class="pos">
+                              {{ r.recoveredUsd |
+                              currency:'USD':'symbol':'1.2-2' }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div class="recovery-section">
+                      <div class="recovery-section__title">
+                        Recovery Credits Applied
+                      </div>
+                      <table class="recovery-subtable">
+                        <thead>
+                          <tr>
+                            <th>Source</th>
+                            <th>Credit From</th>
+                            <th>Settled</th>
+                            <th>PnL</th>
+                            <th>Applied To Loss</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @if (!credits.length) {
+                          <tr>
+                            <td colspan="5" class="muted recovery-empty">
+                              No recovery credits have been allocated to this
+                              queue item yet.
+                            </td>
+                          </tr>
+                          } @for (credit of credits; track credit.tradeKey) {
+                          <tr>
+                            <td>{{ credit.sourceLabel }}</td>
+                            <td>
+                              <div class="recovery-attempt-title">
+                                <strong>{{ credit.eventTitle }}</strong>
+                                <span class="muted"
+                                  >{{ credit.competition }}</span
+                                >
+                              </div>
+                            </td>
+                            <td>
+                              {{ credit.settledTime ? (credit.settledTime |
+                              date:'short') : '-' }}
+                            </td>
+                            <td
+                              [class.pos]="(credit.pnlUsd || 0) > 0"
+                              [class.neg]="(credit.pnlUsd || 0) < 0"
+                            >
+                              {{ credit.pnlUsd === null || credit.pnlUsd ===
+                              undefined ? '-' : (credit.pnlUsd |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td class="pos">
+                              {{ credit.allocatedRecoveryUsd |
+                              currency:'USD':'symbol':'1.2-2' }}
+                            </td>
+                          </tr>
+                          }
+                          <tr class="recovery-subtable__totals">
+                            <td colspan="2">Recovery Totals</td>
+                            <td>{{ credits.length }} credits</td>
+                            <td
+                              [class.pos]="(recoveryCreditsTotalPnlUsd(r) || 0) > 0"
+                              [class.neg]="(recoveryCreditsTotalPnlUsd(r) || 0) < 0"
+                            >
+                              {{ recoveryCreditsTotalPnlUsd(r) === null ||
+                              recoveryCreditsTotalPnlUsd(r) === undefined ? '-'
+                              : (recoveryCreditsTotalPnlUsd(r) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                            <td class="pos">
+                              {{ recoveryCreditsTotalAllocatedUsd(r) === null ||
+                              recoveryCreditsTotalAllocatedUsd(r) === undefined
+                              ? '-' : (recoveryCreditsTotalAllocatedUsd(r) |
+                              currency:'USD':'symbol':'1.2-2') }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </td>
+              </tr>
               }
             </tbody>
           </table>
@@ -830,18 +1941,41 @@
         <div class="panel-title-row">
           <div>
             <h2>Bot Health</h2>
-            <p class="panel-subtitle">System status, failure visibility, and recency of execution support trust and fast diagnosis.</p>
+            <p class="panel-subtitle">
+              System status, failure visibility, and recency of execution
+              support trust and fast diagnosis.
+            </p>
           </div>
         </div>
         <ul class="facts">
-          <li><span>Last Cycle</span><strong>{{ d.bot.lastCycleAt ? (d.bot.lastCycleAt | date:'medium') : 'Never' }}</strong></li>
+          <li>
+            <span>Last Cycle</span
+            ><strong
+              >{{ d.bot.lastCycleAt ? (d.bot.lastCycleAt | date:'medium') :
+              'Never' }}</strong
+            >
+          </li>
           <li><span>Status</span><strong>{{ d.bot.status }}</strong></li>
           <li><span>Reason</span><strong>{{ d.bot.statusReason }}</strong></li>
-          <li><span>Last Error</span><strong>{{ d.bot.lastError || 'None' }}</strong></li>
-          <li><span>Tracked Events</span><strong>{{ d.bot.tradedEventsCount }}</strong></li>
-          <li><span>Cycles</span><strong>{{ d.metrics.totalCycles }}</strong></li>
-          <li><span>Order Not Filled</span><strong>{{ d.metrics.totalNotFilled }}</strong></li>
-          <li><span>Total Errors</span><strong>{{ d.metrics.totalErrors }}</strong></li>
+          <li>
+            <span>Last Error</span
+            ><strong>{{ d.bot.lastError || 'None' }}</strong>
+          </li>
+          <li>
+            <span>Tracked Events</span
+            ><strong>{{ d.bot.tradedEventsCount }}</strong>
+          </li>
+          <li>
+            <span>Cycles</span><strong>{{ d.metrics.totalCycles }}</strong>
+          </li>
+          <li>
+            <span>Order Not Filled</span
+            ><strong>{{ d.metrics.totalNotFilled }}</strong>
+          </li>
+          <li>
+            <span>Total Errors</span
+            ><strong>{{ d.metrics.totalErrors }}</strong>
+          </li>
         </ul>
       </article>
 
@@ -849,60 +1983,192 @@
         <div class="panel-title-row">
           <div>
             <h2>Strategy Guardrails</h2>
-            <p class="panel-subtitle">Constraints are grouped here because they define what the bot is allowed to do before any order is considered.</p>
+            <p class="panel-subtitle">
+              Constraints are grouped here because they define what the bot is
+              allowed to do before any order is considered.
+            </p>
           </div>
         </div>
         <ul class="facts">
-          <li><span>Stake</span><strong>{{ d.config.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
-          <li><span>Max YES Price</span><strong>{{ d.config.maxYesPrice | percent:'1.0-0' }}</strong></li>
-          <li><span>Trigger</span><strong>{{ d.config.minTriggerMinute }}'+ and {{ d.config.minGoalLead }}+ lead</strong></li>
-          <li><span>Retry Until</span><strong>{{ d.config.retryUntilMinute }}'</strong></li>
-          <li><span>Daily Stop Loss</span><strong>{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
-          <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? 'ON (closed-loss queue)' : 'OFF' }}</strong></li>
-          <li><span>Leagues</span><strong>{{ d.config.leagues.length }}</strong></li>
+          <li>
+            <span>Stake</span
+            ><strong
+              >{{ d.config.stakeUsd | currency:'USD':'symbol':'1.0-0' }}</strong
+            >
+          </li>
+          <li>
+            <span>Max YES Price</span
+            ><strong>{{ d.config.maxYesPrice | percent:'1.0-0' }}</strong>
+          </li>
+          <li>
+            <span>Trigger</span
+            ><strong
+              >{{ d.config.minTriggerMinute }}'+ and {{ d.config.minGoalLead }}+
+              lead</strong
+            >
+          </li>
+          <li>
+            <span>Retry Until</span
+            ><strong>{{ d.config.retryUntilMinute }}'</strong>
+          </li>
+          <li>
+            <span>Daily Stop Loss</span
+            ><strong
+              >{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0'
+              }}</strong
+            >
+          </li>
+          <li>
+            <span>Recovery Mode</span
+            ><strong
+              >{{ d.config.recoveryModeEnabled ? 'ON (closed-loss queue)' :
+              'OFF' }}</strong
+            >
+          </li>
+          <li>
+            <span>Recovery Conditions</span
+            ><strong
+              >{{ recoveryConditionSummary(d.config.recoveryConditions)
+              }}</strong
+            >
+          </li>
+          <li>
+            <span>Leagues</span><strong>{{ d.config.leagues.length }}</strong>
+          </li>
         </ul>
       </article>
     </section>
 
     <section class="analytics-layout">
       <section class="panel">
-      <div class="panel-title-row">
-        <h2>League Leaderboard</h2>
-        <span class="chip">{{ d.leagueLeaderboard.length }} leagues</span>
-      </div>
-      <div class="table-wrap terminal-table">
-        <table>
-          <thead>
-            <tr>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'league')">League <span>{{ sortIndicator('leagueLeaderboard', 'league') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'trades')">Trades <span>{{ sortIndicator('leagueLeaderboard', 'trades') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'wins')">Wins <span>{{ sortIndicator('leagueLeaderboard', 'wins') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'losses')">Losses <span>{{ sortIndicator('leagueLeaderboard', 'losses') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'winRate')">Win Rate <span>{{ sortIndicator('leagueLeaderboard', 'winRate') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'avgRoiPct')">Avg ROI <span>{{ sortIndicator('leagueLeaderboard', 'avgRoiPct') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('leagueLeaderboard', 'totalPnlUsd')">Total PnL <span>{{ sortIndicator('leagueLeaderboard', 'totalPnlUsd') }}</span></button></th>
-            </tr>
-          </thead>
-          <tbody>
-            @if (!d.leagueLeaderboard.length) {
-              <tr><td colspan="7" class="muted">No settled league stats yet</td></tr>
-            }
-            @for (r of sortedLeagueLeaderboard(); track r.league) {
+        <div class="panel-title-row">
+          <h2>League Leaderboard</h2>
+          <span class="chip">{{ d.leagueLeaderboard.length }} leagues</span>
+        </div>
+        <div class="table-wrap terminal-table">
+          <table>
+            <thead>
+              <tr>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'league')"
+                  >
+                    League
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'league') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'trades')"
+                  >
+                    Trades
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'trades') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'wins')"
+                  >
+                    Wins
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'wins') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'losses')"
+                  >
+                    Losses
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'losses') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'winRate')"
+                  >
+                    Win Rate
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'winRate') }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'avgRoiPct')"
+                  >
+                    Avg ROI
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'avgRoiPct')
+                      }}</span
+                    >
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
+                    class="sort-button"
+                    (click)="setTableSort('leagueLeaderboard', 'totalPnlUsd')"
+                  >
+                    Total PnL
+                    <span
+                      >{{ sortIndicator('leagueLeaderboard', 'totalPnlUsd')
+                      }}</span
+                    >
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              @if (!d.leagueLeaderboard.length) {
+              <tr>
+                <td colspan="7" class="muted">No settled league stats yet</td>
+              </tr>
+              } @for (r of sortedLeagueLeaderboard(); track r.league) {
               <tr>
                 <td>{{ r.league }}</td>
                 <td>{{ r.trades }}</td>
                 <td>{{ r.wins }}</td>
                 <td>{{ r.losses }}</td>
-                <td>{{ r.winRate === null ? '-' : (r.winRate | percent:'1.1-2') }}</td>
-                <td [class.pos]="(r.avgRoiPct ?? 0) >= 0" [class.neg]="(r.avgRoiPct ?? 0) < 0">
-                  {{ r.avgRoiPct === null ? '-' : (r.avgRoiPct | percent:'1.1-2') }}
+                <td>
+                  {{ r.winRate === null ? '-' : (r.winRate | percent:'1.1-2') }}
                 </td>
-                <td [class.pos]="r.totalPnlUsd >= 0" [class.neg]="r.totalPnlUsd < 0">{{ r.totalPnlUsd | currency:'USD':'symbol':'1.2-2' }}</td>
+                <td
+                  [class.pos]="(r.avgRoiPct ?? 0) >= 0"
+                  [class.neg]="(r.avgRoiPct ?? 0) < 0"
+                >
+                  {{ r.avgRoiPct === null ? '-' : (r.avgRoiPct |
+                  percent:'1.1-2') }}
+                </td>
+                <td
+                  [class.pos]="r.totalPnlUsd >= 0"
+                  [class.neg]="r.totalPnlUsd < 0"
+                >
+                  {{ r.totalPnlUsd | currency:'USD':'symbol':'1.2-2' }}
+                </td>
               </tr>
-            }
-          </tbody>
-        </table>
-      </div>
+              }
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel panel--action-logs">
@@ -910,22 +2176,33 @@
           <h2>Action Logs</h2>
           <div class="log-toolbar">
             <div class="segmented-control">
-              <button type="button" class="segmented-control__button" [class.active]="logViewMode() === 'important'" (click)="setLogViewMode('important')">
+              <button
+                type="button"
+                class="segmented-control__button"
+                [class.active]="logViewMode() === 'important'"
+                (click)="setLogViewMode('important')"
+              >
                 Important
               </button>
-              <button type="button" class="segmented-control__button" [class.active]="logViewMode() === 'verbose'" (click)="setLogViewMode('verbose')">
+              <button
+                type="button"
+                class="segmented-control__button"
+                [class.active]="logViewMode() === 'verbose'"
+                (click)="setLogViewMode('verbose')"
+              >
                 Verbose
               </button>
             </div>
             <div class="segmented-control">
               @for (range of logTimeRanges; track range) {
-                <button
-                  type="button"
-                  class="segmented-control__button"
-                  [class.active]="logTimeRange() === range"
-                  (click)="setLogTimeRange(range)">
-                  {{ range }}
-                </button>
+              <button
+                type="button"
+                class="segmented-control__button"
+                [class.active]="logTimeRange() === range"
+                (click)="setLogTimeRange(range)"
+              >
+                {{ range }}
+              </button>
               }
             </div>
             <span class="chip">{{ visibleLogs().length }} records</span>
@@ -933,39 +2210,40 @@
         </div>
         <div class="log-list">
           @if (!visibleLogs().length) {
-            <div class="muted">No logs in this view for {{ logTimeRange() }}</div>
-          }
-          @for (item of visibleLogs().slice(0, 120); track item.ts + item.action) {
-            <div class="log-row">
-              <div class="log-rail">
-                <span class="log-ts">{{ item.ts | date:'shortTime' }}</span>
-                <span class="log-date">{{ item.ts | date:'MMM d' }}</span>
-                <span class="log-action" [ngClass]="logActionTone(item.action)">{{ logActionLabel(item.action) }}</span>
-              </div>
-              <div class="log-body">
-                <div class="log-headline">{{ logHeadline(item) }}</div>
-                @if (logPrimaryFields(item).length) {
-                  <div class="log-meta log-meta--primary">
-                    @for (field of logPrimaryFields(item); track field.key) {
-                      <span class="log-chip">
-                        <strong>{{ field.label }}</strong>
-                        <span>{{ field.value }}</span>
-                      </span>
-                    }
-                  </div>
-                }
-                @if (logSecondaryFields(item).length) {
-                  <div class="log-meta log-meta--secondary">
-                    @for (field of logSecondaryFields(item); track field.key) {
-                      <span class="log-chip log-chip--secondary">
-                        <strong>{{ field.label }}</strong>
-                        <span>{{ field.value }}</span>
-                      </span>
-                    }
-                  </div>
-                }
-              </div>
+          <div class="muted">No logs in this view for {{ logTimeRange() }}</div>
+          } @for (item of visibleLogs().slice(0, 120); track item.ts +
+          item.action) {
+          <div class="log-row">
+            <div class="log-rail">
+              <span class="log-ts">{{ item.ts | date:'shortTime' }}</span>
+              <span class="log-date">{{ item.ts | date:'MMM d' }}</span>
+              <span class="log-action" [ngClass]="logActionTone(item.action)"
+                >{{ logActionLabel(item.action) }}</span
+              >
             </div>
+            <div class="log-body">
+              <div class="log-headline">{{ logHeadline(item) }}</div>
+              @if (logPrimaryFields(item).length) {
+              <div class="log-meta log-meta--primary">
+                @for (field of logPrimaryFields(item); track field.key) {
+                <span class="log-chip">
+                  <strong>{{ field.label }}</strong>
+                  <span>{{ field.value }}</span>
+                </span>
+                }
+              </div>
+              } @if (logSecondaryFields(item).length) {
+              <div class="log-meta log-meta--secondary">
+                @for (field of logSecondaryFields(item); track field.key) {
+                <span class="log-chip log-chip--secondary">
+                  <strong>{{ field.label }}</strong>
+                  <span>{{ field.value }}</span>
+                </span>
+                }
+              </div>
+              }
+            </div>
+          </div>
           }
         </div>
       </section>
@@ -980,76 +2258,508 @@
         <table>
           <thead>
             <tr>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'settledTime')">Settled <span>{{ sortIndicator('closedTrades', 'settledTime') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'ticker')">Ticker <span>{{ sortIndicator('closedTrades', 'ticker') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'eventTitle')">Event <span>{{ sortIndicator('closedTrades', 'eventTitle') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'marketResult')">Result <span>{{ sortIndicator('closedTrades', 'marketResult') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'amountBetUsd')">Amt Bet <span>{{ sortIndicator('closedTrades', 'amountBetUsd') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'totalReturnUsd')">Total Return <span>{{ sortIndicator('closedTrades', 'totalReturnUsd') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'pnlUsd')">PnL <span>{{ sortIndicator('closedTrades', 'pnlUsd') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'roiPct')">ROI <span>{{ sortIndicator('closedTrades', 'roiPct') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'winsToRecover')">Recovery Wins <span>{{ sortIndicator('closedTrades', 'winsToRecover') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'placedCondition')">Placed Condition <span>{{ sortIndicator('closedTrades', 'placedCondition') }}</span></button></th>
-              <th><button type="button" class="sort-button" (click)="setTableSort('closedTrades', 'cards')">Cards <span>{{ sortIndicator('closedTrades', 'cards') }}</span></button></th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'settledTime')"
+                >
+                  Settled
+                  <span
+                    >{{ sortIndicator('closedTrades', 'settledTime') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'ticker')"
+                >
+                  Ticker
+                  <span>{{ sortIndicator('closedTrades', 'ticker') }}</span>
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'eventTitle')"
+                >
+                  Event
+                  <span>{{ sortIndicator('closedTrades', 'eventTitle') }}</span>
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'marketResult')"
+                >
+                  Result
+                  <span
+                    >{{ sortIndicator('closedTrades', 'marketResult') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'amountBetUsd')"
+                >
+                  Amt Bet
+                  <span
+                    >{{ sortIndicator('closedTrades', 'amountBetUsd') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'totalReturnUsd')"
+                >
+                  Total Return
+                  <span
+                    >{{ sortIndicator('closedTrades', 'totalReturnUsd') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'pnlUsd')"
+                >
+                  PnL <span>{{ sortIndicator('closedTrades', 'pnlUsd') }}</span>
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'roiPct')"
+                >
+                  ROI <span>{{ sortIndicator('closedTrades', 'roiPct') }}</span>
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'winsToRecover')"
+                >
+                  Recovery Wins
+                  <span
+                    >{{ sortIndicator('closedTrades', 'winsToRecover') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'placedCondition')"
+                >
+                  Placed Condition
+                  <span
+                    >{{ sortIndicator('closedTrades', 'placedCondition')
+                    }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('closedTrades', 'cards')"
+                >
+                  Cards
+                  <span>{{ sortIndicator('closedTrades', 'cards') }}</span>
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody>
             @if (!d.closedTrades.length) {
-              <tr><td colspan="11" class="muted">No settled trades yet</td></tr>
-            }
-            @for (t of sortedClosedTrades().slice(0, 80); track t.ticker + t.settled_time) {
-              <tr>
-                <td>{{ t.settled_time | date:'short' }}</td>
-                <td>{{ t.ticker }}</td>
-                <td>{{ t.placed_context?.eventTitle || t.event_ticker || '-' }}</td>
-                <td>{{ t.market_result }}</td>
-                <td>{{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd | currency:'USD':'symbol':'1.2-2') }}</td>
-                <td [class.pos]="(t.total_return_usd ?? 0) >= (t.amount_bet_usd ?? 0)" [class.neg]="(t.total_return_usd ?? 0) < (t.amount_bet_usd ?? 0)">
-                  {{ t.total_return_usd === undefined ? '-' : (t.total_return_usd | currency:'USD':'symbol':'1.2-2') }}
-                </td>
-                <td [class.pos]="t.pnl_usd >= 0" [class.neg]="t.pnl_usd < 0">{{ t.pnl_usd | currency:'USD':'symbol':'1.2-2' }}</td>
-                <td [class.pos]="(t.roi_pct ?? 0) >= 0" [class.neg]="(t.roi_pct ?? 0) < 0">
-                  {{ t.roi_pct === null || t.roi_pct === undefined ? '-' : (t.roi_pct | percent:'1.1-2') }}
-                </td>
-                <td>{{ t.wins_to_recover_at_avg_win ?? '-' }}</td>
-                <td>
-                  @if (!t.placed_context) { - }
-                  @if (t.placed_context) {
-                    {{ t.placed_context.triggerRule || 'RULE' }} | {{ t.placed_context.placedMinute ?? '-' }}' | {{ t.placed_context.placedScore || '-' }} | {{ t.placed_context.selectedOutcome || t.placed_context.leadingTeam || '-' }}@if (t.placed_context.triggerRule !== 'POST_85_TIE_YES') { | Max lead {{ t.placed_context.leadingTeamMaxLead ?? '-' }} } | Red (H-A) {{ t.placed_context.placedCards || '-' }}
-                  }
-                </td>
-                <td>
-                  @if (!t.placed_context) { - }
-                  @if (t.placed_context) {
-                    {{ t.placed_context.placedCards || '-' }}
-                  }
-                </td>
-              </tr>
+            <tr>
+              <td colspan="11" class="muted">No settled trades yet</td>
+            </tr>
+            } @for (t of sortedClosedTrades(); track closedTradeTrackKey(t)) {
+            <tr>
+              <td>{{ t.settled_time | date:'short' }}</td>
+              <td>{{ t.ticker }}</td>
+              <td>
+                {{ t.placed_context?.eventTitle || t.event_ticker || '-' }}
+              </td>
+              <td>{{ t.market_result }}</td>
+              <td>
+                {{ t.amount_bet_usd === undefined ? '-' : (t.amount_bet_usd |
+                currency:'USD':'symbol':'1.2-2') }}
+              </td>
+              <td
+                [class.pos]="(t.total_return_usd ?? 0) >= (t.amount_bet_usd ?? 0)"
+                [class.neg]="(t.total_return_usd ?? 0) < (t.amount_bet_usd ?? 0)"
+              >
+                {{ t.total_return_usd === undefined ? '-' : (t.total_return_usd
+                | currency:'USD':'symbol':'1.2-2') }}
+              </td>
+              <td [class.pos]="t.pnl_usd >= 0" [class.neg]="t.pnl_usd < 0">
+                {{ t.pnl_usd | currency:'USD':'symbol':'1.2-2' }}
+              </td>
+              <td
+                [class.pos]="(t.roi_pct ?? 0) >= 0"
+                [class.neg]="(t.roi_pct ?? 0) < 0"
+              >
+                {{ t.roi_pct === null || t.roi_pct === undefined ? '-' :
+                (t.roi_pct | percent:'1.1-2') }}
+              </td>
+              <td>{{ t.wins_to_recover_at_avg_win ?? '-' }}</td>
+              <td>
+                @if (!t.placed_context) { - } @if (t.placed_context) { {{
+                t.placed_context.triggerRule || 'RULE' }} | {{
+                t.placed_context.placedMinute ?? '-' }}' | {{
+                t.placed_context.placedScore || '-' }} | {{
+                t.placed_context.selectedOutcome || t.placed_context.leadingTeam
+                || '-' }}@if (t.placed_context.triggerRule !==
+                'POST_85_TIE_YES') { | Max lead {{
+                t.placed_context.leadingTeamMaxLead ?? '-' }} } | Red (H-A) {{
+                t.placed_context.placedCards || '-' }} }
+              </td>
+              <td>
+                @if (!t.placed_context) { - } @if (t.placed_context) { {{
+                t.placed_context.placedCards || '-' }} }
+              </td>
+            </tr>
             }
           </tbody>
         </table>
       </div>
     </section>
-	  }
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <h2>Strategy Leaderboard</h2>
+        <span class="chip"
+          >{{ (d.strategyLeaderboard || []).length }} strategies</span
+        >
+      </div>
+      <div class="table-wrap terminal-table">
+        <table>
+          <thead>
+            <tr>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'strategy')"
+                >
+                  Strategy
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'strategy')
+                    }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'trades')"
+                >
+                  Trades
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'trades') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'wins')"
+                >
+                  Wins
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'wins') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'losses')"
+                >
+                  Losses
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'losses') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'winRate')"
+                >
+                  Win Rate
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'winRate') }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'avgRoiPct')"
+                >
+                  Avg ROI
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'avgRoiPct')
+                    }}</span
+                  >
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  class="sort-button"
+                  (click)="setTableSort('strategyLeaderboard', 'totalPnlUsd')"
+                >
+                  Total PnL
+                  <span
+                    >{{ sortIndicator('strategyLeaderboard', 'totalPnlUsd')
+                    }}</span
+                  >
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (!(d.strategyLeaderboard || []).length) {
+            <tr>
+              <td colspan="7" class="muted">No settled strategy stats yet</td>
+            </tr>
+            } @for (r of sortedStrategyLeaderboard(); track r.strategy) {
+            <tr>
+              <td>{{ r.strategy }}</td>
+              <td>{{ r.trades }}</td>
+              <td>{{ r.wins }}</td>
+              <td>{{ r.losses }}</td>
+              <td>
+                {{ r.winRate === null ? '-' : (r.winRate | percent:'1.1-2') }}
+              </td>
+              <td
+                [class.pos]="(r.avgRoiPct ?? 0) >= 0"
+                [class.neg]="(r.avgRoiPct ?? 0) < 0"
+              >
+                {{ r.avgRoiPct === null ? '-' : (r.avgRoiPct | percent:'1.1-2')
+                }}
+              </td>
+              <td
+                [class.pos]="r.totalPnlUsd >= 0"
+                [class.neg]="r.totalPnlUsd < 0"
+              >
+                {{ r.totalPnlUsd | currency:'USD':'symbol':'1.2-2' }}
+              </td>
+            </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+    }
   </div>
+  @if (settingsOpen()) { @if (data(); as d) {
+  <div class="settings-modal-backdrop" (click)="closeSettings()">
+    <section
+      class="settings-modal panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-modal-title"
+      (click)="$event.stopPropagation()"
+    >
+      <div class="settings-modal__header">
+        <div>
+          <p class="settings-modal__eyebrow">Runtime Overrides</p>
+          <h2 id="settings-modal-title">Settings</h2>
+          <p class="panel-subtitle">
+            Update live trading overrides without restarting the bot.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="settings-modal__close"
+          aria-label="Close settings"
+          (click)="closeSettings()"
+        >
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+
+      <div class="settings-modal__meta">
+        <span class="chip">
+          Recovery floor {{ runtimeSizingValidation().minRecoveryMaxUsd |
+          currency:'USD':'symbol':'1.2-2' }}
+        </span>
+        <span class="chip"
+          >Base cap {{ 20 | currency:'USD':'symbol':'1.0-0' }}</span
+        >
+        <span class="chip"
+          >Recovery cap {{ 100 | currency:'USD':'symbol':'1.0-0' }}</span
+        >
+        <span class="chip"
+          >Stop-loss floor {{ 1 | currency:'USD':'symbol':'1.0-0' }}</span
+        >
+      </div>
+
+      <div class="settings-modal__grid">
+        <label class="runtime-sizing-field">
+          <span>Base Stake Per Bet</span>
+          <input
+            type="number"
+            inputmode="decimal"
+            min="0.1"
+            max="20"
+            step="0.1"
+            [value]="runtimeStakeInput()"
+            (input)="updateRuntimeStakeInput($any($event.target).value)"
+          />
+        </label>
+        <label class="runtime-sizing-field">
+          <span>Max Recovery Bet</span>
+          <input
+            type="number"
+            inputmode="decimal"
+            min="2"
+            max="100"
+            step="0.1"
+            [value]="runtimeRecoveryMaxInput()"
+            (input)="updateRuntimeRecoveryMaxInput($any($event.target).value)"
+          />
+        </label>
+        <label class="runtime-sizing-field">
+          <span>Max Stop Loss</span>
+          <input
+            type="number"
+            inputmode="decimal"
+            min="1"
+            step="1"
+            [value]="runtimeMaxDailyLossInput()"
+            (input)="updateRuntimeMaxDailyLossInput($any($event.target).value)"
+          />
+        </label>
+      </div>
+
+      <div class="settings-modal__hold">
+        <div class="settings-modal__hold-copy">
+          <span class="settings-modal__section-label"
+            >Stop / Remove Trading Hold</span
+          >
+          <strong>
+            @if (d.bot.riskHaltOverrideActive) { Hold Removed } @else if
+            (d.bot.riskHaltedToday) { Hold Active } @else { No Hold Active }
+          </strong>
+          <p class="panel-subtitle">
+            Remove the daily stop-loss hold after it fires, or restore it after
+            a bypass.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="account-strip__button account-strip__button--neutral"
+          [disabled]="riskHaltBusy() || (!d.bot.riskHaltedToday && !d.bot.riskHaltOverrideActive)"
+          (click)="toggleRiskHalt(!!d.bot.riskHaltOverrideActive)"
+        >
+          @if (riskHaltBusy()) { Updating... } @else if
+          (d.bot.riskHaltOverrideActive) { Restore Trading Hold } @else if
+          (d.bot.riskHaltedToday) { Remove Trading Hold } @else { No Hold Active
+          }
+        </button>
+      </div>
+
+      <div class="settings-modal__footer">
+        <p
+          class="settings-modal__note"
+          [class.settings-modal__note--error]="!!sizingError() || (sizingDirty() && !runtimeSizingValidation().valid)"
+        >
+          @if (sizingError()) { {{ sizingError() }} } @else if (sizingDirty() &&
+          !runtimeSizingValidation().valid) { {{
+          runtimeSizingValidation().message }} } @else if
+          (runtimeSizingHasChanges()) { Unsaved override ready. Recovery max
+          must stay above the current recovery stake floor and max stop loss
+          must stay at or above $1. } @else { Live values: base {{
+          d.config.stakeUsd | currency:'USD':'symbol':'1.2-2' }} | recovery max
+          {{ (d.config.recoveryMaxStakeUsd ?? 20) |
+          currency:'USD':'symbol':'1.2-2' }} | max stop loss {{
+          d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.2-2' }} }
+        </p>
+        <div class="settings-modal__actions">
+          <button
+            type="button"
+            class="account-strip__button account-strip__button--ghost"
+            [disabled]="sizingBusy()"
+            (click)="applyRuntimeSizingDefaults()"
+          >
+            Defaults
+          </button>
+          <button
+            type="button"
+            class="account-strip__button account-strip__button--neutral"
+            [disabled]="sizingBusy() || !runtimeSizingValidation().valid || !runtimeSizingHasChanges()"
+            (click)="saveRuntimeSizing()"
+          >
+            @if (sizingBusy()) { Saving... } @else { Save Settings }
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+  } }
   <button
     class="theme-fab"
     type="button"
     (click)="toggleTheme()"
-    [attr.aria-label]="theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+    [attr.aria-label]="theme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+  >
     @if (theme() === 'dark') {
-      <svg viewBox="0 0 24 24" class="theme-icon theme-icon--sun" aria-hidden="true">
-        <circle class="theme-icon__sun-core" cx="12" cy="12" r="4.3" />
-        <circle class="theme-icon__sun-halo" cx="12" cy="12" r="6.3" />
-        <path class="theme-icon__sun-ray" d="M12 2.4v2.6M12 19v2.6M21.6 12H19M5 12H2.4M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9M18.8 18.8l-1.9-1.9M7.1 7.1 5.2 5.2" />
-      </svg>
+    <svg
+      viewBox="0 0 24 24"
+      class="theme-icon theme-icon--sun"
+      aria-hidden="true"
+    >
+      <circle class="theme-icon__sun-core" cx="12" cy="12" r="4.3" />
+      <circle class="theme-icon__sun-halo" cx="12" cy="12" r="6.3" />
+      <path
+        class="theme-icon__sun-ray"
+        d="M12 2.4v2.6M12 19v2.6M21.6 12H19M5 12H2.4M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9M18.8 18.8l-1.9-1.9M7.1 7.1 5.2 5.2"
+      />
+    </svg>
     } @else {
-      <svg viewBox="0 0 24 24" class="theme-icon theme-icon--moon" aria-hidden="true">
-        <path class="theme-icon__moon-halo" d="M16.8 4.8a8.8 8.8 0 1 0 0 14.4A9.8 9.8 0 0 1 16.8 4.8Z" />
-        <path class="theme-icon__moon-body" d="M15.7 4.1a8.55 8.55 0 1 0 0 15.8c-3.9-.3-7-3.55-7-7.9s3.1-7.6 7-7.9Z" />
-        <circle class="theme-icon__moon-star" cx="17.8" cy="7.2" r="0.9" />
-        <circle class="theme-icon__moon-star theme-icon__moon-star--small" cx="19.3" cy="11" r="0.55" />
-      </svg>
+    <svg
+      viewBox="0 0 24 24"
+      class="theme-icon theme-icon--moon"
+      aria-hidden="true"
+    >
+      <path
+        class="theme-icon__moon-halo"
+        d="M16.8 4.8a8.8 8.8 0 1 0 0 14.4A9.8 9.8 0 0 1 16.8 4.8Z"
+      />
+      <path
+        class="theme-icon__moon-body"
+        d="M15.7 4.1a8.55 8.55 0 1 0 0 15.8c-3.9-.3-7-3.55-7-7.9s3.1-7.6 7-7.9Z"
+      />
+      <circle class="theme-icon__moon-star" cx="17.8" cy="7.2" r="0.9" />
+      <circle
+        class="theme-icon__moon-star theme-icon__moon-star--small"
+        cx="19.3"
+        cy="11"
+        r="0.55"
+      />
+    </svg>
     }
   </button>
 </main>

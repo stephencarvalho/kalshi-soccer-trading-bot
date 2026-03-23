@@ -3,6 +3,7 @@ export interface DashboardRuntimeConfig {
   apiToken: string;
   supabaseUrl: string;
   supabasePublishableKey: string;
+  monitorPort: string;
 }
 
 declare global {
@@ -15,14 +16,32 @@ function sanitizeBaseUrl(value: string | undefined): string {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
+function sanitizePort(value: string | undefined): string {
+  const trimmed = String(value || '').trim();
+  return /^\d+$/.test(trimmed) ? trimmed : '8787';
+}
+
+function inferDevApiBaseUrl(monitorPort: string): string {
+  const hostname = String(window.location?.hostname || '').trim();
+  const protocol = String(window.location?.protocol || 'http:').trim() || 'http:';
+  const port = String(window.location?.port || '').trim();
+  const devPorts = new Set(['4200', '4201', '4300']);
+
+  if (!hostname || !devPorts.has(port)) return '';
+  return `${protocol}//${hostname}:${monitorPort}`;
+}
+
 export function getDashboardRuntimeConfig(): DashboardRuntimeConfig {
   const runtime = window.__DASHBOARD_RUNTIME__ || {};
+  const monitorPort = sanitizePort((runtime as Partial<DashboardRuntimeConfig>).monitorPort);
+  const apiBaseUrl = sanitizeBaseUrl(runtime.apiBaseUrl) || inferDevApiBaseUrl(monitorPort);
 
   return {
-    apiBaseUrl: sanitizeBaseUrl(runtime.apiBaseUrl),
+    apiBaseUrl,
     apiToken: String(runtime.apiToken || '').trim(),
     supabaseUrl: sanitizeBaseUrl(runtime.supabaseUrl),
     supabasePublishableKey: String(runtime.supabasePublishableKey || '').trim(),
+    monitorPort,
   };
 }
 

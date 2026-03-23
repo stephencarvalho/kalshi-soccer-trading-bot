@@ -16,12 +16,14 @@ const apiBaseUrl = String(process.env.DASHBOARD_API_BASE_URL || '').trim();
 const apiToken = String(process.env.DASHBOARD_API_TOKEN || '').trim();
 const supabaseUrl = String(process.env.SUPABASE_URL || '').trim();
 const supabasePublishableKey = String(process.env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+const monitorPort = String(process.env.MONITOR_PORT || '8787').trim();
 
 const payload = {
   apiBaseUrl,
   apiToken,
   supabaseUrl,
   supabasePublishableKey,
+  monitorPort,
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });

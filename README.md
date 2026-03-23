@@ -8,7 +8,34 @@ The bot scans live soccer events, applies rule-based entry logic, places IOC ord
 
 - Node.js `>= 20.19.0` (Angular 21 compatible)
 - npm
+- `mise` (recommended): <https://mise.jdx.dev/getting-started.html>
 - Kalshi API key ID + RSA private key in a local `.pem` file
+
+### Install `mise`
+
+macOS:
+
+```bash
+brew install mise
+```
+
+Windows (`winget`):
+
+```powershell
+winget install jdx.mise
+```
+
+Windows (`scoop`):
+
+```powershell
+scoop install mise
+```
+
+After install, restart your terminal and verify:
+
+```bash
+mise --version
+```
 
 Check versions:
 
@@ -22,6 +49,7 @@ npm -v
 - Never commit `.env` or `.pem` key files.
 - Rotate any key that was ever pasted into chat or logs.
 - Use `KALSHI_PRIVATE_KEY_PATH` (file path) instead of inline PEM in env.
+- Team standard: store local Kalshi PEMs under `./.certs/kalshi/`.
 
 ## Architecture
 
@@ -126,14 +154,39 @@ Controlled by:
 - `RECOVERY_MODE_ENABLED`
 - `RECOVERY_STAKE_USD`
 - `RECOVERY_MAX_STAKE_USD`
+- `RECOVERY_CONDITIONS`
+
+Supported `RECOVERY_CONDITIONS` values:
+
+- `late_two_goal_leader`
+  - Included in the default recovery setup.
+  - Recovery is allowed on a leader market at `75'+` with a live `2+` goal advantage.
+- `anytime_large_lead_signal`
+  - Included in the default recovery setup.
+  - Recovery is also allowed any time in the match when the leader is up by `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD` or more goals.
+  - The normal leader red-card filter still applies, so the leader cannot have more red cards than the trailing side.
+- `current_lead_signal`
+  - Recovery is allowed on the current/main lead signal family, such as `CURRENT_LEAD_2`.
+- `late_lead_signal`
+  - Recovery is allowed on the late lead signal family, such as `POST_85_LEAD_1`.
+- `late_tie_signal`
+  - Recovery is allowed on the late tie signal family, such as `POST_85_TIE_YES`.
+- Values can be combined as a comma-separated list, for example:
+  - `RECOVERY_CONDITIONS=late_two_goal_leader,anytime_large_lead_signal,late_lead_signal`
 
 Current queue logic:
 
-- Base stake remains `STAKE_USD` when there are no unresolved closed losses.
+- Base stake remains `STAKE_USD` when there are no unresolved closed losses, with a hard cap of `$20`.
+- The dashboard can change the live runtime `STAKE_USD`, `RECOVERY_MAX_STAKE_USD`, and `MAX_DAILY_LOSS_USD` overrides without restarting the bot. The default runtime values are `$1` base stake, `$20` recovery max, and `$50` daily stop-loss.
 - Only settled losing trades create recovery targets.
 - Open unrealized PnL does not affect recovery sizing.
-- The next trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
-- In-flight recovery trades reserve only the dollar amount they are targeting, not the entire loss row.
+- Recovery sizing is only allowed on candidates that match the configured `RECOVERY_CONDITIONS`.
+- Default recovery behavior keeps `late_two_goal_leader` enabled and also enables `anytime_large_lead_signal`, which allows recovery any time a team is leading by `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD+` goals while the normal leader red-card filter still passes.
+- The next qualifying recovery trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
+- Each recovery bet is hard-capped at `$100`, and the live recovery-max setting can be adjusted anywhere from `$2` to `$100`.
+- In-flight recovery trades reserve their expected net recovery after fees, not the full loss row and not the raw target amount.
+- If the oldest loss still has uncovered remaining recovery after current in-flight reservations, the bot can continue placing more recovery bets against that same loss.
+- If the bot already has a filled base trade on that same market, it may add one same-game recovery leg on top of the original base position.
 - Dashboard shows the recovery queue, remaining loss balance, and linked recovery attempts.
 
 ### Recovery bug fix: root cause and current behavior
@@ -141,20 +194,32 @@ Current queue logic:
 Root cause of the duplicate recovery-bet issue:
 
 - Recovery targets were built only from settled losses.
-- A recovery trade that had already been placed but had not settled yet did not reserve its `recoveryQueueId`.
+- A recovery trade that had already been placed but had not settled yet did not reserve its queued loss correctly.
 - On later scans, the bot still saw the same oldest unresolved loss as available and could size another recovery trade against it.
 - That made one closed loss capable of spawning multiple recovery bets before the first recovery attempt resolved.
 
 How recovery works now:
 
 - The oldest unresolved closed loss remains the active recovery target.
-- As soon as the bot places a recovery order, only that order's targeted recovery dollars are reserved in-flight.
-- If the oldest queued loss is larger than the in-flight recovery reservation, later recovery bets can still target the uncovered remainder of that same loss.
-- If the in-flight reservations fully cover the current oldest loss, the bot can advance to the next unresolved loss instead of duplicating coverage.
+- Recovery sizing only activates when the current candidate matches one of the configured `RECOVERY_CONDITIONS`.
+- Default runtime behavior keeps recovery on `late_two_goal_leader` and `anytime_large_lead_signal`, but recovery can also be enabled for `current_lead_signal`, `late_lead_signal`, and `late_tie_signal`.
+- If that qualifying candidate is a game where the bot already holds a filled base leg on the same market, the bot can place one additional same-game recovery add-on instead of skipping the event.
+- As soon as the bot places a recovery order, only that order's expected net profit after fees is reserved in-flight.
+- If the oldest queued loss is larger than the currently reserved expected recovery, later recovery bets can still target the uncovered remainder of that same loss.
+- If in-flight expected recovery fully covers the current oldest loss, the bot can advance to the next unresolved loss instead of duplicating coverage.
+- Recovery sizing is split across multiple bets automatically whenever a single capped recovery bet cannot cover the remaining unresolved loss.
 - Once the recovery trade settles, the queue is recalculated from actual closed-trade results and the bot either:
   - marks the loss as fully resolved,
-  - keeps it partially unresolved and waits for one new recovery attempt,
+  - keeps it partially unresolved and continues recovery sizing from the new remaining balance,
   - or advances to the next queued loss if the oldest one is fully recovered.
+
+### Recovery guardrails
+
+- A single recovery order can never exceed `$100`.
+- Existing `MAX_OPEN_POSITIONS`, balance checks, and daily-loss rules still apply.
+- Recovery reservations are fee-aware and based on expected net payout, so the bot does not incorrectly assume a capped bet fully covers a large loss.
+- Markets rejected by Kalshi with `400 invalid_parameters` are put on a cooldown before the bot will try them again.
+- Unexpected cycle errors now still refresh the bot heartbeat, so the dashboard can show a degraded-but-running agent instead of falsely showing it as fully down.
 
 ### Strategy and recovery flow
 
@@ -187,20 +252,51 @@ flowchart TD
 
     O --> P{Recovery mode enabled and unresolved settled loss exists?}
     P -- No --> Q[Use BASE sizing]
-    P -- Yes --> R[Target oldest unresolved loss in FIFO queue]
-    R --> S{Recovery queue item already has in-flight recovery trade?}
-    S -- Yes --> T[Skip new recovery order for that queue item]
-    S -- No --> U[Size one recovery order with fee-aware sizing]
+    P -- Yes --> R{Candidate matches configured RECOVERY_CONDITIONS?}
+    R -- No --> Q
+    R -- Yes --> S[Target oldest unresolved loss in FIFO queue]
+    S --> T[Measure uncovered recovery after fee-aware in-flight reservations]
+    T --> U{Uncovered recovery > 0?}
+    U -- No --> V[Stop adding recovery bets until settlements update queue]
+    U -- Yes --> W{Already holding base fill on same market?}
+    W -- No --> X[Size recovery order subject to 100 USD cap]
+    W -- Yes --> Y[Allow one same-game recovery add-on using recovery sizing]
 
-    Q --> V[Submit order]
-    U --> V
-    V --> W{Filled or resting?}
-    W -- No --> X[No trade recorded]
-    W -- Yes --> Y[Lock recovery queue item until settlement]
-    Y --> AA[Later settlement recomputes queue from realized PnL]
-    AA --> AB{Loss fully recovered?}
-    AB -- Yes --> AC[Advance to next queued loss or return to BASE sizing]
-    AB -- No --> AD[Keep same oldest loss queued for one future recovery attempt]
+    Q --> Z[Submit order]
+    X --> Z
+    Y --> Z
+    Z --> AA{Kalshi accepts order?}
+    AA -- No --> AB[Log detailed reject diagnostics and cooldown bad market]
+    AA -- Yes --> AC{Filled or resting?}
+    AC -- No --> AD[No trade recorded]
+    AC -- Yes --> AE[Reserve expected net recovery from this in-flight bet]
+    AE --> AF{Uncovered recovery still > 0 and capacity remains?}
+    AF -- Yes --> AG[Allow another recovery bet on a later market that matches RECOVERY_CONDITIONS]
+    AF -- No --> AH[Wait for settlements]
+    AH --> AI[Later settlement recomputes queue from realized PnL]
+    AI --> AJ{Loss fully recovered?}
+    AJ -- Yes --> AK[Advance to next queued loss or return to BASE sizing]
+    AJ -- No --> AL[Keep same oldest loss at front of queue]
+```
+
+### Recovery sizing algorithm
+
+```mermaid
+flowchart TD
+    A[Oldest unresolved loss remainingTargetUsd] --> B[Subtract reservedRecoveryUsd from every unsettled recovery bet tied to that queue row]
+    B --> C[Compute uncoveredRecoveryUsd]
+    C --> D{uncoveredRecoveryUsd <= 0?}
+    D -- Yes --> E[Do not place more recovery bets yet]
+    D -- No --> F[Choose next market that matches RECOVERY_CONDITIONS]
+    F --> G[If the event already has a filled base leg on the same market, allow one recovery add-on leg]
+    G --> H[Size contracts for uncovered target using fee-aware profit math]
+    H --> I[Apply min(balance, RECOVERY_MAX_STAKE_USD, 100 USD hard cap)]
+    I --> J{Can fully size target?}
+    J -- Yes --> K[Use RECOVERY_QUEUE sizing]
+    J -- No --> L[Use RECOVERY_QUEUE_CAPPED sizing]
+    K --> M[Reserve expected net profit, not raw target]
+    L --> M
+    M --> N[Repeat until uncoveredRecoveryUsd <= 0 or no qualifying market remains]
 ```
 
 ## Strategy Log and Rule History
@@ -240,6 +336,9 @@ This project keeps historical trigger labels in persisted trade metadata and act
   - Standard non-recovery order sizing using the configured base stake.
 - `RECOVERY_QUEUE_CAPPED`
   - Recovery mode sizing where the order was capped by current balance and/or `RECOVERY_MAX_STAKE_USD` instead of fully reaching the target recovery profit.
+- `GTC_RESTING_FILL`
+  - No longer intended as a user-facing strategy label.
+  - It is now only an execution detail for internal bookkeeping when a previously resting order is detected as filled later.
 
 ### Notes on historical logs
 
@@ -260,21 +359,63 @@ This project keeps historical trigger labels in persisted trade metadata and act
 
 ## Setup
 
-1. Install dependencies:
+1. Install the toolchain with `mise`:
 
 ```bash
-npm install
-cd dashboard && npm install && cd ..
+mise install
 ```
 
-2. Create local env file:
+2. Install project dependencies:
+
+```bash
+mise run setup
+```
+
+3. Create local env file:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Fill `.env` values (especially Kalshi credentials + key path).
+4. Fill `.env` values, especially Kalshi credentials and key path.
 
+Detailed local setup guide:
+
+- [docs/local-setup.md](/Users/ajaymarampalli/Desktop/projects/kalshi-soccer-trading-bot/docs/local-setup.md)
+- Kalshi API key guide: <https://docs.kalshi.com/getting_started/api_keys>
+- Kalshi account profile: <https://kalshi.com/account/profile>
+
+## Run With `mise`
+
+Task scripts are organized under `mise/tasks/` and loaded by `mise`, while `mise.toml` only pins the toolchain.
+
+Dry run, full stack:
+
+```bash
+mise run up:dry
+```
+
+Live mode, full stack:
+
+```bash
+mise run up:live
+```
+
+Individual services:
+
+```bash
+mise run start:bot:dry
+mise run start:bot:live
+mise run start:api
+mise run start:dashboard
+```
+
+## GitHub Workflows
+
+- CI: installs dependencies, runs backend syntax validation, and builds the Angular dashboard on pushes to `main` and on pull requests.
+- CodeQL: scans the JavaScript/TypeScript codebase on pushes to `main`, pull requests, and every Monday at 06:00 UTC.
+
+## Manual Run (3 terminals)
 ## Runner Handoff Checklist
 
 If someone else is going to run this project, hand them the following:
@@ -354,7 +495,8 @@ Risk defaults:
 Recovery defaults:
 - RECOVERY_MODE_ENABLED=true
 - RECOVERY_STAKE_USD=2
-- RECOVERY_MAX_STAKE_USD=50
+- RECOVERY_MAX_STAKE_USD=20
+- RECOVERY_CONDITIONS=late_two_goal_leader,anytime_large_lead_signal
 
 League scope:
 - LEAGUES=ALL
@@ -568,6 +710,8 @@ The dashboard will then read deposit history automatically from the saved web se
 - `STAKE_USD`
   - Why: base capital target per trade before recovery sizing adjustments.
   - Where to get it: account sizing decision.
+  - Dashboard: can be overridden live from the header gear-button settings modal.
+  - Hard cap: `$20` even if a higher value is configured.
 - `ESTIMATED_WIN_PROBABILITY`
   - Why: used with `FEE_BUFFER` to derive a default max yes price when `MAX_YES_PRICE` is unset.
   - Where to get it: internal strategy assumption.
@@ -605,6 +749,7 @@ The dashboard will then read deposit history automatically from the saved web se
 - `MAX_DAILY_LOSS_USD`
   - Why: pauses trading after realized losses reach the configured daily limit.
   - Where to get it: account risk preference.
+  - Dashboard: can be overridden live from the header gear-button settings modal.
 
 ### Recovery queue sizing
 
@@ -617,6 +762,13 @@ The dashboard will then read deposit history automatically from the saved web se
 - `RECOVERY_MAX_STAKE_USD`
   - Why: hard cap to stop recovery sizing from growing too large.
   - Where to get it: strategy/risk preference.
+  - Dashboard: can be overridden live from the header gear-button settings modal.
+  - Hard cap: `$100`.
+- `RECOVERY_CONDITIONS`
+  - Why: controls which live signal conditions are allowed to use recovery sizing.
+  - Where to get it: strategy/risk preference.
+  - Supported values: `late_two_goal_leader`, `anytime_large_lead_signal`, `current_lead_signal`, `late_lead_signal`, `late_tie_signal`.
+  - Format: comma-separated list in `.env` or an array/string in `data/runtime-overrides.json`.
 
 ### League selection and exclusions
 
@@ -650,6 +802,7 @@ The dashboard will then read deposit history automatically from the saved web se
 - `DASHBOARD_API_BASE_URL`
   - Why: tells the Angular dashboard where the monitor API lives when it is not served from the same origin.
   - Where to get it: the deployed monitor API URL, such as a local reverse proxy, VPS, or Netlify function gateway.
+  - Local dev fallback: if unset and the dashboard is running on the Angular dev server, it will automatically call `http://localhost:${MONITOR_PORT:-8787}`.
 - `DASHBOARD_API_TOKEN`
   - Why: lets the dashboard authenticate to the monitor API if `MONITOR_API_TOKEN` is enabled.
   - Where to get it: same value you generated for `MONITOR_API_TOKEN`.
@@ -659,6 +812,11 @@ The dashboard will then read deposit history automatically from the saved web se
 - `RUNTIME_OVERRIDES_FILE`
   - Why: stores live override values layered on top of `.env` without restarting the whole config workflow.
   - Where to get it: local file path chosen by the operator. The app creates the file if missing.
+
+### Netlify / deployed dashboard
+
+- `DASHBOARD_API_BASE_URL` should be set to the public monitor API base URL for Netlify deploys and deploy previews.
+- If this is left blank, the dashboard only works in local development where `/api/*` is proxied to `http://localhost:8787`.
 
 ## Logs and Data Persistence
 
