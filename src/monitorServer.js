@@ -1297,9 +1297,15 @@ app.post(
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
-    const checkMode = req.body?.checkMode === "stored" ? "stored" : "draft";
+    const requestedCheckMode =
+      req.body?.checkMode === "stored" ? "stored" : "draft";
     const kalshiApiKeyId = String(req.body?.kalshiApiKeyId || "").trim();
     const privateKeyPem = String(req.body?.privateKeyPem || "");
+    const checkMode =
+      requestedCheckMode === "stored" ||
+      (!kalshiApiKeyId && !privateKeyPem.trim())
+        ? "stored"
+        : "draft";
 
     try {
       const result =
