@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 
 const { config } = require("./config");
 const { createLogger } = require("./logger");
@@ -92,6 +93,52 @@ let logCache = {
   size: 0,
   parsed: [],
 };
+
+function createApiRateLimiter({ windowMs, max, message }) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (_req, res) => {
+      res.status(429).json({
+        ok: false,
+        error: "rate_limited",
+        message,
+      });
+    },
+  });
+}
+
+const dashboardIdentityLimiter = createApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: "Too many authentication requests. Please retry shortly.",
+});
+
+const dashboardReadLimiter = createApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  message: "Too many dashboard requests. Please retry shortly.",
+});
+
+const dashboardMutationLimiter = createApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: "Too many credential update requests. Please retry shortly.",
+});
+
+const credentialCheckLimiter = createApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: "Too many credential check requests. Please retry shortly.",
+});
+
+const monitorMutationLimiter = createApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: "Too many monitor API requests. Please retry shortly.",
+});
 
 function extractBearerToken(req) {
   const auth = String(req.headers.authorization || "");
@@ -1113,7 +1160,7 @@ app.get("/api/health", async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
-app.get("/api/me", requireDashboardAuth, async (req, res) => {
+app.get("/api/me", dashboardIdentityLimiter, requireDashboardAuth, async (req, res) => {
   const supabaseConfig = getSupabaseConfig();
   const user = req.supabaseUser || null;
 
@@ -1147,6 +1194,7 @@ app.get("/api/me", requireDashboardAuth, async (req, res) => {
 
 app.get(
   "/api/credentials",
+  dashboardReadLimiter,
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
@@ -1172,6 +1220,7 @@ app.get(
 
 app.post(
   "/api/credentials",
+  dashboardMutationLimiter,
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
@@ -1224,6 +1273,7 @@ app.post(
 
 app.post(
   "/api/credentials/check",
+  credentialCheckLimiter,
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
@@ -1268,6 +1318,7 @@ app.post(
 
 app.delete(
   "/api/credentials",
+  dashboardMutationLimiter,
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
@@ -1924,7 +1975,7 @@ async function publishDashboardSnapshotsForStoredCredentials(
   };
 }
 
-app.get("/api/dashboard", requireDashboardAuth, async (req, res) => {
+app.get("/api/dashboard", dashboardReadLimiter, requireDashboardAuth, async (req, res) => {
   try {
     logger.info(
       {
@@ -1969,7 +2020,7 @@ app.get("/api/dashboard", requireDashboardAuth, async (req, res) => {
     });
   }
 });
-app.post("/api/runtime/risk-halt", requireMonitorAuth, async (req, res) => {
+app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
   try {
     const requestedActive = req.body?.active;
     if (typeof requestedActive !== "boolean") {
@@ -2008,7 +2059,7 @@ app.post("/api/runtime/risk-halt", requireMonitorAuth, async (req, res) => {
   }
 });
 
-app.post("/api/runtime/sizing", requireMonitorAuth, async (req, res) => {
+app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
   try {
     const requestedStakeUsd = Number(req.body?.stakeUsd);
     const requestedRecoveryMaxStakeUsd = Number(req.body?.recoveryMaxStakeUsd);
