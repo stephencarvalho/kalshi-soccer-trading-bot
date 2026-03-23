@@ -334,6 +334,24 @@ interface PasswordRule {
   met: boolean;
 }
 
+interface CredentialStatus {
+  configured: boolean;
+  hasCredential: boolean;
+  kalshiApiKeyIdMasked: string | null;
+  pemFileName: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  keyVersion: number | null;
+}
+
+interface CredentialBannerState {
+  tone: 'attention' | 'setup';
+  title: string;
+  subtitle: string;
+}
+
+type CredentialHealthState = 'idle' | 'checking' | 'healthy' | 'failed';
+
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
 
 @Component({
@@ -425,6 +443,8 @@ export class App implements OnDestroy {
   private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private authSubscription?: { unsubscribe: () => void };
+  private credentialHealthTimer: ReturnType<typeof setTimeout> | null = null;
+  private credentialHealthRequestId = 0;
 
   readonly loading = signal(true);
   readonly authLoading = signal(isSupabaseBrowserAuthConfigured());
@@ -435,9 +455,24 @@ export class App implements OnDestroy {
   readonly authConfirmPassword = signal('');
   readonly authMode = signal<'login' | 'signup'>('login');
   readonly showPassword = signal(false);
+  readonly credentialMenuOpen = signal(false);
   readonly userMenuOpen = signal(false);
   readonly session = signal<Session | null>(null);
   readonly user = signal<User | null>(null);
+  readonly credentialsLoading = signal(false);
+  readonly credentialsSaving = signal(false);
+  readonly credentialsError = signal<string | null>(null);
+  readonly credentialsMessage = signal<string | null>(null);
+  readonly credentialStatusError = signal<string | null>(null);
+  readonly credentialStatus = signal<CredentialStatus | null>(null);
+  readonly credentialApiKeyId = signal('');
+  readonly credentialPem = signal('');
+  readonly credentialPemFileName = signal('');
+  readonly credentialReplaceMode = signal(false);
+  readonly credentialHealthInfoOpen = signal(false);
+  readonly credentialHealthState = signal<CredentialHealthState>('idle');
+  readonly credentialHealthMessage = signal<string | null>(null);
+  readonly credentialDeleteConfirm = signal(false);
   readonly error = signal<string | null>(null);
   readonly data = signal<DashboardPayload | null>(null);
   readonly now = signal(new Date());
@@ -985,6 +1020,60 @@ export class App implements OnDestroy {
     return Number((currentNetAccountValue - allTimePnl + this.chartStats().currentValue).toFixed(2));
   });
   readonly authConfigured = computed(() => isSupabaseBrowserAuthConfigured());
+  readonly credentialStorageConfigured = computed(() => this.credentialStatus()?.configured ?? false);
+  readonly hasStoredCredential = computed(() => this.credentialStatus()?.hasCredential ?? false);
+  readonly canSaveCredential = computed(() => Boolean(
+    (this.credentialStorageConfigured() || this.credentialStatusError())
+    && this.credentialApiKeyId().trim()
+    && this.credentialPem().trim()
+    && this.credentialPemFileName().trim(),
+  ));
+  readonly credentialBanner = computed<CredentialBannerState | null>(() => {
+    if (!this.session()) return null;
+
+    if (this.credentialStatusError()) {
+      return {
+        tone: 'attention',
+        title: this.credentialStatusError() || 'Kalshi credentials need attention.',
+        subtitle: 'Use the key icon in the top-right header to open Kalshi credentials.',
+      };
+    }
+
+    if (this.credentialStorageConfigured() && !this.hasStoredCredential()) {
+      return {
+        tone: 'setup',
+        title: 'Add your Kalshi credentials to unlock account data.',
+        subtitle: 'Use the key icon in the top-right header to upload your API key ID and PEM file.',
+      };
+    }
+
+    return null;
+  });
+  readonly credentialHealthLabel = computed(() => {
+    switch (this.credentialHealthState()) {
+      case 'checking':
+        return 'Checking...';
+      case 'healthy':
+        return 'Connected';
+      case 'failed':
+        return 'Failed';
+      default:
+        return 'Not Checked';
+    }
+  });
+  readonly credentialHealthClass = computed(() => {
+    switch (this.credentialHealthState()) {
+      case 'checking':
+        return 'status-info';
+      case 'healthy':
+        return 'status-good';
+      case 'failed':
+        return 'status-bad';
+      default:
+        return 'status-neutral';
+    }
+  });
+  readonly credentialHealthEndpointLabel = 'Kalshi endpoint: GET /portfolio/balance';
   readonly canFetchDashboard = computed(() => {
     const runtime = getDashboardRuntimeConfig();
     if (runtime.apiToken) return true;
@@ -1020,6 +1109,7 @@ export class App implements OnDestroy {
   ngOnDestroy(): void {
     this.authSubscription?.unsubscribe();
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.credentialHealthTimer) clearTimeout(this.credentialHealthTimer);
     if (this.chartInstance) {
       this.chartInstance.destroy();
       this.chartInstance = null;
@@ -1139,10 +1229,174 @@ export class App implements OnDestroy {
   toggleUserMenu(event?: Event): void {
     event?.stopPropagation();
     this.userMenuOpen.update((current) => !current);
+    this.credentialMenuOpen.set(false);
   }
 
   closeUserMenu(): void {
     this.userMenuOpen.set(false);
+  }
+
+  toggleCredentialMenu(event?: Event): void {
+    event?.stopPropagation();
+    this.credentialMenuOpen.update((current) => !current);
+    this.userMenuOpen.set(false);
+    this.credentialDeleteConfirm.set(false);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  closeCredentialMenu(): void {
+    this.credentialMenuOpen.set(false);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  updateCredentialField(field: 'apiKeyId' | 'pem', value: string): void {
+    if (field === 'apiKeyId') {
+      this.credentialApiKeyId.set(value);
+      if (this.credentialPem().trim() && this.credentialPemFileName().trim()) {
+        this.scheduleDraftCredentialHealthCheck();
+      } else {
+        this.scheduleStoredCredentialHealthCheck(0);
+      }
+      return;
+    }
+
+    this.credentialPem.set(value);
+    this.scheduleStoredCredentialHealthCheck(0);
+  }
+
+  beginDeleteCredential(): void {
+    this.credentialDeleteConfirm.set(true);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  cancelDeleteCredential(): void {
+    this.credentialDeleteConfirm.set(false);
+  }
+
+  beginReplaceCredential(): void {
+    this.credentialReplaceMode.set(true);
+    this.credentialDeleteConfirm.set(false);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialHealthInfoOpen.set(false);
+  }
+
+  cancelReplaceCredential(): void {
+    this.credentialReplaceMode.set(false);
+    this.credentialApiKeyId.set('');
+    this.credentialPem.set('');
+    this.credentialPemFileName.set('');
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialHealthInfoOpen.set(false);
+    this.scheduleStoredCredentialHealthCheck(0);
+  }
+
+  toggleCredentialHealthInfo(event?: Event): void {
+    event?.stopPropagation();
+    this.credentialHealthInfoOpen.update((current) => !current);
+  }
+
+  async handlePemFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (!file) return;
+
+    try {
+      const pemText = await file.text();
+      this.credentialPem.set(pemText);
+      this.credentialPemFileName.set(file.name);
+      this.credentialReplaceMode.set(this.hasStoredCredential());
+      this.credentialsError.set(null);
+      this.credentialsMessage.set(`Loaded ${file.name}. Save to encrypt and store it on the server.`);
+      this.scheduleDraftCredentialHealthCheck(0);
+    } catch {
+      this.credentialsError.set('Failed to read the selected PEM file.');
+      this.resetCredentialHealthCheck('failed', 'Kalshi API health check could not start because the PEM file could not be read.');
+    } finally {
+      if (input) input.value = '';
+    }
+  }
+
+  saveCredential(): void {
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.credentialsError.set('Sign in before saving Kalshi credentials.');
+      return;
+    }
+
+    this.credentialsSaving.set(true);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+
+    this.http.post<{ ok: boolean; message?: string; credentials?: CredentialStatus }>(
+      buildApiUrl('/api/credentials'),
+      {
+        kalshiApiKeyId: this.credentialApiKeyId().trim(),
+        privateKeyPem: this.credentialPem(),
+        pemFileName: this.credentialPemFileName(),
+      },
+      { headers },
+    ).subscribe({
+      next: (response) => {
+        const priorHealthState = this.credentialHealthState();
+        this.credentialsSaving.set(false);
+        this.credentialStatus.set(response.credentials || null);
+        this.credentialApiKeyId.set('');
+        this.credentialPem.set('');
+        this.credentialPemFileName.set('');
+        this.credentialReplaceMode.set(false);
+        if (priorHealthState === 'healthy') {
+          this.credentialHealthState.set('healthy');
+          this.credentialHealthMessage.set('Stored Kalshi credentials verified successfully.');
+        } else {
+          this.scheduleStoredCredentialHealthCheck(0);
+        }
+        this.credentialDeleteConfirm.set(false);
+        this.credentialsMessage.set(response.message || 'Kalshi credential saved securely.');
+        this.fetchDashboard();
+      },
+      error: (err) => {
+        this.credentialsSaving.set(false);
+        this.credentialsError.set(this.describeCredentialError(err, 'Failed to save Kalshi credential'));
+      },
+    });
+  }
+
+  deleteCredential(): void {
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.credentialsError.set('Sign in before deleting Kalshi credentials.');
+      return;
+    }
+
+    this.credentialsSaving.set(true);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+
+    this.http.delete<{ ok: boolean; message?: string; credentials?: CredentialStatus }>(
+      buildApiUrl('/api/credentials'),
+      { headers },
+    ).subscribe({
+      next: (response) => {
+        this.credentialsSaving.set(false);
+        this.credentialStatus.set(response.credentials || null);
+        this.credentialApiKeyId.set('');
+        this.credentialPem.set('');
+        this.credentialPemFileName.set('');
+        this.credentialReplaceMode.set(false);
+        this.resetCredentialHealthCheck();
+        this.credentialDeleteConfirm.set(false);
+        this.credentialsMessage.set(response.message || 'Kalshi credential removed.');
+        this.fetchDashboard();
+      },
+      error: (err) => {
+        this.credentialsSaving.set(false);
+        this.credentialsError.set(this.describeCredentialError(err, 'Failed to delete Kalshi credential'));
+      },
+    });
   }
 
   private async initializeAuth(): Promise<void> {
@@ -1174,13 +1428,28 @@ export class App implements OnDestroy {
     this.session.set(session);
     this.user.set(session?.user ?? null);
     this.userMenuOpen.set(false);
+    this.credentialMenuOpen.set(false);
     this.authLoading.set(false);
+    this.credentialsError.set(null);
+    this.credentialsMessage.set(null);
+    this.credentialStatusError.set(null);
 
     if (!session && this.authConfigured()) {
       this.data.set(null);
+      this.credentialStatus.set(null);
+      this.credentialApiKeyId.set('');
+      this.credentialPem.set('');
+      this.credentialPemFileName.set('');
+      this.credentialReplaceMode.set(false);
+      this.resetCredentialHealthCheck();
+      this.credentialDeleteConfirm.set(false);
       this.loading.set(false);
       this.error.set(null);
       return;
+    }
+
+    if (session) {
+      this.fetchCredentialStatus();
     }
 
     this.loading.set(true);
@@ -1223,6 +1492,7 @@ export class App implements OnDestroy {
 
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: MouseEvent): void {
+    this.closeCredentialMenu();
     this.closeUserMenu();
     const target = event.target as Node | null;
     const chartWrapEl = this.chartWrap?.nativeElement;
@@ -1322,9 +1592,7 @@ export class App implements OnDestroy {
       return;
     }
 
-    const runtime = getDashboardRuntimeConfig();
-    const accessToken = this.session()?.access_token || runtime.apiToken;
-    const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+    const headers = this.getAuthHeaders();
     const requestId = ++this.dashboardRequestId;
 
     this.http.get<DashboardPayload>(buildApiUrl('/api/dashboard'), { headers }).subscribe({
@@ -1345,6 +1613,182 @@ export class App implements OnDestroy {
         }
         this.data.set(null);
         this.error.set(err?.error?.message || err?.message || 'Failed to load dashboard data');
+      },
+    });
+  }
+
+  private fetchCredentialStatus(): void {
+    const headers = this.getAuthHeaders();
+    if (!headers || !this.session()) {
+      this.credentialStatus.set(null);
+      return;
+    }
+
+    this.credentialsLoading.set(true);
+    this.credentialsError.set(null);
+    this.credentialStatusError.set(null);
+
+    this.http.get<{ ok: boolean; credentials: CredentialStatus }>(buildApiUrl('/api/credentials'), { headers }).subscribe({
+      next: (response) => {
+        this.credentialsLoading.set(false);
+        this.credentialStatusError.set(null);
+        this.credentialStatus.set(response.credentials || null);
+        if (response.credentials?.hasCredential) {
+          this.credentialApiKeyId.set('');
+          this.credentialPem.set('');
+          this.credentialPemFileName.set('');
+          this.credentialReplaceMode.set(false);
+          this.credentialDeleteConfirm.set(false);
+          if (this.credentialHealthState() !== 'healthy') {
+            this.scheduleStoredCredentialHealthCheck(0);
+          }
+        } else {
+          this.resetCredentialHealthCheck();
+        }
+      },
+      error: (err) => {
+        this.credentialsLoading.set(false);
+        this.credentialStatus.set(null);
+        this.credentialStatusError.set(this.describeCredentialStatusBanner(err));
+      },
+    });
+  }
+
+  private getAuthHeaders(): { Authorization: string } | undefined {
+    const runtime = getDashboardRuntimeConfig();
+    const accessToken = this.session()?.access_token || runtime.apiToken;
+    return accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+  }
+
+  private describeCredentialError(err: { status?: number; error?: { message?: string }; message?: string }, fallback: string): string {
+    if (err?.status === 404) {
+      return 'Credential API not found. Restart `npm run monitor:api` so the local backend picks up the new routes.';
+    }
+
+    return err?.error?.message || err?.message || fallback;
+  }
+
+  private describeCredentialStatusBanner(err: { status?: number }): string {
+    if (err?.status === 404) {
+      return 'Kalshi credential tools are unavailable right now. Restart the local backend, then open the key icon in the top-right header.';
+    }
+
+    return 'Kalshi credentials need attention. Open the key icon in the top-right header to review or upload your API key ID and PEM file.';
+  }
+
+  private resetCredentialHealthCheck(
+    state: CredentialHealthState = 'idle',
+    message: string | null = null,
+  ): void {
+    if (this.credentialHealthTimer) {
+      clearTimeout(this.credentialHealthTimer);
+      this.credentialHealthTimer = null;
+    }
+    this.credentialHealthRequestId += 1;
+    this.credentialHealthState.set(state);
+    this.credentialHealthMessage.set(message);
+  }
+
+  private scheduleDraftCredentialHealthCheck(delayMs = 350): void {
+    this.resetCredentialHealthCheck();
+
+    if (!this.credentialPem().trim() || !this.credentialPemFileName().trim()) {
+      return;
+    }
+
+    if (!this.credentialApiKeyId().trim()) {
+      this.credentialHealthMessage.set('Add your Kalshi API key ID to run the Kalshi API health check.');
+      return;
+    }
+
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.credentialHealthState.set('failed');
+      this.credentialHealthMessage.set('Sign in before running the Kalshi API health check.');
+      return;
+    }
+
+    this.credentialHealthState.set('checking');
+    this.credentialHealthMessage.set('Checking the Kalshi API with the selected PEM file...');
+    const requestId = ++this.credentialHealthRequestId;
+
+    this.credentialHealthTimer = setTimeout(() => {
+      this.credentialHealthTimer = null;
+      this.runCredentialHealthCheck(
+        requestId,
+        headers,
+        {
+          checkMode: 'draft',
+          kalshiApiKeyId: this.credentialApiKeyId().trim(),
+          privateKeyPem: this.credentialPem(),
+        },
+      );
+    }, delayMs);
+  }
+
+  private scheduleStoredCredentialHealthCheck(delayMs = 350): void {
+    this.resetCredentialHealthCheck();
+
+    if (!this.hasStoredCredential() || this.credentialReplaceMode()) {
+      return;
+    }
+
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      return;
+    }
+
+    this.credentialHealthState.set('checking');
+    this.credentialHealthMessage.set('Checking the stored Kalshi credentials...');
+    const requestId = ++this.credentialHealthRequestId;
+
+    this.credentialHealthTimer = setTimeout(() => {
+      this.credentialHealthTimer = null;
+      this.runCredentialHealthCheck(requestId, headers, { checkMode: 'stored' });
+    }, delayMs);
+  }
+
+  rerunCredentialHealthCheck(): void {
+    if (this.credentialsSaving()) return;
+    this.credentialHealthInfoOpen.set(false);
+
+    if (this.credentialPem().trim() && this.credentialPemFileName().trim()) {
+      this.scheduleDraftCredentialHealthCheck(0);
+      return;
+    }
+
+    if (this.hasStoredCredential() && !this.credentialReplaceMode()) {
+      this.scheduleStoredCredentialHealthCheck(0);
+      return;
+    }
+
+    if (this.credentialApiKeyId().trim()) {
+      this.resetCredentialHealthCheck('idle', 'Upload a PEM file to run the Kalshi API health check.');
+      return;
+    }
+
+    this.resetCredentialHealthCheck('idle', 'Add your Kalshi API key ID and PEM file to run the Kalshi API health check.');
+  }
+
+  private runCredentialHealthCheck(
+    requestId: number,
+    headers: { Authorization: string },
+    body: { checkMode: 'draft' | 'stored'; kalshiApiKeyId?: string; privateKeyPem?: string },
+  ): void {
+    this.http.post<{ ok: boolean; healthy: boolean; checkedAt?: string; message?: string }>(
+      buildApiUrl('/api/credentials/check'),
+      body,
+      { headers },
+    ).subscribe({
+      next: (response) => {
+        if (requestId !== this.credentialHealthRequestId) return;
+        this.credentialHealthState.set(response.healthy ? 'healthy' : 'failed');
+        this.credentialHealthMessage.set(response.message || 'Kalshi API credentials verified successfully.');
+      },
+      error: (err) => {
+        if (requestId !== this.credentialHealthRequestId) return;
+        this.credentialHealthState.set('failed');
+        this.credentialHealthMessage.set(this.describeCredentialError(err, 'Kalshi API health check failed.'));
       },
     });
   }

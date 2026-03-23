@@ -366,6 +366,7 @@ Localhost assumptions:
 - SUPABASE_URL=https://zmofffvxlodwxjwzclma.supabase.co
 - SUPABASE_PUBLISHABLE_KEY=
 - SUPABASE_SECRET_KEY=
+- PEM_ENCRYPTION_KEY=
 
 Kalshi web invested-capital tracking:
 - KALSHI_WEB_AUTH_STATE_PATH=./.kalshi-soccer-bot/kalshi-web-auth.json

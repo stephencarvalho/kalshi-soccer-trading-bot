@@ -144,6 +144,21 @@
   letter-spacing: normal;
 }
 
+.auth-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 150px;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid color-mix(in oklab, var(--line) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--bg) 80%, white);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .auth-password-field {
   position: relative;
   width: 100%;
@@ -179,7 +194,8 @@
   color: var(--ink);
 }
 
-.auth-field input:focus {
+.auth-field input:focus,
+.auth-field textarea:focus {
   outline: 2px solid color-mix(in oklab, var(--accent) 45%, transparent);
   outline-offset: 2px;
 }
@@ -371,6 +387,287 @@
   overflow: visible;
 }
 
+.credential-panel {
+  margin: 0 0 1rem;
+}
+
+.credential-panel__head {
+  margin-bottom: 1rem;
+}
+
+.credential-panel__grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.credential-panel__status,
+.credential-panel__form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.credential-panel__upload {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.credential-panel__health {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.credential-health__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.credential-health__tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.credential-health__tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.credential-health__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid color-mix(in oklab, var(--line) 84%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--chip) 84%, var(--panel));
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.credential-health__icon svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.credential-health__icon:hover {
+  color: var(--ink);
+  border-color: color-mix(in oklab, var(--accent) 34%, var(--line));
+}
+
+.credential-health__icon:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.credential-health__icon--info {
+  cursor: help;
+}
+
+.credential-health__tooltip {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  z-index: 5;
+  min-width: 220px;
+  max-width: 260px;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid color-mix(in oklab, var(--line) 82%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--panel) 98%, var(--chip));
+  box-shadow: 0 10px 24px rgba(5, 8, 11, 0.14);
+  color: var(--ink);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.credential-health__tooltip-wrap:hover .credential-health__tooltip,
+.credential-health__tooltip-wrap.is-open .credential-health__tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.credential-upload {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 1rem;
+  border: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--chip) 82%, var(--panel));
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.credential-upload span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-upload:hover {
+  border-color: color-mix(in oklab, var(--accent) 38%, var(--line));
+}
+
+.credential-upload input {
+  display: none;
+}
+
+.credential-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.credential-panel__actions--confirm {
+  justify-content: center;
+}
+
+.credential-confirm__label {
+  width: 100%;
+}
+
+.credential-action {
+  min-height: 42px;
+  min-width: 168px;
+  padding: 0 1rem;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.credential-action--replace {
+  border: 1px solid color-mix(in oklab, var(--accent) 58%, #0a6b0d);
+  background: linear-gradient(180deg, #43e950, #17c723);
+  color: #041107;
+  box-shadow:
+    0 8px 18px color-mix(in oklab, var(--accent) 24%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.credential-action--remove {
+  border: 1px solid color-mix(in oklab, #d94b41 58%, #7a1712);
+  background: linear-gradient(180deg, #ff786e, #e23d34);
+  color: #fff7f6;
+  box-shadow:
+    0 8px 18px rgba(226, 61, 52, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.credential-action--secondary {
+  border: 1px solid color-mix(in oklab, var(--line) 84%, transparent);
+  background: color-mix(in oklab, var(--chip) 84%, var(--panel));
+  color: var(--ink);
+}
+
+.credential-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  min-width: 88px;
+  padding: 0 0.95rem;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.credential-confirm svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.credential-confirm--yes {
+  border: 1px solid color-mix(in oklab, #d94b41 58%, #7a1712);
+  background: linear-gradient(180deg, #ff786e, #e23d34);
+  color: #fff7f6;
+}
+
+.credential-confirm--no {
+  border: 1px solid color-mix(in oklab, var(--line) 84%, transparent);
+  background: color-mix(in oklab, var(--chip) 84%, var(--panel));
+  color: var(--ink);
+}
+
+.credential-save {
+  min-width: 220px;
+  flex: 1 1 auto;
+  justify-content: center;
+  border-color: color-mix(in oklab, var(--accent) 58%, #0a6b0d);
+  background: linear-gradient(180deg, #43e950, #17c723);
+  color: #041107;
+  box-shadow:
+    0 8px 18px color-mix(in oklab, var(--accent) 26%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.credential-banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.credential-banner__content {
+  min-width: 0;
+}
+
+.credential-banner--attention {
+  grid-template-columns: auto 1fr;
+  border-color: color-mix(in oklab, #f2b534 36%, var(--line));
+  background:
+    linear-gradient(180deg, color-mix(in oklab, #f2b534 10%, var(--panel)), color-mix(in oklab, #f2b534 4%, var(--chip)));
+}
+
+.credential-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, #3aa0ff 12%, var(--chip));
+  color: #4ea7ff;
+}
+
+.credential-banner--attention .credential-banner__icon {
+  background: color-mix(in oklab, #f2b534 16%, var(--chip));
+  color: #d39a11;
+}
+
+.credential-banner__icon svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.credential-save:hover {
+  filter: brightness(1.02);
+}
+
 .account-strip__row {
   display: flex;
   flex-wrap: nowrap;
@@ -447,6 +744,25 @@
   border-radius: 14px;
   background: color-mix(in oklab, var(--panel) 96%, var(--chip));
   box-shadow: 0 14px 36px rgba(5, 8, 11, 0.16);
+}
+
+.credential-menu__panel {
+  width: min(420px, calc(100vw - 1.5rem));
+  gap: 0.6rem;
+}
+
+.credential-menu__field {
+  margin-top: 0.2rem;
+}
+
+.credential-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.credential-health__message--error {
+  color: #ff6b6b;
 }
 
 .user-menu__label {
@@ -898,6 +1214,10 @@
 }
 
 @media (max-width: 720px) {
+  .credential-panel__grid {
+    grid-template-columns: 1fr;
+  }
+
   .account-strip__row {
     flex-wrap: wrap;
   }
@@ -940,8 +1260,14 @@
   color: #ff7f6b;
 }
 
+.dashboard-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .hero {
-  margin: 0 0 1.2rem;
+  margin: 0;
   overflow: hidden;
 }
 

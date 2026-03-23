@@ -9,6 +9,14 @@ const { config } = require('./config');
 const { createLogger } = require('./logger');
 const { getSupabaseConfig, getSupabaseUserForAccessToken, isSupabaseAuthConfigured } = require('./supabaseAuth');
 const { loadPrivateKey } = require('./kalshiAuth');
+const {
+  deleteCredentialForUser,
+  getCredentialStatusForUser,
+  getKalshiCredentialsForUser,
+  isCredentialStorageConfigured,
+  saveCredentialForUser,
+  validatePrivateKeyPem,
+} = require('./userCredentials');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
@@ -93,6 +101,15 @@ async function requireDashboardAuth(req, res, next) {
     message: isSupabaseAuthConfigured()
       ? 'Valid Supabase access token required'
       : 'Valid monitor API token required',
+  });
+}
+
+function requireSupabaseUser(req, res, next) {
+  if (req.supabaseUser?.id) return next();
+  return res.status(401).json({
+    ok: false,
+    error: 'unauthorized',
+    message: 'Supabase sign-in required',
   });
 }
 
@@ -651,6 +668,16 @@ function computeAgentStatus({ actionLogs, state, runtime }) {
   };
 }
 
+function createKalshiClient(keyId, privateKey) {
+  if (!keyId || !privateKey) return null;
+  return new KalshiClient({
+    baseUrl: config.baseUrl,
+    keyId,
+    privateKey,
+    logger,
+  });
+}
+
 function getClient() {
   if (!config.keyId) return null;
   try {
@@ -659,15 +686,30 @@ function getClient() {
       privateKeyPem: config.privateKeyPem,
     });
 
-    return new KalshiClient({
-      baseUrl: config.baseUrl,
-      keyId: config.keyId,
-      privateKey,
-      logger,
-    });
+    return createKalshiClient(config.keyId, privateKey);
   } catch {
     return null;
   }
+}
+
+async function getClientForRequest(req) {
+  const userId = req.supabaseUser?.id;
+  if (userId) {
+    if (!isCredentialStorageConfigured()) return null;
+
+    try {
+      const credentials = await getKalshiCredentialsForUser(userId);
+      if (credentials?.keyId && credentials?.privateKeyPem) {
+        return createKalshiClient(credentials.keyId, credentials.privateKeyPem);
+      }
+    } catch (error) {
+      logger.warn({ err: error?.message || error, userId }, 'Failed to load user Kalshi credentials');
+    }
+
+    return null;
+  }
+
+  return getClient();
 }
 
 function getWebClient() {
@@ -712,6 +754,89 @@ function computeInvestedCapital(deposits, startDate) {
   return Number(investedUsd.toFixed(2));
 }
 
+async function checkKalshiCredentialHealth({ kalshiApiKeyId, privateKeyPem }) {
+  const normalizedKeyId = String(kalshiApiKeyId || '').trim();
+  if (!normalizedKeyId) {
+    throw new Error('Kalshi API key ID is required.');
+  }
+
+  const normalizedPem = validatePrivateKeyPem(privateKeyPem);
+  const client = createKalshiClient(normalizedKeyId, normalizedPem);
+  if (!client) {
+    throw new Error('Kalshi credentials are incomplete.');
+  }
+
+  await client.getBalance();
+  return {
+    healthy: true,
+    checkedAt: new Date().toISOString(),
+    message: 'Kalshi API credentials verified successfully.',
+  };
+}
+
+async function checkStoredKalshiCredentialHealth(userId) {
+  const credentials = await getKalshiCredentialsForUser(userId);
+  if (!credentials?.keyId || !credentials?.privateKeyPem) {
+    throw new Error('No stored Kalshi credential is available to check.');
+  }
+
+  const result = await checkKalshiCredentialHealth({
+    kalshiApiKeyId: credentials.keyId,
+    privateKeyPem: credentials.privateKeyPem,
+  });
+
+  return {
+    ...result,
+    message: 'Stored Kalshi credentials verified successfully.',
+  };
+}
+
+function describeKalshiCredentialCheckError(error) {
+  const upstreamStatus = error?.response?.status || error?.kalshiRequest?.status || null;
+  const upstreamMessage =
+    error?.response?.data?.error?.message
+    || error?.response?.data?.message
+    || error?.message
+    || 'Kalshi API health check failed.';
+
+  if (upstreamStatus === 401 || upstreamStatus === 403) {
+    return {
+      statusCode: 400,
+      message: 'Kalshi rejected these credentials. Check that the API key ID matches the uploaded PEM file.',
+    };
+  }
+
+  if (upstreamStatus === 429) {
+    return {
+      statusCode: 502,
+      message: 'Kalshi rate-limited the credential health check. Try again in a moment.',
+    };
+  }
+
+  if (upstreamStatus >= 500 && upstreamStatus < 600) {
+    return {
+      statusCode: 502,
+      message: 'Kalshi API is unavailable right now. Try the credential health check again in a moment.',
+    };
+  }
+
+  if (
+    upstreamMessage.includes('required')
+    || upstreamMessage.includes('private key')
+    || upstreamMessage.includes('incomplete')
+  ) {
+    return {
+      statusCode: 400,
+      message: upstreamMessage,
+    };
+  }
+
+  return {
+    statusCode: upstreamStatus ? 502 : 500,
+    message: upstreamMessage,
+  };
+}
+
 app.get('/api/health', async (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
@@ -739,11 +864,117 @@ app.get('/api/me', requireDashboardAuth, async (req, res) => {
       supabaseUrlConfigured: Boolean(supabaseConfig.url),
       supabasePublishableKeyConfigured: Boolean(supabaseConfig.publishableKey),
       supabaseSecretKeyConfigured: Boolean(supabaseConfig.secretKey),
+      credentialStorageConfigured: isCredentialStorageConfigured(),
     },
   });
 });
 
-app.get('/api/dashboard', requireDashboardAuth, async (_req, res) => {
+app.get('/api/credentials', requireDashboardAuth, requireSupabaseUser, async (req, res) => {
+  try {
+    const status = await getCredentialStatusForUser(req.supabaseUser.id);
+    res.json({
+      ok: true,
+      credentials: status,
+    });
+  } catch (error) {
+    logger.warn({ err: error?.message || error, userId: req.supabaseUser.id }, 'Credential status lookup failed');
+    res.status(500).json({
+      ok: false,
+      error: 'credential_status_failed',
+      message: 'Failed to load credential status',
+    });
+  }
+});
+
+app.post('/api/credentials', requireDashboardAuth, requireSupabaseUser, async (req, res) => {
+  const kalshiApiKeyId = String(req.body?.kalshiApiKeyId || '').trim();
+  const privateKeyPem = String(req.body?.privateKeyPem || '');
+  const pemFileName = String(req.body?.pemFileName || '').trim();
+
+  try {
+    const status = await saveCredentialForUser({
+      userId: req.supabaseUser.id,
+      kalshiApiKeyId,
+      privateKeyPem,
+      pemFileName,
+    });
+    res.json({
+      ok: true,
+      message: 'Kalshi credential saved securely.',
+      credentials: status,
+    });
+  } catch (error) {
+    const message = error?.message || 'Failed to save Kalshi credential';
+    const statusCode =
+      message.includes('required') || message.includes('private key') || message.includes('configured')
+        ? 400
+        : 500;
+
+    logger.warn({ err: message, userId: req.supabaseUser.id }, 'Credential save failed');
+    res.status(statusCode).json({
+      ok: false,
+      error: 'credential_save_failed',
+      message,
+    });
+  }
+});
+
+app.post('/api/credentials/check', requireDashboardAuth, requireSupabaseUser, async (req, res) => {
+  const checkMode = req.body?.checkMode === 'stored' ? 'stored' : 'draft';
+  const kalshiApiKeyId = String(req.body?.kalshiApiKeyId || '').trim();
+  const privateKeyPem = String(req.body?.privateKeyPem || '');
+
+  try {
+    const result = checkMode === 'stored'
+      ? await checkStoredKalshiCredentialHealth(req.supabaseUser.id)
+      : await checkKalshiCredentialHealth({
+          kalshiApiKeyId,
+          privateKeyPem,
+        });
+    res.json({
+      ok: true,
+      healthy: result.healthy,
+      checkedAt: result.checkedAt,
+      message: result.message,
+    });
+  } catch (error) {
+    const failure = describeKalshiCredentialCheckError(error);
+    logger.warn(
+      {
+        err: error?.message || error,
+        userId: req.supabaseUser.id,
+        status: error?.response?.status || error?.kalshiRequest?.status || null,
+      },
+      'Credential health check failed',
+    );
+    res.status(failure.statusCode).json({
+      ok: false,
+      healthy: false,
+      error: 'credential_health_check_failed',
+      message: failure.message,
+    });
+  }
+});
+
+app.delete('/api/credentials', requireDashboardAuth, requireSupabaseUser, async (req, res) => {
+  try {
+    const status = await deleteCredentialForUser(req.supabaseUser.id);
+    res.json({
+      ok: true,
+      message: 'Kalshi credential removed.',
+      credentials: status,
+    });
+  } catch (error) {
+    logger.warn({ err: error?.message || error, userId: req.supabaseUser.id }, 'Credential delete failed');
+    res.status(500).json({
+      ok: false,
+      error: 'credential_delete_failed',
+      message: 'Failed to delete Kalshi credential',
+    });
+  }
+});
+
+app.get('/api/dashboard', requireDashboardAuth, async (req, res) => {
   const runtime = getRuntimeConfig(config);
   const actionLogs = readActionLogs();
   const { important: importantLogs, verbose: verboseLogs } = splitLogs(actionLogs);
@@ -751,7 +982,7 @@ app.get('/api/dashboard', requireDashboardAuth, async (_req, res) => {
   const state = safeReadJson(statePath, {});
   const agentStatus = computeAgentStatus({ actionLogs, state, runtime });
 
-  const client = getClient();
+  const client = await getClientForRequest(req);
 
   let balanceUsd = null;
   let portfolioValueUsd = null;
