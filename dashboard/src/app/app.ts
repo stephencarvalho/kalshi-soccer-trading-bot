@@ -445,8 +445,12 @@ export class App implements OnDestroy {
   private authSubscription?: { unsubscribe: () => void };
   private credentialHealthTimer: ReturnType<typeof setTimeout> | null = null;
   private credentialHealthRequestId = 0;
+  private dashboardLoadingTimer: ReturnType<typeof setInterval> | null = null;
+  private dashboardFetchInFlight = false;
+  private dashboardRefreshQueued = false;
 
   readonly loading = signal(true);
+  readonly dashboardLoadingElapsedSeconds = signal(0);
   readonly authLoading = signal(isSupabaseBrowserAuthConfigured());
   readonly authError = signal<string | null>(null);
   readonly authMessage = signal<string | null>(null);
@@ -1081,6 +1085,60 @@ export class App implements OnDestroy {
     return Boolean(this.session()?.access_token);
   });
   readonly authUserLabel = computed(() => this.user()?.email || this.user()?.id || 'Authenticated user');
+  readonly dashboardLoadingStage = computed<'connect' | 'account' | 'market'>(() => {
+    const elapsed = this.dashboardLoadingElapsedSeconds();
+    if (elapsed >= 9) return 'market';
+    if (elapsed >= 4) return 'account';
+    return 'connect';
+  });
+  readonly dashboardLoadingTitle = computed(() => {
+    const stage = this.dashboardLoadingStage();
+    if (stage === 'connect') return 'Connecting to your trading workspace';
+    if (stage === 'account') return 'Loading balances, positions, and settlements';
+    return 'Preparing the live market view';
+  });
+  readonly dashboardLoadingSubtitle = computed(() => {
+    const stage = this.dashboardLoadingStage();
+    if (stage === 'connect') {
+      return 'The first dashboard sync starts right after sign-in and waits for a fresh backend response.';
+    }
+    if (stage === 'account') {
+      return 'We are pulling your latest Kalshi account state before rendering the dashboard.';
+    }
+    return 'Live market context and recent activity are being stitched into the dashboard now.';
+  });
+  readonly dashboardLoadingProgress = computed(() => Math.min(94, 22 + this.dashboardLoadingElapsedSeconds() * 9));
+  readonly dashboardLoadingSteps = computed(() => {
+    const stage = this.dashboardLoadingStage();
+    return [
+      {
+        label: 'Secure session check',
+        detail: 'Verifying the current session and opening the dashboard request.',
+        status: stage === 'connect' ? 'active' : 'complete',
+      },
+      {
+        label: 'Kalshi account sync',
+        detail: 'Fetching fresh balances, positions, and recent settlements.',
+        status: stage === 'account' ? 'active' : stage === 'market' ? 'complete' : 'pending',
+      },
+      {
+        label: 'Market context build',
+        detail: 'Loading live market data and assembling the trading view.',
+        status: stage === 'market' ? 'active' : 'pending',
+      },
+    ];
+  });
+  readonly dashboardLoadingHint = computed(() => {
+    if (this.dashboardLoadingElapsedSeconds() < 8) return 'This only affects the first sync after login.';
+    return 'This first load can take longer because the dashboard waits for fresh account and market data together.';
+  });
+  readonly dashboardLoadingElapsedLabel = computed(() => {
+    const elapsed = this.dashboardLoadingElapsedSeconds();
+    if (elapsed < 60) return `${Math.max(1, elapsed)}s elapsed`;
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    return `${minutes}m ${seconds}s elapsed`;
+  });
 
   constructor() {
     effect(() => {
@@ -1110,6 +1168,7 @@ export class App implements OnDestroy {
     this.authSubscription?.unsubscribe();
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.credentialHealthTimer) clearTimeout(this.credentialHealthTimer);
+    if (this.dashboardLoadingTimer) clearInterval(this.dashboardLoadingTimer);
     if (this.chartInstance) {
       this.chartInstance.destroy();
       this.chartInstance = null;
@@ -1402,6 +1461,7 @@ export class App implements OnDestroy {
   private async initializeAuth(): Promise<void> {
     if (!this.supabase) {
       this.authLoading.set(false);
+      this.startDashboardLoading();
       this.fetchDashboard();
       return;
     }
@@ -1423,7 +1483,7 @@ export class App implements OnDestroy {
     this.authSubscription = subscription.data.subscription;
   }
 
-  private applySession(session: Session | null, _event: AuthChangeEvent | 'INITIAL_SESSION'): void {
+  private applySession(session: Session | null, event: AuthChangeEvent | 'INITIAL_SESSION'): void {
     this.dashboardRequestId += 1;
     this.session.set(session);
     this.user.set(session?.user ?? null);
@@ -1443,7 +1503,8 @@ export class App implements OnDestroy {
       this.credentialReplaceMode.set(false);
       this.resetCredentialHealthCheck();
       this.credentialDeleteConfirm.set(false);
-      this.loading.set(false);
+      this.dashboardRefreshQueued = false;
+      this.stopDashboardLoading();
       this.error.set(null);
       return;
     }
@@ -1452,7 +1513,10 @@ export class App implements OnDestroy {
       this.fetchCredentialStatus();
     }
 
-    this.loading.set(true);
+    const shouldShowInitialLoading = !this.data() || event === 'INITIAL_SESSION' || event === 'SIGNED_IN';
+    if (shouldShowInitialLoading) {
+      this.startDashboardLoading();
+    }
     this.fetchDashboard();
   }
 
@@ -1586,35 +1650,77 @@ export class App implements OnDestroy {
 
   fetchDashboard(): void {
     if (!this.canFetchDashboard()) {
-      this.loading.set(false);
+      this.dashboardFetchInFlight = false;
+      this.dashboardRefreshQueued = false;
+      this.stopDashboardLoading();
       this.data.set(null);
       this.error.set(null);
       return;
     }
 
+    if (this.dashboardFetchInFlight) {
+      this.dashboardRefreshQueued = true;
+      return;
+    }
+
     const headers = this.getAuthHeaders();
     const requestId = ++this.dashboardRequestId;
+    const shouldShowInitialLoading = !this.data();
+    if (shouldShowInitialLoading) {
+      this.startDashboardLoading();
+    }
+    this.dashboardFetchInFlight = true;
+
+    const finishRequest = () => {
+      this.dashboardFetchInFlight = false;
+      if (!this.dashboardRefreshQueued) return;
+      this.dashboardRefreshQueued = false;
+      queueMicrotask(() => this.fetchDashboard());
+    };
 
     this.http.get<DashboardPayload>(buildApiUrl('/api/dashboard'), { headers }).subscribe({
       next: (payload) => {
-        if (requestId !== this.dashboardRequestId || !this.canFetchDashboard()) return;
-        this.data.set(payload);
-        queueMicrotask(() => this.renderChart());
-        this.loading.set(false);
-        this.error.set(null);
+        if (requestId === this.dashboardRequestId && this.canFetchDashboard()) {
+          this.data.set(payload);
+          queueMicrotask(() => this.renderChart());
+          this.stopDashboardLoading();
+          this.error.set(null);
+        }
+        finishRequest();
       },
       error: (err) => {
-        if (requestId !== this.dashboardRequestId) return;
-        this.loading.set(false);
-        if (err?.status === 401) {
+        if (requestId === this.dashboardRequestId) {
+          this.stopDashboardLoading();
+          if (err?.status === 401) {
+            this.data.set(null);
+            this.error.set('Authentication required. Log in with Supabase to load dashboard data.');
+            finishRequest();
+            return;
+          }
           this.data.set(null);
-          this.error.set('Authentication required. Log in with Supabase to load dashboard data.');
-          return;
+          this.error.set(err?.error?.message || err?.message || 'Failed to load dashboard data');
         }
-        this.data.set(null);
-        this.error.set(err?.error?.message || err?.message || 'Failed to load dashboard data');
+        finishRequest();
       },
     });
+  }
+
+  private startDashboardLoading(): void {
+    this.loading.set(true);
+    this.dashboardLoadingElapsedSeconds.set(0);
+    if (this.dashboardLoadingTimer) clearInterval(this.dashboardLoadingTimer);
+    this.dashboardLoadingTimer = setInterval(() => {
+      this.dashboardLoadingElapsedSeconds.update((value) => value + 1);
+    }, 1000);
+  }
+
+  private stopDashboardLoading(): void {
+    this.loading.set(false);
+    this.dashboardLoadingElapsedSeconds.set(0);
+    if (this.dashboardLoadingTimer) {
+      clearInterval(this.dashboardLoadingTimer);
+      this.dashboardLoadingTimer = null;
+    }
   }
 
   private fetchCredentialStatus(): void {

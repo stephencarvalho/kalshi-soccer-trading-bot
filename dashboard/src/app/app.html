@@ -386,15 +386,46 @@
       </section>
     }
 
-    @if (loading()) {
-	    <section class="panel loading">Loading terminal data...</section>
-	  }
+    @if (loading() && !data()) {
+      <section class="panel loading-shell" aria-live="polite">
+        <div class="loading-shell__head">
+          <p class="loading-shell__eyebrow">Dashboard Sync</p>
+          <span class="loading-shell__elapsed">{{ dashboardLoadingElapsedLabel() }}</span>
+        </div>
+        <div class="loading-shell__hero">
+          <div class="loading-shell__beacon" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="loading-shell__copy">
+            <h2 class="loading-shell__title">{{ dashboardLoadingTitle() }}</h2>
+            <p class="loading-shell__subtitle">{{ dashboardLoadingSubtitle() }}</p>
+          </div>
+        </div>
+        <div class="loading-shell__bar" aria-hidden="true">
+          <span [style.width.%]="dashboardLoadingProgress()"></span>
+        </div>
+        <div class="loading-shell__steps">
+          @for (step of dashboardLoadingSteps(); track step.label) {
+            <article class="loading-shell__step" [class.is-active]="step.status === 'active'" [class.is-complete]="step.status === 'complete'">
+              <span class="loading-shell__step-dot" aria-hidden="true"></span>
+              <div>
+                <strong>{{ step.label }}</strong>
+                <p>{{ step.detail }}</p>
+              </div>
+            </article>
+          }
+        </div>
+        <p class="loading-shell__hint">{{ dashboardLoadingHint() }}</p>
+      </section>
+    }
 
-	  @if (error()) {
-	    <section class="panel error">{{ error() }}</section>
-	  }
+    @if (error()) {
+      <section class="panel error">{{ error() }}</section>
+    }
 
-	  @if (data(); as d) {
+    @if (data(); as d) {
       <div class="dashboard-main">
         @if (credentialBanner(); as banner) {
           <article class="panel credential-banner" [class.credential-banner--attention]="banner.tone === 'attention'">
