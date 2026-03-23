@@ -468,7 +468,7 @@ Kalshi API credentials:
 
 Trading mode and runtime defaults:
 - DRY_RUN=false
-- POLL_SECONDS=10
+- POLL_SECONDS=5
 - TIMEZONE=America/New_York
 - LOG_LEVEL=info
 

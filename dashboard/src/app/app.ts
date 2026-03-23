@@ -19,7 +19,12 @@ import {
 } from "@angular/core";
 import { FontAwesomeModule } from "@fortawesome/angular-fontawesome";
 import { faGear } from "@fortawesome/free-solid-svg-icons";
-import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
+import type {
+  AuthChangeEvent,
+  RealtimeChannel,
+  Session,
+  User,
+} from "@supabase/supabase-js";
 import {
   CategoryScale,
   Chart,
@@ -119,6 +124,10 @@ interface DashboardPayload {
   recentCycleLogs: LogRecord[];
   openTrades: TradeRecord[];
   closedTrades: ClosedTradeRecord[];
+}
+
+interface DashboardSnapshotRecord {
+  payload: DashboardPayload | null;
 }
 
 interface RuntimeSizingResponse {
@@ -609,6 +618,8 @@ export class App implements OnDestroy {
   private readonly chartViewReady = signal(false);
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private authSubscription?: { unsubscribe: () => void };
+  private dashboardSnapshotChannel: RealtimeChannel | null = null;
+  private dashboardSnapshotUserId: string | null = null;
   private credentialHealthTimer: ReturnType<typeof setTimeout> | null = null;
   private credentialHealthRequestId = 0;
   private dashboardLoadingTimer: ReturnType<typeof setInterval> | null = null;
@@ -1900,6 +1911,7 @@ export class App implements OnDestroy {
 
   ngOnDestroy(): void {
     this.authSubscription?.unsubscribe();
+    this.unsubscribeDashboardSnapshot();
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.credentialHealthTimer) clearTimeout(this.credentialHealthTimer);
     if (this.dashboardLoadingTimer) clearInterval(this.dashboardLoadingTimer);
@@ -2258,7 +2270,20 @@ export class App implements OnDestroy {
     session: Session | null,
     event: AuthChangeEvent | "INITIAL_SESSION",
   ): void {
-    this.dashboardRequestId += 1;
+    const previousSession = this.session();
+    const previousUserId = previousSession?.user?.id || null;
+    const nextUserId = session?.user?.id || null;
+    const userChanged = previousUserId !== nextUserId;
+    const sessionPresenceChanged = Boolean(previousSession) !== Boolean(session);
+
+    if (userChanged || sessionPresenceChanged) {
+      this.dashboardRequestId += 1;
+    }
+
+    if (userChanged && this.dashboardSnapshotChannel) {
+      this.unsubscribeDashboardSnapshot();
+    }
+
     this.session.set(session);
     this.user.set(session?.user ?? null);
     this.userMenuOpen.set(false);
@@ -2269,6 +2294,7 @@ export class App implements OnDestroy {
     this.credentialStatusError.set(null);
 
     if (!session && this.authConfigured()) {
+      this.unsubscribeDashboardSnapshot();
       this.data.set(null);
       this.credentialStatus.set(null);
       this.credentialApiKeyId.set("");
@@ -2284,22 +2310,42 @@ export class App implements OnDestroy {
     }
 
     if (session) {
-      this.fetchCredentialStatus();
+      if (
+        userChanged ||
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        !this.credentialStatus()
+      ) {
+        this.fetchCredentialStatus();
+      }
+
+      if (
+        userChanged ||
+        !this.dashboardSnapshotChannel ||
+        this.dashboardSnapshotUserId !== session.user.id
+      ) {
+        this.subscribeDashboardSnapshot(session.user.id);
+      }
     }
 
     const shouldShowInitialLoading =
-      !this.data() || event === "INITIAL_SESSION" || event === "SIGNED_IN";
+      !this.data() ||
+      userChanged ||
+      event === "INITIAL_SESSION" ||
+      event === "SIGNED_IN";
     if (shouldShowInitialLoading) {
       this.startDashboardLoading();
+      void this.loadDashboardSnapshotOrApi();
     }
-    this.fetchDashboard();
   }
 
   private startRefreshLoop(): void {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.refreshTimer = setInterval(() => {
       this.now.set(new Date());
-      this.fetchDashboard();
+      if (!this.shouldUseRealtimeDashboard()) {
+        this.fetchDashboard();
+      }
     }, 5000);
   }
 
@@ -2371,6 +2417,152 @@ export class App implements OnDestroy {
   private canUseRelativeApiUrl(): boolean {
     const host = window.location.hostname;
     return host === "localhost" || host === "127.0.0.1";
+  }
+
+  private logDashboardRealtime(message: string, details?: unknown): void {
+    if (details === undefined) {
+      console.info(`[dashboard-realtime] ${message}`);
+      return;
+    }
+
+    console.info(`[dashboard-realtime] ${message}`, details);
+  }
+
+  private shouldUseRealtimeDashboard(): boolean {
+    return Boolean(this.supabase && this.session()?.user?.id);
+  }
+
+  private applyDashboardPayload(payload: DashboardPayload): void {
+    if (!this.sizingDirty() && !this.sizingBusy()) {
+      this.syncRuntimeSizingInputs(
+        payload?.config?.stakeUsd,
+        payload?.config?.recoveryMaxStakeUsd,
+        payload?.config?.maxDailyLossUsd,
+      );
+    }
+
+    this.data.set(payload);
+    queueMicrotask(() => this.renderChart());
+    this.stopDashboardLoading();
+    this.error.set(null);
+  }
+
+  private async loadDashboardSnapshot(): Promise<boolean> {
+    if (!this.supabase || !this.session()?.user?.id) return false;
+
+    try {
+      const { data, error } = await this.supabase
+        .from("dashboard_snapshots")
+        .select("payload")
+        .eq("user_id", this.session()!.user.id)
+        .maybeSingle<DashboardSnapshotRecord>();
+
+      if (error || !data?.payload) {
+        this.logDashboardRealtime("No Supabase snapshot available yet", {
+          userId: this.session()!.user.id,
+          hasError: Boolean(error),
+        });
+        return false;
+      }
+
+      if (!this.canFetchDashboard()) {
+        this.logDashboardRealtime(
+          "Snapshot was loaded but dashboard fetch conditions no longer allow apply",
+        );
+        return false;
+      }
+
+      this.logDashboardRealtime("Loaded dashboard from Supabase snapshot", {
+        userId: this.session()!.user.id,
+        generatedAt: data.payload.generatedAt,
+      });
+      this.applyDashboardPayload(data.payload);
+      return true;
+    } catch {
+      this.logDashboardRealtime(
+        "Snapshot bootstrap failed, falling back to /api/dashboard",
+      );
+      return false;
+    }
+  }
+
+  private async loadDashboardSnapshotOrApi(): Promise<void> {
+    if (this.shouldUseRealtimeDashboard()) {
+      const loadedSnapshot = await this.loadDashboardSnapshot();
+      if (loadedSnapshot) return;
+    }
+
+    this.logDashboardRealtime("Falling back to /api/dashboard fetch");
+    this.fetchDashboard();
+  }
+
+  private subscribeDashboardSnapshot(userId: string): void {
+    if (!this.supabase) return;
+
+    if (
+      this.dashboardSnapshotChannel &&
+      this.dashboardSnapshotUserId === userId
+    ) {
+      this.logDashboardRealtime(
+        "Realtime channel already active for current user",
+        { userId },
+      );
+      return;
+    }
+
+    this.logDashboardRealtime("Subscribing to dashboard snapshot channel", {
+      userId,
+    });
+
+    this.dashboardSnapshotUserId = userId;
+    this.dashboardSnapshotChannel = this.supabase
+      .channel(`dashboard-snapshot:${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "dashboard_snapshots",
+          filter: `user_id=eq.${userId}`,
+        },
+        (eventPayload) => {
+          if (!this.canFetchDashboard()) return;
+
+          if (eventPayload.eventType === "DELETE") {
+            this.logDashboardRealtime(
+              "Snapshot row deleted, reloading via /api/dashboard",
+            );
+            queueMicrotask(() => this.fetchDashboard());
+            return;
+          }
+
+          const payload = (
+            eventPayload.new as { payload?: DashboardPayload } | null
+          )?.payload;
+
+          if (payload) {
+            this.logDashboardRealtime("Received Realtime dashboard snapshot", {
+              eventType: eventPayload.eventType,
+              generatedAt: payload.generatedAt,
+            });
+            this.applyDashboardPayload(payload);
+          }
+        },
+      )
+      .subscribe((status) => {
+        this.logDashboardRealtime("Realtime channel status changed", {
+          userId,
+          status,
+        });
+      });
+  }
+
+  private unsubscribeDashboardSnapshot(): void {
+    if (!this.dashboardSnapshotChannel || !this.supabase) return;
+    this.logDashboardRealtime("Unsubscribing from dashboard snapshot channel");
+    void this.supabase.removeChannel(this.dashboardSnapshotChannel);
+    this.dashboardSnapshotChannel = null;
+    this.dashboardSnapshotUserId = null;
   }
 
   private formatDashboardLoadError(
@@ -2651,25 +2843,29 @@ export class App implements OnDestroy {
       return;
     }
 
+    this.logDashboardRealtime("Requesting /api/dashboard over HTTP", {
+      apiUrl,
+      hasSession: Boolean(this.session()),
+      reason: this.shouldUseRealtimeDashboard()
+        ? "realtime_fallback"
+        : "polling_or_local_mode",
+    });
     this.http.get<DashboardPayload>(apiUrl, { headers }).subscribe({
       next: (payload) => {
         if (requestId === this.dashboardRequestId && this.canFetchDashboard()) {
-          if (!this.sizingDirty() && !this.sizingBusy()) {
-            this.syncRuntimeSizingInputs(
-              payload?.config?.stakeUsd,
-              payload?.config?.recoveryMaxStakeUsd,
-              payload?.config?.maxDailyLossUsd,
-            );
-          }
-          this.data.set(payload);
-          queueMicrotask(() => this.renderChart());
-          this.stopDashboardLoading();
-          this.error.set(null);
+          this.logDashboardRealtime("HTTP /api/dashboard response applied", {
+            generatedAt: payload.generatedAt,
+          });
+          this.applyDashboardPayload(payload);
         }
         finishRequest();
       },
       error: (err) => {
         if (requestId === this.dashboardRequestId) {
+          this.logDashboardRealtime("HTTP /api/dashboard request failed", {
+            status: err?.status ?? null,
+            message: err?.error?.message || err?.message || null,
+          });
           this.stopDashboardLoading();
           if (err?.status === 401) {
             this.data.set(null);

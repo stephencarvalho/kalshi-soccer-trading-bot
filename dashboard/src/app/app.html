@@ -265,6 +265,51 @@
             <button
               type="button"
               class="user-menu__trigger"
+              [attr.aria-expanded]="userMenuOpen()"
+              aria-label="Open user menu"
+              (click)="toggleUserMenu($event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M4.5 20a7.5 7.5 0 0 1 15 0"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+            @if (userMenuOpen()) {
+            <div class="user-menu__panel">
+              <p class="user-menu__label">Signed in as</p>
+              <p class="user-menu__value">{{ authUserLabel() }}</p>
+              <p class="user-menu__label">Session started</p>
+              <p class="user-menu__value">{{ sessionStartedAtLabel() }}</p>
+              <p class="user-menu__label">Session expires</p>
+              <p class="user-menu__value">{{ sessionExpiresAtLabel() }}</p>
+              <p class="user-menu__label">User ID</p>
+              <p class="user-menu__id">{{ user()?.id }}</p>
+              <button
+                type="button"
+                class="user-menu__signout"
+                [disabled]="authLoading()"
+                (click)="signOut()"
+              >
+                Sign out
+              </button>
+            </div>
+            }
+          </div>
+          <div class="user-menu" (click)="$event.stopPropagation()">
+            <button
+              type="button"
+              class="user-menu__trigger"
               [attr.aria-expanded]="credentialMenuOpen()"
               aria-label="Open Kalshi credential settings"
               (click)="toggleCredentialMenu($event)"
@@ -618,51 +663,19 @@
             </div>
             }
           </div>
-          <div class="user-menu" (click)="$event.stopPropagation()">
-            <button
-              type="button"
-              class="user-menu__trigger"
-              [attr.aria-expanded]="userMenuOpen()"
-              aria-label="Open user menu"
-              (click)="toggleUserMenu($event)"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                />
-                <path
-                  d="M4.5 20a7.5 7.5 0 0 1 15 0"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.8"
-                  stroke-linecap="round"
-                />
-              </svg>
-            </button>
-            @if (userMenuOpen()) {
-            <div class="user-menu__panel">
-              <p class="user-menu__label">Signed in as</p>
-              <p class="user-menu__value">{{ authUserLabel() }}</p>
-              <p class="user-menu__label">Session started</p>
-              <p class="user-menu__value">{{ sessionStartedAtLabel() }}</p>
-              <p class="user-menu__label">Session expires</p>
-              <p class="user-menu__value">{{ sessionExpiresAtLabel() }}</p>
-              <p class="user-menu__label">User ID</p>
-              <p class="user-menu__id">{{ user()?.id }}</p>
-              <button
-                type="button"
-                class="user-menu__signout"
-                [disabled]="authLoading()"
-                (click)="signOut()"
-              >
-                Sign out
-              </button>
-            </div>
-            }
-          </div>
+          <button
+            type="button"
+            class="settings-trigger"
+            aria-label="Open settings"
+            [attr.aria-expanded]="settingsOpen()"
+            (click)="openSettings()"
+          >
+            <fa-icon
+              [icon]="faGear"
+              class="settings-trigger__icon"
+              aria-hidden="true"
+            ></fa-icon>
+          </button>
           }
         </div>
       </div>
