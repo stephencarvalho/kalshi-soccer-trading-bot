@@ -1371,6 +1371,17 @@
   background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 18%, var(--panel)), color-mix(in oklab, #7bb4ff 8%, var(--panel)));
 }
 
+.account-metric__meta {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .account-metric--stop {
   background: linear-gradient(180deg, color-mix(in oklab, #ffbe4d 16%, var(--panel)), color-mix(in oklab, #ffbe4d 8%, var(--panel)));
 }

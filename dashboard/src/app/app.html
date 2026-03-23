@@ -243,7 +243,10 @@
             class="account-metric account-metric--status account-metric--time"
           >
             <span>Last Updated</span>
-            <strong>{{ now() | date:'mediumTime' }}</strong>
+            <strong>{{ dashboardLastUpdatedLabel() }}</strong>
+            <small class="account-metric__meta">
+              {{ viewerTimeZoneLabel }}
+            </small>
           </article>
           <article
             class="account-metric account-metric--status"

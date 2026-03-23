@@ -756,6 +756,24 @@ export class App implements OnDestroy {
       this.authConfirmPassword().length > 0 &&
       !this.passwordsMatch(),
   );
+  readonly viewerTimeZoneLabel = (() => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return timeZone && timeZone.trim() ? timeZone.trim() : "Local time";
+  })();
+  readonly dashboardLastUpdatedLabel = computed(() => {
+    const generatedAt = this.data()?.generatedAt;
+    if (!generatedAt) return "Unavailable";
+
+    const date = new Date(generatedAt);
+    return Number.isNaN(date.getTime())
+      ? "Unavailable"
+      : date.toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+  });
   readonly sessionStartedAtLabel = computed(() => {
     const ts = this.session()?.user?.last_sign_in_at;
     if (!ts) return "Unavailable";
