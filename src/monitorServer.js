@@ -12,7 +12,9 @@ const { KalshiClient, parseFp } = require('./kalshiClient');
 const { KalshiWebClient, resolveWebSessionAuth } = require('./kalshiWebClient');
 const { toISODateInTz } = require('./stateStore');
 const { getRuntimeConfig, readOverrides, resolveRuntimeConfig, OVERRIDES_PATH, setOverride, setOverrides, unsetOverride } = require('./runtimeConfig');
-const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice, isRecoveryTradeSetup } = require('./strategy');
+const { eligibleTradeCandidate, extractGameState, isLeagueAllowed, deriveSignalRule, marketAskPrice } = require('./strategy');
+const { isRecoverySizingEligible, formatRecoveryConditions } = require('./recoveryConditions');
+const { parseTeamsFromEventTitle } = require('./teamTitleParser');
 const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
@@ -33,10 +35,11 @@ const statePath = path.resolve(config.stateFile || 'data/state.json');
 const MIN_DAILY_STOP_LOSS_USD = 1;
 const DEFAULT_MAX_DAILY_LOSS_USD = 50;
 const MIN_STAKE_USD = 0.1;
+const MIN_RECOVERY_MAX_STAKE_USD = 2;
 const DEFAULT_STAKE_USD = 1;
 const ABSOLUTE_BET_CAP_USD = 20;
-const DEFAULT_RECOVERY_MAX_STAKE_USD = ABSOLUTE_BET_CAP_USD;
-const RECOVERY_MAX_BET_CAP_USD = ABSOLUTE_BET_CAP_USD;
+const DEFAULT_RECOVERY_MAX_STAKE_USD = 20;
+const RECOVERY_MAX_BET_CAP_USD = 100;
 const VALID_AGENT_STATUSES = [
   'STARTING',
   'UP_TRADING',
@@ -373,20 +376,18 @@ function computeRecoveryAnalytics(closedTrades, runtime) {
   };
 }
 
-function candidateCanUseRecoverySizing(candidate) {
-  return Boolean(
-    candidate &&
-      candidate.signalRule?.outcomeType === 'leader' &&
-      (candidate.recoverySizingEligible || isRecoveryTradeSetup(candidate.game)),
-  );
+function candidateCanUseRecoverySizing(candidate, runtime) {
+  if (!candidate) return false;
+  if (typeof candidate.recoverySizingEligible === 'boolean') return candidate.recoverySizingEligible;
+  return isRecoverySizingEligible(candidate, runtime);
 }
 
-function canPlaceSameEventRecoveryAddOn(candidate, recovery, state) {
+function canPlaceSameEventRecoveryAddOn(candidate, recovery, state, runtime) {
   const eventTicker = candidate?.event?.event_ticker;
   const marketTicker = candidate?.market?.ticker;
   if (!eventTicker || !marketTicker) return false;
   if (!recovery?.enabled || Number(recovery.nextTargetProfitUsd || 0) <= 0) return false;
-  if (!candidateCanUseRecoverySizing(candidate)) return false;
+  if (!candidateCanUseRecoverySizing(candidate, runtime)) return false;
 
   const tradeLegs = getTradeLegsForEvent(state, eventTicker);
   if (!tradeLegs.length) return false;
@@ -403,11 +404,11 @@ function canPlaceSameEventRecoveryAddOn(candidate, recovery, state) {
   });
 }
 
-function shouldConsiderCandidate(candidate, recovery, state) {
+function shouldConsiderCandidate(candidate, recovery, state, runtime) {
   const eventTicker = candidate?.event?.event_ticker;
   if (!eventTicker) return false;
   if (!getTradeLegsForEvent(state, eventTicker).length) return true;
-  return canPlaceSameEventRecoveryAddOn(candidate, recovery, state);
+  return canPlaceSameEventRecoveryAddOn(candidate, recovery, state, runtime);
 }
 
 function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
@@ -430,7 +431,7 @@ function canSizeCandidate(candidate, balanceUsd, runtime, recovery) {
   const ask = Number(candidate.ask || 0);
   if (!Number.isFinite(ask) || ask <= 0 || ask >= 1) return false;
 
-  if (candidateCanUseRecoverySizing(candidate) && recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
+  if (candidateCanUseRecoverySizing(candidate, runtime) && recovery?.enabled && Number(recovery.nextTargetProfitUsd || 0) > 0) {
     const targetProfitUsd = Number(recovery.nextTargetProfitUsd || 0);
     const sized = contractsForTargetNetProfit(ask, targetProfitUsd);
     const maxRecoverySpendUsd = Number(runtime.recoveryMaxStakeUsd || 0);
@@ -474,16 +475,6 @@ function normalizeText(value) {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function parseTeamsFromEventTitle(title) {
-  const text = String(title || '');
-  const match = text.match(/^(.+?)\s+vs\.?\s+(.+?)(?:\?|$)/i) || text.match(/^(.+?)\s+v\.?\s+(.+?)(?:\?|$)/i);
-  if (!match) return { homeTeam: null, awayTeam: null };
-  return {
-    homeTeam: match[1].trim(),
-    awayTeam: match[2].trim(),
-  };
 }
 
 function buildMonitoredPrices(event) {
@@ -1033,8 +1024,13 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
             { allowRepeatEvent: true },
           )
         : null;
-      const sameGameRecoveryEligible = Boolean(repeatCandidate && canPlaceSameEventRecoveryAddOn(repeatCandidate, recovery, state));
-      const candidate = repeatCandidate && shouldConsiderCandidate(repeatCandidate, recovery, state) ? repeatCandidate : null;
+      const recoveryConditionLabel = formatRecoveryConditions(runtime);
+      const sameGameRecoveryEligible = Boolean(
+        repeatCandidate && canPlaceSameEventRecoveryAddOn(repeatCandidate, recovery, state, runtime),
+      );
+      const candidate = repeatCandidate && shouldConsiderCandidate(repeatCandidate, recovery, state, runtime)
+        ? repeatCandidate
+        : null;
       const hasOrderCapacity = candidate ? canSizeCandidate(candidate, balanceUsd, runtime, recovery) : false;
 
       let status = 'WATCHING';
@@ -1044,10 +1040,10 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
         reason = 'Live soccer feed game found, but no open tradable Kalshi game market is attached yet';
       } else if (sameGameRecoveryEligible && candidate && !hasOrderCapacity) {
         status = 'RECOVERY_NO_CAPACITY';
-        reason = '75+ 2-goal leader setup qualifies for a same-game recovery add-on, but current balance or recovery cap cannot size it';
+        reason = `${recoveryConditionLabel} qualifies for a same-game recovery add-on, but current balance or recovery cap cannot size it`;
       } else if (sameGameRecoveryEligible && candidate) {
         status = 'RECOVERY_ELIGIBLE_NOW';
-        reason = '75+ 2-goal leader setup can place a same-game recovery add-on on top of the original base trade';
+        reason = `${recoveryConditionLabel} can place a same-game recovery add-on on top of the original base trade`;
       } else if (alreadyBet) {
         status = 'ALREADY_BET';
         reason = 'Bot has already placed a filled trade on this event';
@@ -1149,6 +1145,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
       recoveryModeEnabled: runtime.recoveryModeEnabled,
       recoveryStakeUsd: runtime.recoveryStakeUsd,
       recoveryMaxStakeUsd: runtime.recoveryMaxStakeUsd,
+      recoveryConditions: runtime.recoveryConditions,
       leagues: runtime.leagues,
       timezone: config.timezone,
       runtimeOverridesPath: OVERRIDES_PATH,
@@ -1197,7 +1194,7 @@ app.get('/api/dashboard', requireMonitorAuth, async (_req, res) => {
     recentLogs: [...importantLogs].reverse(),
     recentCycleLogs: verboseLogs.slice(-100).reverse(),
     openTrades,
-    closedTrades: closedTradesWithRecovery.slice(0, 200),
+    closedTrades: closedTradesWithRecovery,
   });
 });
 
@@ -1253,11 +1250,11 @@ app.post('/api/runtime/sizing', requireMonitorAuth, async (req, res) => {
       });
     }
 
-    if (requestedRecoveryMaxStakeUsd < MIN_STAKE_USD || requestedRecoveryMaxStakeUsd > ABSOLUTE_BET_CAP_USD) {
+    if (requestedRecoveryMaxStakeUsd < MIN_RECOVERY_MAX_STAKE_USD || requestedRecoveryMaxStakeUsd > RECOVERY_MAX_BET_CAP_USD) {
       return res.status(400).json({
         ok: false,
         error: 'invalid_request',
-        message: `Recovery max must be between $${MIN_STAKE_USD.toFixed(2)} and $${ABSOLUTE_BET_CAP_USD.toFixed(2)}.`,
+        message: `Recovery max must be between $${MIN_RECOVERY_MAX_STAKE_USD.toFixed(2)} and $${RECOVERY_MAX_BET_CAP_USD.toFixed(2)}.`,
       });
     }
 
@@ -1290,7 +1287,7 @@ app.post('/api/runtime/sizing', requireMonitorAuth, async (req, res) => {
         error: 'invalid_request',
         message:
           `Recovery max must be at least $${Number(previewRuntime.recoveryStakeUsd || requestedStakeUsd).toFixed(2)} ` +
-          `and no more than $${ABSOLUTE_BET_CAP_USD.toFixed(2)} for the current runtime settings.`,
+          `and no more than $${RECOVERY_MAX_BET_CAP_USD.toFixed(2)} for the current runtime settings.`,
       });
     }
 

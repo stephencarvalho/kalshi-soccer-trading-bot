@@ -1,4 +1,5 @@
 const path = require("path");
+const { normalizeRecoveryConditions } = require("./recoveryConditions");
 
 function parseList(value, fallback) {
 	if (!value) return fallback;
@@ -19,6 +20,7 @@ function clamp(n, min, max) {
 }
 
 const ABSOLUTE_STAKE_CAP_USD = 20;
+const ABSOLUTE_RECOVERY_MAX_STAKE_CAP_USD = 100;
 
 const defaultCompetitions = [
 	"Swiss Super League",
@@ -127,8 +129,9 @@ const config = {
 	recoveryModeEnabled:
 		String(process.env.RECOVERY_MODE_ENABLED || "false").toLowerCase() ===
 		"true",
-	recoveryStakeUsd: parseNumber(process.env.RECOVERY_STAKE_USD, 2),
+		recoveryStakeUsd: parseNumber(process.env.RECOVERY_STAKE_USD, 2),
 		recoveryMaxStakeUsd: parseNumber(process.env.RECOVERY_MAX_STAKE_USD, 20),
+		recoveryConditions: normalizeRecoveryConditions(process.env.RECOVERY_CONDITIONS),
 	estimatedWinProbability: parseNumber(
 		process.env.ESTIMATED_WIN_PROBABILITY,
 		0.92,
@@ -175,11 +178,12 @@ function validateConfig(cfg) {
 		out.stakeUsd,
 		ABSOLUTE_STAKE_CAP_USD,
 	);
-		out.recoveryMaxStakeUsd = clamp(
+	out.recoveryMaxStakeUsd = clamp(
 			Number(out.recoveryMaxStakeUsd) || 20,
 			out.recoveryStakeUsd,
-			ABSOLUTE_STAKE_CAP_USD,
+			ABSOLUTE_RECOVERY_MAX_STAKE_CAP_USD,
 		);
+	out.recoveryConditions = normalizeRecoveryConditions(out.recoveryConditions);
 	out.maxOpenPositions = Math.max(
 		1,
 		Math.floor(Number(out.maxOpenPositions) || 20),

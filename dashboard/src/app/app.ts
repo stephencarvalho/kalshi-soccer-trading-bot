@@ -35,6 +35,7 @@ interface DashboardPayload {
     recoveryModeEnabled?: boolean;
     recoveryStakeUsd?: number;
     recoveryMaxStakeUsd?: number;
+    recoveryConditions?: string[];
     leagues: string[];
     timezone: string;
     runtimeOverridesPath?: string;
@@ -150,6 +151,7 @@ interface TradeRecord {
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
+    tradeLegId?: string | null;
     yesPrice?: number | null;
     fillCount?: number | null;
   } | null;
@@ -187,6 +189,7 @@ interface ClosedTradeRecord {
     eventTitle?: string | null;
     selectedOutcome?: string | null;
     markedAt?: string;
+    tradeLegId?: string | null;
     yesPrice?: number | null;
     fillCount?: number | null;
   } | null;
@@ -355,8 +358,10 @@ const DEFAULT_TABLE_SORT: Record<TableId, TableSortState> = {
 };
 
 const MIN_STAKE_USD = 0.1;
+const MIN_RECOVERY_MAX_STAKE_USD = 2;
 const MIN_DAILY_STOP_LOSS_USD = 1;
 const MAX_STAKE_USD = 20;
+const MAX_RECOVERY_MAX_STAKE_USD = 100;
 const DEFAULT_BASE_STAKE_USD = 1;
 const DEFAULT_RECOVERY_MAX_STAKE_USD = 20;
 const DEFAULT_MAX_DAILY_LOSS_USD = 50;
@@ -542,8 +547,9 @@ export class App implements OnDestroy {
     const maxDailyLossUsd = this.parseRuntimeSizingInput(this.runtimeMaxDailyLossInput());
     const configuredRecoveryStakeUsd = Number(d?.config?.recoveryStakeUsd ?? 2);
     const minRecoveryMaxUsd = Math.max(
+      MIN_RECOVERY_MAX_STAKE_USD,
       baseStakeUsd ?? MIN_STAKE_USD,
-      Number.isFinite(configuredRecoveryStakeUsd) ? configuredRecoveryStakeUsd : MIN_STAKE_USD,
+      Number.isFinite(configuredRecoveryStakeUsd) ? configuredRecoveryStakeUsd : MIN_RECOVERY_MAX_STAKE_USD,
     );
 
     if (baseStakeUsd === null) {
@@ -579,14 +585,14 @@ export class App implements OnDestroy {
       };
     }
 
-    if (recoveryMaxStakeUsd < minRecoveryMaxUsd || recoveryMaxStakeUsd > MAX_STAKE_USD) {
+    if (recoveryMaxStakeUsd < minRecoveryMaxUsd || recoveryMaxStakeUsd > MAX_RECOVERY_MAX_STAKE_USD) {
       return {
         baseStakeUsd,
         recoveryMaxStakeUsd,
         maxDailyLossUsd,
         minRecoveryMaxUsd,
         valid: false,
-        message: `Recovery max must stay between $${minRecoveryMaxUsd.toFixed(2)} and $${MAX_STAKE_USD.toFixed(2)}.`,
+        message: `Recovery max must stay between $${minRecoveryMaxUsd.toFixed(2)} and $${MAX_RECOVERY_MAX_STAKE_USD.toFixed(2)}.`,
       };
     }
 
@@ -1666,8 +1672,12 @@ export class App implements OnDestroy {
     return Number.isFinite(ts) ? ts : null;
   }
 
+  closedTradeTrackKey(trade: ClosedTradeRecord): string {
+    return this.closedTradeKey(trade);
+  }
+
   private closedTradeKey(trade: ClosedTradeRecord): string {
-    return `${trade.ticker}@${trade.settled_time}`;
+    return `${trade.ticker}@${trade.settled_time}@${trade.placed_context?.tradeLegId || trade.placed_context?.markedAt || 'base'}`;
   }
 
   private openTradeKey(trade: TradeRecord): string {
@@ -1795,6 +1805,26 @@ export class App implements OnDestroy {
     if (!credits.length) return null;
     const total = credits.reduce((sum, credit) => sum + Number(credit.pnlUsd || 0), 0);
     return Number(total.toFixed(4));
+  }
+
+  recoveryConditionSummary(conditions: string[] | null | undefined): string {
+    const labels = (conditions || []).map((condition) => {
+      switch (condition) {
+        case 'late_two_goal_leader':
+          return "75'+ leader, 2+ goals";
+        case 'anytime_large_lead_signal':
+          return 'Anytime large lead signal';
+        case 'current_lead_signal':
+          return 'Current lead signal';
+        case 'late_lead_signal':
+          return 'Late lead signal';
+        case 'late_tie_signal':
+          return 'Late tie signal';
+        default:
+          return condition;
+      }
+    });
+    return labels.length ? labels.join(', ') : "75'+ leader, 2+ goals, Anytime large lead signal";
   }
 
   statusClass(status: string | undefined): string {

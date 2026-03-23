@@ -617,6 +617,7 @@
           <li><span>Retry Until</span><strong>{{ d.config.retryUntilMinute }}'</strong></li>
           <li><span>Daily Stop Loss</span><strong>{{ d.config.maxDailyLossUsd | currency:'USD':'symbol':'1.0-0' }}</strong></li>
           <li><span>Recovery Mode</span><strong>{{ d.config.recoveryModeEnabled ? 'ON (closed-loss queue)' : 'OFF' }}</strong></li>
+          <li><span>Recovery Conditions</span><strong>{{ recoveryConditionSummary(d.config.recoveryConditions) }}</strong></li>
           <li><span>Leagues</span><strong>{{ d.config.leagues.length }}</strong></li>
         </ul>
       </article>
@@ -755,7 +756,7 @@
             @if (!d.closedTrades.length) {
               <tr><td colspan="11" class="muted">No settled trades yet</td></tr>
             }
-            @for (t of sortedClosedTrades().slice(0, 80); track t.ticker + t.settled_time) {
+            @for (t of sortedClosedTrades(); track closedTradeTrackKey(t)) {
               <tr>
                 <td>{{ t.settled_time | date:'short' }}</td>
                 <td>{{ t.ticker }}</td>
@@ -858,7 +859,8 @@
             <span class="chip">
               Recovery floor {{ runtimeSizingValidation().minRecoveryMaxUsd | currency:'USD':'symbol':'1.2-2' }}
             </span>
-            <span class="chip">Bet cap {{ 20 | currency:'USD':'symbol':'1.0-0' }}</span>
+            <span class="chip">Base cap {{ 20 | currency:'USD':'symbol':'1.0-0' }}</span>
+            <span class="chip">Recovery cap {{ 100 | currency:'USD':'symbol':'1.0-0' }}</span>
             <span class="chip">Stop-loss floor {{ 1 | currency:'USD':'symbol':'1.0-0' }}</span>
           </div>
 
@@ -879,8 +881,8 @@
               <input
                 type="number"
                 inputmode="decimal"
-                min="0.1"
-                max="20"
+                min="2"
+                max="100"
                 step="0.1"
                 [value]="runtimeRecoveryMaxInput()"
                 (input)="updateRuntimeRecoveryMaxInput($any($event.target).value)">

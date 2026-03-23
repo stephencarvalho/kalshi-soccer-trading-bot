@@ -1,6 +1,8 @@
 const { parseFp } = require('./kalshiClient');
 const { toISODateInTz } = require('./stateStore');
 const { isSoccerCompetitionName } = require('./kalshiLiveSoccer');
+const { isRecoverySizingEligible } = require('./recoveryConditions');
+const { parseTeamsFromEventTitle } = require('./teamTitleParser');
 
 function normalize(s) {
   return String(s || '')
@@ -31,13 +33,6 @@ function tryParseScoreString(value) {
   const m = String(value || '').match(/(\d+)\s*[-:]\s*(\d+)/);
   if (!m) return null;
   return { homeScore: Number(m[1]), awayScore: Number(m[2]) };
-}
-
-function parseTeamsFromTitle(title) {
-  const text = String(title || '');
-  const m = text.match(/^(.+?)\s+vs\.?\s+(.+?)(?:\?|$)/i) || text.match(/^(.+?)\s+v\.?\s+(.+?)(?:\?|$)/i);
-  if (!m) return null;
-  return { homeTeam: m[1].trim(), awayTeam: m[2].trim() };
 }
 
 function flatten(obj, prefix = '', out = {}) {
@@ -169,7 +164,7 @@ function extractGameState(event) {
     }
   }
 
-  const fromTitle = parseTeamsFromTitle(event.title || event.sub_title || '');
+  const fromTitle = parseTeamsFromEventTitle(event.title || event.sub_title || '');
   if (!homeTeam && fromTitle) homeTeam = fromTitle.homeTeam;
   if (!awayTeam && fromTitle) awayTeam = fromTitle.awayTeam;
 
@@ -402,7 +397,7 @@ function eligibleTradeCandidate(event, config, stateStore, options = {}) {
       ask,
       signalRule,
       selectedOutcome: 'Tie',
-      recoverySizingEligible: false,
+      recoverySizingEligible: isRecoverySizingEligible({ game, signalRule }, config),
     };
   }
 
@@ -430,7 +425,7 @@ function eligibleTradeCandidate(event, config, stateStore, options = {}) {
     ask,
     signalRule,
     selectedOutcome: game.leadingTeam,
-    recoverySizingEligible: isRecoveryTradeSetup(game),
+    recoverySizingEligible: isRecoverySizingEligible({ game, signalRule }, config),
   };
 }
 

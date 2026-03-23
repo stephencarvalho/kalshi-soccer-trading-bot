@@ -126,6 +126,25 @@ Controlled by:
 - `RECOVERY_MODE_ENABLED`
 - `RECOVERY_STAKE_USD`
 - `RECOVERY_MAX_STAKE_USD`
+- `RECOVERY_CONDITIONS`
+
+Supported `RECOVERY_CONDITIONS` values:
+
+- `late_two_goal_leader`
+  - Included in the default recovery setup.
+  - Recovery is allowed on a leader market at `75'+` with a live `2+` goal advantage.
+- `anytime_large_lead_signal`
+  - Included in the default recovery setup.
+  - Recovery is also allowed any time in the match when the leader is up by `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD` or more goals.
+  - The normal leader red-card filter still applies, so the leader cannot have more red cards than the trailing side.
+- `current_lead_signal`
+  - Recovery is allowed on the current/main lead signal family, such as `CURRENT_LEAD_2`.
+- `late_lead_signal`
+  - Recovery is allowed on the late lead signal family, such as `POST_85_LEAD_1`.
+- `late_tie_signal`
+  - Recovery is allowed on the late tie signal family, such as `POST_85_TIE_YES`.
+- Values can be combined as a comma-separated list, for example:
+  - `RECOVERY_CONDITIONS=late_two_goal_leader,anytime_large_lead_signal,late_lead_signal`
 
 Current queue logic:
 
@@ -133,9 +152,10 @@ Current queue logic:
 - The dashboard can change the live runtime `STAKE_USD`, `RECOVERY_MAX_STAKE_USD`, and `MAX_DAILY_LOSS_USD` overrides without restarting the bot. The default runtime values are `$1` base stake, `$20` recovery max, and `$50` daily stop-loss.
 - Only settled losing trades create recovery targets.
 - Open unrealized PnL does not affect recovery sizing.
-- Recovery sizing is only allowed on leader markets that are up by `2+` goals at `75'` or later.
+- Recovery sizing is only allowed on candidates that match the configured `RECOVERY_CONDITIONS`.
+- Default recovery behavior keeps `late_two_goal_leader` enabled and also enables `anytime_large_lead_signal`, which allows recovery any time a team is leading by `ANYTIME_LARGE_LEAD_MIN_GOAL_LEAD+` goals while the normal leader red-card filter still passes.
 - The next qualifying recovery trade targets the oldest unresolved loss using Kalshi fee-aware sizing.
-- Each recovery bet is hard-capped at `$20`, even if `RECOVERY_MAX_STAKE_USD` is set higher.
+- Each recovery bet is hard-capped at `$100`, and the live recovery-max setting can be adjusted anywhere from `$2` to `$100`.
 - In-flight recovery trades reserve their expected net recovery after fees, not the full loss row and not the raw target amount.
 - If the oldest loss still has uncovered remaining recovery after current in-flight reservations, the bot can continue placing more recovery bets against that same loss.
 - If the bot already has a filled base trade on that same market, it may add one same-game recovery leg on top of the original base position.
@@ -153,8 +173,8 @@ Root cause of the duplicate recovery-bet issue:
 How recovery works now:
 
 - The oldest unresolved closed loss remains the active recovery target.
-- Recovery sizing never attaches to tie setups or 1-goal late-lead setups.
-- Recovery sizing only activates when the current candidate is a `75'+` leader market with a live `2+` goal advantage.
+- Recovery sizing only activates when the current candidate matches one of the configured `RECOVERY_CONDITIONS`.
+- Default runtime behavior keeps recovery on `late_two_goal_leader` and `anytime_large_lead_signal`, but recovery can also be enabled for `current_lead_signal`, `late_lead_signal`, and `late_tie_signal`.
 - If that qualifying candidate is a game where the bot already holds a filled base leg on the same market, the bot can place one additional same-game recovery add-on instead of skipping the event.
 - As soon as the bot places a recovery order, only that order's expected net profit after fees is reserved in-flight.
 - If the oldest queued loss is larger than the currently reserved expected recovery, later recovery bets can still target the uncovered remainder of that same loss.
@@ -167,7 +187,7 @@ How recovery works now:
 
 ### Recovery guardrails
 
-- A single recovery order can never exceed `$20`.
+- A single recovery order can never exceed `$100`.
 - Existing `MAX_OPEN_POSITIONS`, balance checks, and daily-loss rules still apply.
 - Recovery reservations are fee-aware and based on expected net payout, so the bot does not incorrectly assume a capped bet fully covers a large loss.
 - Markets rejected by Kalshi with `400 invalid_parameters` are put on a cooldown before the bot will try them again.
@@ -204,14 +224,14 @@ flowchart TD
 
     O --> P{Recovery mode enabled and unresolved settled loss exists?}
     P -- No --> Q[Use BASE sizing]
-    P -- Yes --> R{Leader market at 75+ with 2+ goal lead?}
+    P -- Yes --> R{Candidate matches configured RECOVERY_CONDITIONS?}
     R -- No --> Q
     R -- Yes --> S[Target oldest unresolved loss in FIFO queue]
     S --> T[Measure uncovered recovery after fee-aware in-flight reservations]
     T --> U{Uncovered recovery > 0?}
     U -- No --> V[Stop adding recovery bets until settlements update queue]
     U -- Yes --> W{Already holding base fill on same market?}
-    W -- No --> X[Size recovery order subject to 20 USD cap]
+    W -- No --> X[Size recovery order subject to 100 USD cap]
     W -- Yes --> Y[Allow one same-game recovery add-on using recovery sizing]
 
     Q --> Z[Submit order]
@@ -223,7 +243,7 @@ flowchart TD
     AC -- No --> AD[No trade recorded]
     AC -- Yes --> AE[Reserve expected net recovery from this in-flight bet]
     AE --> AF{Uncovered recovery still > 0 and capacity remains?}
-    AF -- Yes --> AG[Allow another recovery bet on a later qualifying 75+ 2-goal market]
+    AF -- Yes --> AG[Allow another recovery bet on a later market that matches RECOVERY_CONDITIONS]
     AF -- No --> AH[Wait for settlements]
     AH --> AI[Later settlement recomputes queue from realized PnL]
     AI --> AJ{Loss fully recovered?}
@@ -239,10 +259,10 @@ flowchart TD
     B --> C[Compute uncoveredRecoveryUsd]
     C --> D{uncoveredRecoveryUsd <= 0?}
     D -- Yes --> E[Do not place more recovery bets yet]
-    D -- No --> F[Choose next leader market that is 75+ with a live 2+ goal lead]
+    D -- No --> F[Choose next market that matches RECOVERY_CONDITIONS]
     F --> G[If the event already has a filled base leg on the same market, allow one recovery add-on leg]
     G --> H[Size contracts for uncovered target using fee-aware profit math]
-    H --> I[Apply min(balance, RECOVERY_MAX_STAKE_USD, 20 USD hard cap)]
+    H --> I[Apply min(balance, RECOVERY_MAX_STAKE_USD, 100 USD hard cap)]
     I --> J{Can fully size target?}
     J -- Yes --> K[Use RECOVERY_QUEUE sizing]
     J -- No --> L[Use RECOVERY_QUEUE_CAPPED sizing]
@@ -406,6 +426,7 @@ Recovery defaults:
 - RECOVERY_MODE_ENABLED=true
 - RECOVERY_STAKE_USD=2
 - RECOVERY_MAX_STAKE_USD=20
+- RECOVERY_CONDITIONS=late_two_goal_leader,anytime_large_lead_signal
 
 League scope:
 - LEAGUES=ALL
@@ -668,7 +689,12 @@ The dashboard will then read deposit history automatically from the saved web se
   - Why: hard cap to stop recovery sizing from growing too large.
   - Where to get it: strategy/risk preference.
   - Dashboard: can be overridden live from the header gear-button settings modal.
-  - Hard cap: `$20`.
+  - Hard cap: `$100`.
+- `RECOVERY_CONDITIONS`
+  - Why: controls which live signal conditions are allowed to use recovery sizing.
+  - Where to get it: strategy/risk preference.
+  - Supported values: `late_two_goal_leader`, `anytime_large_lead_signal`, `current_lead_signal`, `late_lead_signal`, `late_tie_signal`.
+  - Format: comma-separated list in `.env` or an array/string in `data/runtime-overrides.json`.
 
 ### League selection and exclusions
 

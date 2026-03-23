@@ -5,11 +5,12 @@ const { createLogger } = require('./logger');
 const { loadPrivateKey } = require('./kalshiAuth');
 const { KalshiClient, parseFp } = require('./kalshiClient');
 const { StateStore } = require('./stateStore');
-const { eligibleTradeCandidate, computeDailyLossUsd, deriveSignalRule, isRecoveryTradeSetup } = require('./strategy');
+const { eligibleTradeCandidate, computeDailyLossUsd, deriveSignalRule } = require('./strategy');
 const { Notifier } = require('./notifier');
 const { appendAction, LOG_PATH } = require('./actionLog');
 const { getRuntimeConfig } = require('./runtimeConfig');
 const { buildRecoveryQueue, contractsForTargetNetProfit, totalCostForYesBuy, kalshiImmediateFeeUsd } = require('./recoveryQueue');
+const { isRecoverySizingEligible } = require('./recoveryConditions');
 const { buildClosedTradesFromSettlements, settlementPnlUsd } = require('./tradeLedger');
 const {
   getLiveSoccerEventData,
@@ -24,7 +25,7 @@ const stateStore = new StateStore(config.stateFile);
 stateStore.load();
 const ORDER_REJECTION_COOLDOWN_MS = 10 * 60 * 1000;
 const ABSOLUTE_BET_CAP_USD = 20;
-const RECOVERY_MAX_BET_CAP_USD = ABSOLUTE_BET_CAP_USD;
+const RECOVERY_MAX_BET_CAP_USD = 100;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -263,20 +264,18 @@ function maxContractsWithinBudget(priceUsd, maxSpendUsd) {
   };
 }
 
-function candidateCanUseRecoverySizing(candidate) {
-  return Boolean(
-    candidate &&
-      candidate.signalRule?.outcomeType === 'leader' &&
-      (candidate.recoverySizingEligible || isRecoveryTradeSetup(candidate.game)),
-  );
+function candidateCanUseRecoverySizing(candidate, runtime) {
+  if (!candidate) return false;
+  if (typeof candidate.recoverySizingEligible === 'boolean') return candidate.recoverySizingEligible;
+  return isRecoverySizingEligible(candidate, runtime);
 }
 
-function canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState) {
+function canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState, runtime) {
   const eventTicker = candidate?.event?.event_ticker;
   const marketTicker = candidate?.market?.ticker;
   if (!eventTicker || !marketTicker) return false;
   if (!recoveryState?.enabled || Number(recoveryState.nextTargetProfitUsd || 0) <= 0) return false;
-  if (!candidateCanUseRecoverySizing(candidate)) return false;
+  if (!candidateCanUseRecoverySizing(candidate, runtime)) return false;
   if (!stateStore.hasTradedEvent(eventTicker)) return false;
   if (stateStore.hasRecoveryTradeForEvent(eventTicker)) return false;
 
@@ -287,10 +286,10 @@ function canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState) {
   });
 }
 
-function shouldConsiderCandidate(candidate, stateStore, recoveryState) {
+function shouldConsiderCandidate(candidate, stateStore, recoveryState, runtime) {
   if (!candidate?.event?.event_ticker) return false;
   if (!stateStore.hasTradedEvent(candidate.event.event_ticker)) return true;
-  return canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState);
+  return canPlaceSameEventRecoveryAddOn(candidate, stateStore, recoveryState, runtime);
 }
 
 function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
@@ -307,7 +306,7 @@ function makeOrderPayload(candidate, balanceUsd, runtime, recoveryState) {
   let netProfitUsd = 0;
 
   if (
-    candidateCanUseRecoverySizing(candidate) &&
+    candidateCanUseRecoverySizing(candidate, runtime) &&
     recoveryState?.enabled &&
     Number(recoveryState.nextTargetProfitUsd || 0) > 0 &&
     Array.isArray(recoveryState.queue)
@@ -593,7 +592,7 @@ async function runCycle(client) {
   const candidates = enrichedEvents
     .filter((event) => eventLooksLikeSoccer(event, liveSoccerMap))
     .map((event) => eligibleTradeCandidate(event, runtime, stateStore, { allowRepeatEvent: true }))
-    .filter((candidate) => shouldConsiderCandidate(candidate, stateStore, recovery))
+    .filter((candidate) => shouldConsiderCandidate(candidate, stateStore, recovery, runtime))
     .filter(Boolean)
     .sort((a, b) => b.game.minute - a.game.minute);
   const candidateByEvent = new Map(candidates.map((candidate) => [candidate.event.event_ticker, candidate]));

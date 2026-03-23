@@ -22,6 +22,7 @@ const ALLOWED_KEYS = new Set([
   'recoveryModeEnabled',
   'recoveryStakeUsd',
   'recoveryMaxStakeUsd',
+  'recoveryConditions',
   'post80StartMinute',
   'post80MinGoalLead',
   'post80MaxYesPrice',
@@ -42,7 +43,7 @@ function writeOverrides(next) {
 }
 
 function sanitizeValue(key, value) {
-  if (key === 'leagues') {
+  if (key === 'leagues' || key === 'recoveryConditions') {
     if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
     return String(value)
       .split(',')
