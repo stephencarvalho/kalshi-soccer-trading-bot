@@ -1231,7 +1231,8 @@ function logCredentialRequestShape(req, route) {
     {
       route,
       contentType: req.headers["content-type"] || null,
-      bodyKeys,
+      bodyKeys:
+        req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
       rawBodyType: req.rawBody ? typeof req.rawBody : null,
       eventBodyType: serverlessEvent?.body ? typeof serverlessEvent.body : null,
       eventIsBase64Encoded: Boolean(serverlessEvent?.isBase64Encoded),
