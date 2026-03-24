@@ -768,10 +768,9 @@ export class App implements OnDestroy {
     return Number.isNaN(date.getTime())
       ? "Unavailable"
       : date.toLocaleString([], {
-          month: "short",
-          day: "numeric",
           hour: "numeric",
           minute: "2-digit",
+          second: "2-digit",
         });
   });
   readonly sessionStartedAtLabel = computed(() => {
@@ -2086,14 +2085,16 @@ export class App implements OnDestroy {
       this.credentialApiKeyId.set(value);
       if (this.credentialPem().trim() && this.credentialPemFileName().trim()) {
         this.scheduleDraftCredentialHealthCheck();
-      } else {
+      } else if (this.hasStoredCredential() && !this.credentialReplaceMode()) {
         this.scheduleStoredCredentialHealthCheck(0);
       }
       return;
     }
 
     this.credentialPem.set(value);
-    this.scheduleStoredCredentialHealthCheck(0);
+    if (this.hasStoredCredential() && !this.credentialReplaceMode()) {
+      this.scheduleStoredCredentialHealthCheck(0);
+    }
   }
 
   beginDeleteCredential(): void {

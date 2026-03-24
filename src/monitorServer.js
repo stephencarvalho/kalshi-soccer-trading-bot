@@ -68,6 +68,25 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Add fallback body parsing for serverless environments where Express built-in 
+// json parser might miss the body if it's already a string in req.body or req.rawBody
+app.use((req, res, next) => {
+  if (req.method === "POST" && (!req.body || Object.keys(req.body).length === 0)) {
+    const rawBody = req.rawBody || req.body;
+    if (
+      typeof rawBody === "string" &&
+      req.headers["content-type"]?.includes("application/json")
+    ) {
+      try {
+        req.body = JSON.parse(rawBody);
+      } catch (err) {
+        // Failed to parse, but we let it fall through to existing handlers
+      }
+    }
+  }
+  next();
+});
+
 const logger = createLogger(config.logLevel);
 const port = Number(process.env.MONITOR_PORT || 8787);
 const logsPath = path.resolve("logs/trading-actions.ndjson");
