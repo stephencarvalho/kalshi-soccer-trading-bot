@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "start:dry": "DRY_RUN=true node src/index.js",
     "monitor:api": "node src/monitorServer.js",
+    "test:credentials": "node scripts/test-credentials-flow.js",
     "dashboard:dev": "cd dashboard && npm start",
     "kalshi:web-auth": "node scripts/kalshi-web-auth.js"
   },
