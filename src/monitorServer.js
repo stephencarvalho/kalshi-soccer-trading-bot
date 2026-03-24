@@ -68,20 +68,47 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Add fallback body parsing for serverless environments where Express built-in 
-// json parser might miss the body if it's already a string in req.body or req.rawBody
+function parseJsonBodyCandidate(candidate, isBase64Encoded = false) {
+  if (!candidate) return null;
+
+  let raw = candidate;
+  if (Buffer.isBuffer(raw)) {
+    raw = raw.toString("utf8");
+  }
+
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  const normalized = isBase64Encoded
+    ? Buffer.from(raw, "base64").toString("utf8")
+    : raw;
+  const trimmed = normalized.trim();
+  if (!trimmed) return null;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+// Add fallback body parsing for serverless environments where Express built-in
+// json parser might miss the body if the adapter leaves it on a raw event object.
 app.use((req, res, next) => {
   if (req.method === "POST" && (!req.body || Object.keys(req.body).length === 0)) {
-    const rawBody = req.rawBody || req.body;
-    if (
-      typeof rawBody === "string" &&
-      req.headers["content-type"]?.includes("application/json")
-    ) {
-      try {
-        req.body = JSON.parse(rawBody);
-      } catch (err) {
-        // Failed to parse, but we let it fall through to existing handlers
-      }
+    const contentType = String(req.headers["content-type"] || "");
+    const serverlessEvent = req.apiGateway?.event || req.event || null;
+    const parsedBody =
+      parseJsonBodyCandidate(req.rawBody) ||
+      parseJsonBodyCandidate(req.body) ||
+      parseJsonBodyCandidate(
+        serverlessEvent?.body,
+        Boolean(serverlessEvent?.isBase64Encoded),
+      );
+
+    if (contentType.includes("application/json") && parsedBody) {
+      req.body = parsedBody;
     }
   }
   next();
@@ -1181,7 +1208,8 @@ function describeKalshiCredentialCheckError(error) {
   if (
     upstreamMessage.includes("required") ||
     upstreamMessage.includes("private key") ||
-    upstreamMessage.includes("incomplete")
+    upstreamMessage.includes("incomplete") ||
+    upstreamMessage.includes("draft credential")
   ) {
     return {
       statusCode: 400,
@@ -1193,6 +1221,24 @@ function describeKalshiCredentialCheckError(error) {
     statusCode: upstreamStatus ? 502 : 500,
     message: upstreamMessage,
   };
+}
+
+function logCredentialRequestShape(req, route) {
+  const serverlessEvent = req.apiGateway?.event || req.event || null;
+  const bodyKeys =
+    req.body && typeof req.body === "object" ? Object.keys(req.body) : [];
+  logger.info(
+    {
+      route,
+      contentType: req.headers["content-type"] || null,
+      bodyKeys:
+        req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+      rawBodyType: req.rawBody ? typeof req.rawBody : null,
+      eventBodyType: serverlessEvent?.body ? typeof serverlessEvent.body : null,
+      eventIsBase64Encoded: Boolean(serverlessEvent?.isBase64Encoded),
+    },
+      "Credential request received",
+  );
 }
 
 app.get("/api/health", async (_req, res) => {
@@ -1263,6 +1309,7 @@ app.post(
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
+    logCredentialRequestShape(req, "/api/credentials");
     const kalshiApiKeyId = String(req.body?.kalshiApiKeyId || "").trim();
     const privateKeyPem = String(req.body?.privateKeyPem || "");
     const pemFileName = String(req.body?.pemFileName || "").trim();
@@ -1316,19 +1363,28 @@ app.post(
   requireDashboardAuth,
   requireSupabaseUser,
   async (req, res) => {
-    const requestedCheckMode =
-      req.body?.checkMode === "stored" ? "stored" : "draft";
+    logCredentialRequestShape(req, "/api/credentials/check");
     const kalshiApiKeyId = String(req.body?.kalshiApiKeyId || "").trim();
     const privateKeyPem = String(req.body?.privateKeyPem || "");
-    const checkMode =
-      requestedCheckMode === "stored" ||
-      (!kalshiApiKeyId && !privateKeyPem.trim())
-        ? "stored"
-        : "draft";
+    const requestedCheckMode =
+      req.body?.checkMode === "stored" ? "stored" : "draft";
+    const hasDraftCredentials =
+      Boolean(kalshiApiKeyId) || Boolean(privateKeyPem.trim());
+
+    if (requestedCheckMode === "draft" && !hasDraftCredentials) {
+      res.status(400).json({
+        ok: false,
+        healthy: false,
+        error: "credential_health_check_failed",
+        message:
+          "Draft credential check requested, but no API key ID or PEM body was received.",
+      });
+      return;
+    }
 
     try {
       const result =
-        checkMode === "stored"
+        requestedCheckMode === "stored"
           ? await checkStoredKalshiCredentialHealth(req.supabaseUser.id)
           : await checkKalshiCredentialHealth({
               kalshiApiKeyId,
