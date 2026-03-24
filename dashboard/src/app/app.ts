@@ -1992,6 +1992,9 @@ export class App implements OnDestroy {
     const { error } = await this.supabase.auth.signUp({
       email: this.authEmail().trim(),
       password: this.authPassword(),
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
     });
 
     this.authLoading.set(false);
