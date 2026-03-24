@@ -1232,14 +1232,11 @@ function logCredentialRequestShape(req, route) {
       route,
       contentType: req.headers["content-type"] || null,
       bodyKeys,
-      hasApiKeyId: bodyKeys.includes("kalshiApiKeyId"),
-      hasPem: Boolean(String(req.body?.privateKeyPem || "").trim()),
-      hasPemFileName: Boolean(String(req.body?.pemFileName || "").trim()),
       rawBodyType: req.rawBody ? typeof req.rawBody : null,
       eventBodyType: serverlessEvent?.body ? typeof serverlessEvent.body : null,
       eventIsBase64Encoded: Boolean(serverlessEvent?.isBase64Encoded),
     },
-    "Credential request received",
+      "Credential request received",
   );
 }
 
