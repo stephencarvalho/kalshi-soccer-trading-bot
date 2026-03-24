@@ -1225,13 +1225,14 @@ function describeKalshiCredentialCheckError(error) {
 
 function logCredentialRequestShape(req, route) {
   const serverlessEvent = req.apiGateway?.event || req.event || null;
+  const bodyKeys =
+    req.body && typeof req.body === "object" ? Object.keys(req.body) : [];
   logger.info(
     {
       route,
       contentType: req.headers["content-type"] || null,
-      bodyKeys:
-        req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
-      hasApiKeyId: Boolean(String(req.body?.kalshiApiKeyId || "").trim()),
+      bodyKeys,
+      hasApiKeyId: bodyKeys.includes("kalshiApiKeyId"),
       hasPem: Boolean(String(req.body?.privateKeyPem || "").trim()),
       hasPemFileName: Boolean(String(req.body?.pemFileName || "").trim()),
       rawBodyType: req.rawBody ? typeof req.rawBody : null,
