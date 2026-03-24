@@ -85,6 +85,23 @@ async function runTests() {
     }
   }
 
+  console.log('\n[TEST 1B] Scenario: Draft Check With Empty Body');
+  console.log('Goal: Verify the server does not silently fall back to stored credentials when draft fields are missing.');
+  console.log('Expected: 400 Bad Request with "no API key ID or PEM body was received"');
+  try {
+    const res = await axios.post(`${API_BASE_URL}/credentials/check`, {
+      checkMode: 'draft'
+    }, { headers });
+    console.error('FAIL: Server accepted an empty draft check with status ' + res.status);
+  } catch (err) {
+    if (err.response?.status === 400) {
+      console.log('PASS: Server correctly rejected the empty draft body (400).');
+      console.log('Response Message:', err.response.data.message);
+    } else {
+      logError('FAIL: Unexpected result for Test 1B', err);
+    }
+  }
+
   console.log('\n[TEST 2] Scenario: Invalid PEM Format');
   console.log('Goal: Verify the server validates the PEM structure before attempting to use it.');
   console.log('Expected: 400 Bad Request with "Uploaded file is not a valid PEM private key"');
