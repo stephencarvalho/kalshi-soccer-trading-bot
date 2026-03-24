@@ -68,6 +68,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+function isPlainObject(value) {
+  return Boolean(value) && !Buffer.isBuffer(value) && typeof value === "object";
+}
+
 function parseJsonBodyCandidate(candidate, isBase64Encoded = false) {
   if (!candidate) return null;
 
@@ -96,7 +100,10 @@ function parseJsonBodyCandidate(candidate, isBase64Encoded = false) {
 // Add fallback body parsing for serverless environments where Express built-in
 // json parser might miss the body if the adapter leaves it on a raw event object.
 app.use((req, res, next) => {
-  if (req.method === "POST" && (!req.body || Object.keys(req.body).length === 0)) {
+  const bodyLooksParsed =
+    isPlainObject(req.body) && Object.keys(req.body).length > 0;
+
+  if (req.method === "POST" && !bodyLooksParsed) {
     const contentType = String(req.headers["content-type"] || "");
     const serverlessEvent = req.apiGateway?.event || req.event || null;
     const parsedBody =
@@ -1226,13 +1233,13 @@ function describeKalshiCredentialCheckError(error) {
 function logCredentialRequestShape(req, route) {
   const serverlessEvent = req.apiGateway?.event || req.event || null;
   const bodyKeys =
-    req.body && typeof req.body === "object" ? Object.keys(req.body) : [];
+    isPlainObject(req.body) ? Object.keys(req.body) : [];
   logger.info(
     {
       route,
       contentType: req.headers["content-type"] || null,
-      bodyKeys:
-        req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+      bodyType: Buffer.isBuffer(req.body) ? "buffer" : typeof req.body,
+      bodyKeys,
       rawBodyType: req.rawBody ? typeof req.rawBody : null,
       eventBodyType: serverlessEvent?.body ? typeof serverlessEvent.body : null,
       eventIsBase64Encoded: Boolean(serverlessEvent?.isBase64Encoded),
