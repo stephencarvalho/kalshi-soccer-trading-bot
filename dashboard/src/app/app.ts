@@ -140,6 +140,15 @@ interface RuntimeSizingResponse {
   };
 }
 
+interface RuntimeModeResponse {
+  ok: boolean;
+  mode: RuntimeMode;
+  config: {
+    dryRun: boolean;
+    tradingEnabled: boolean;
+  };
+}
+
 interface LogRecord {
   ts: string;
   action: string;
@@ -379,6 +388,7 @@ interface MonitoredGameRecord {
 }
 
 type ThemeMode = "light" | "dark";
+type RuntimeMode = "paper" | "live";
 type ChartRange =
   | "LIVE"
   | "1H"
@@ -623,6 +633,7 @@ export class App implements OnDestroy {
   private credentialHealthTimer: ReturnType<typeof setTimeout> | null = null;
   private credentialHealthRequestId = 0;
   private dashboardLoadingTimer: ReturnType<typeof setInterval> | null = null;
+  private runtimeModeSyncTimer: ReturnType<typeof setTimeout> | null = null;
   private dashboardFetchInFlight = false;
   private dashboardRefreshQueued = false;
 
@@ -666,6 +677,8 @@ export class App implements OnDestroy {
   readonly sizingBusy = signal(false);
   readonly sizingDirty = signal(false);
   readonly sizingError = signal<string | null>(null);
+  readonly runtimeModeBusy = signal(false);
+  readonly runtimeModePending = signal<RuntimeMode | null>(null);
   readonly runtimeStakeInput = signal(String(DEFAULT_BASE_STAKE_USD));
   readonly runtimeRecoveryMaxInput = signal(
     String(DEFAULT_RECOVERY_MAX_STAKE_USD),
@@ -1762,6 +1775,12 @@ export class App implements OnDestroy {
     );
   });
   readonly authConfigured = computed(() => isSupabaseBrowserAuthConfigured());
+  readonly showAuthScreen = computed(
+    () => this.authConfigured() && !this.authLoading() && !this.session(),
+  );
+  readonly canShowDashboardContent = computed(
+    () => !this.authConfigured() || Boolean(this.session()),
+  );
   readonly credentialStorageConfigured = computed(
     () => this.credentialStatus()?.configured ?? false,
   );
@@ -1901,6 +1920,20 @@ export class App implements OnDestroy {
     const seconds = elapsed % 60;
     return `${minutes}m ${seconds}s elapsed`;
   });
+  readonly runtimeMode = computed<RuntimeMode>(() => {
+    const pending = this.runtimeModePending();
+    if (pending) return pending;
+    const d = this.data();
+    return d?.config?.dryRun ? "paper" : "live";
+  });
+  readonly displayedAgentStatusClass = computed(() => {
+    if (this.runtimeModeBusy()) return "status-info";
+    return this.statusClass(this.data()?.bot.status);
+  });
+  readonly displayedAgentStatusLabel = computed(() => {
+    if (this.runtimeModeBusy()) return "Updating Mode";
+    return this.agentStatusLabel(this.data()?.bot.status);
+  });
 
   constructor() {
     effect(() => {
@@ -1932,6 +1965,7 @@ export class App implements OnDestroy {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.credentialHealthTimer) clearTimeout(this.credentialHealthTimer);
     if (this.dashboardLoadingTimer) clearInterval(this.dashboardLoadingTimer);
+    if (this.runtimeModeSyncTimer) clearTimeout(this.runtimeModeSyncTimer);
     if (this.chartInstance) {
       this.chartInstance.destroy();
       this.chartInstance = null;
@@ -2455,6 +2489,25 @@ export class App implements OnDestroy {
   }
 
   private applyDashboardPayload(payload: DashboardPayload): void {
+    const pendingMode = this.runtimeModePending();
+    const payloadMode: RuntimeMode = payload?.config?.dryRun ? "paper" : "live";
+    const hasFreshBotStatus =
+      payload?.bot?.status &&
+      payload.bot.status !== "DOWN" &&
+      payload.bot.status !== "STARTING";
+
+    if (pendingMode && payloadMode !== pendingMode) {
+      this.logDashboardRealtime(
+        "Ignoring dashboard payload with stale runtime mode during mode transition",
+        {
+          pendingMode,
+          payloadMode,
+          generatedAt: payload?.generatedAt || null,
+        },
+      );
+      return;
+    }
+
     if (!this.sizingDirty() && !this.sizingBusy()) {
       this.syncRuntimeSizingInputs(
         payload?.config?.stakeUsd,
@@ -2463,6 +2516,14 @@ export class App implements OnDestroy {
       );
     }
 
+    if (pendingMode && payloadMode === pendingMode && hasFreshBotStatus) {
+      this.runtimeModePending.set(null);
+      this.runtimeModeBusy.set(false);
+      if (this.runtimeModeSyncTimer) {
+        clearTimeout(this.runtimeModeSyncTimer);
+        this.runtimeModeSyncTimer = null;
+      }
+    }
     this.data.set(payload);
     queueMicrotask(() => this.renderChart());
     this.stopDashboardLoading();
@@ -2655,6 +2716,55 @@ export class App implements OnDestroy {
     this.runtimeMaxDailyLossInput.set(value);
     this.sizingDirty.set(true);
     this.sizingError.set(null);
+  }
+
+  updateRuntimeMode(value: string): void {
+    const mode: RuntimeMode = value === "live" ? "live" : "paper";
+    if (this.runtimeModeBusy()) return;
+    if (mode === this.runtimeMode()) return;
+
+    const runtime = getDashboardRuntimeConfig();
+    const headers = runtime.apiToken
+      ? { Authorization: `Bearer ${runtime.apiToken}` }
+      : undefined;
+
+    this.runtimeModeBusy.set(true);
+    this.runtimeModePending.set(mode);
+    this.sizingError.set(null);
+    if (this.runtimeModeSyncTimer) {
+      clearTimeout(this.runtimeModeSyncTimer);
+    }
+    this.runtimeModeSyncTimer = setTimeout(() => {
+      this.runtimeModeSyncTimer = null;
+      this.runtimeModeBusy.set(false);
+      this.runtimeModePending.set(null);
+      this.sizingError.set(
+        "Mode change was sent, but the refreshed dashboard state did not arrive in time.",
+      );
+    }, 15000);
+
+    this.http
+      .post<RuntimeModeResponse>(
+        buildApiUrl("/api/runtime/mode"),
+        { mode },
+        { headers },
+      )
+      .subscribe({
+        next: () => {
+          this.fetchDashboard();
+        },
+        error: (err) => {
+          if (this.runtimeModeSyncTimer) {
+            clearTimeout(this.runtimeModeSyncTimer);
+            this.runtimeModeSyncTimer = null;
+          }
+          this.runtimeModeBusy.set(false);
+          this.runtimeModePending.set(null);
+          this.sizingError.set(
+            err?.error?.message || err?.message || "Failed to update mode",
+          );
+        },
+      });
   }
 
   saveRuntimeSizing(

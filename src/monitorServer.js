@@ -2167,6 +2167,60 @@ app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, a
   }
 });
 
+app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
+  try {
+    const requestedMode = String(req.body?.mode || "").trim().toLowerCase();
+
+    if (requestedMode !== "paper" && requestedMode !== "live") {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_request",
+        message: 'Body must include "mode" set to "paper" or "live".',
+      });
+    }
+
+    const overrides = setOverrides({
+      tradingEnabled: true,
+      dryRun: requestedMode === "paper",
+    });
+    logger.info(
+      {
+        requestedMode,
+        resultingMode: requestedMode === "paper" ? "DRY_RUN" : "LIVE",
+        tradingEnabled: true,
+        dryRun: requestedMode === "paper",
+        overrides,
+      },
+      "Runtime trading mode updated",
+    );
+
+    void publishDashboardSnapshotsForStoredCredentials("runtime_mode").catch(
+      (error) => {
+        logger.warn(
+          { err: error?.message || error },
+          "Dashboard snapshot refresh failed after runtime mode update",
+        );
+      },
+    );
+
+    return res.json({
+      ok: true,
+      mode: requestedMode,
+      config: {
+        dryRun: requestedMode === "paper",
+        tradingEnabled: true,
+      },
+      overrides,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: "runtime_override_failed",
+      message: error.message || "Failed to update runtime mode",
+    });
+  }
+});
+
 app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
   try {
     const requestedStakeUsd = Number(req.body?.stakeUsd);

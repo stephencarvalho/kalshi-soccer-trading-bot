@@ -668,37 +668,36 @@
   filter: brightness(1.02);
 }
 
+.account-strip {
+  display: block;
+}
+
 .account-strip__row {
   display: flex;
-  flex-wrap: nowrap;
   gap: 0.45rem;
-  align-items: center;
-  min-width: 0;
+  align-items: flex-start;
 }
 
 .account-strip__row > *,
 .account-strip__metrics > *,
-.account-strip__actions > * {
+.account-strip__utility > * {
   min-width: 0;
 }
 
 .account-strip__metrics {
-  flex: 5 1 0;
-  min-width: 0;
+  flex: 1 1 50%;
   display: flex;
   flex-wrap: nowrap;
   gap: 0.35rem;
 }
 
-.account-strip__actions {
-  flex: 2.5 1 0;
-  min-width: 0;
-  margin-left: auto;
+.account-strip__utility {
+  flex: 1 1 50%;
   display: flex;
-  flex-wrap: nowrap;
-  gap: 0.35rem;
-  justify-content: end;
-  align-items: stretch;
+  gap: 0.45rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .user-menu {
@@ -938,7 +937,8 @@
   color: var(--muted);
 }
 
-.runtime-sizing-field input {
+.runtime-sizing-field input,
+.runtime-sizing-field select {
   min-height: 44px;
   width: 100%;
   padding: 0 0.9rem;
@@ -950,7 +950,8 @@
   font-weight: 700;
 }
 
-.runtime-sizing-field input:focus {
+.runtime-sizing-field input:focus,
+.runtime-sizing-field select:focus {
   outline: none;
   border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
@@ -1325,6 +1326,7 @@
 
 .account-metric {
   flex: 1 1 0;
+  align-self: flex-start;
   min-width: 0;
   padding: 0.38rem 0.5rem;
   border: 1px solid var(--line);
@@ -1358,7 +1360,6 @@
 
 .account-metric--status {
   background: color-mix(in oklab, var(--panel) 78%, var(--chip));
-  flex: 0.8 1 0;
 }
 
 .account-metric--status strong,
@@ -1367,8 +1368,107 @@
   font-size: clamp(0.9rem, 0.76rem + 0.18vw, 1.05rem);
 }
 
+.header-mode-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid color-mix(in oklab, var(--line) 88%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--panel) 92%, var(--chip));
+}
+
+.header-mode-toggle__option {
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 0.7rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.header-mode-toggle__option--paper {
+  color: color-mix(in oklab, #2d7bdc 72%, var(--muted));
+}
+
+.header-mode-toggle__option--live {
+  color: color-mix(in oklab, #079c3b 72%, var(--muted));
+}
+
+.header-mode-toggle__option.is-active {
+  color: var(--ink);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, white 24%, transparent),
+    0 1px 2px rgba(5, 8, 11, 0.08);
+  transform: translateY(-0.5px);
+}
+
+.header-mode-toggle__option--paper.is-active {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, #8dc2ff 72%, white),
+    color-mix(in oklab, #5ea7ff 82%, #dff0ff)
+  );
+  color: var(--ink);
+}
+
+.header-mode-toggle__option--live.is-active {
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, #4be36f 72%, white),
+    color-mix(in oklab, #16c94a 82%, #d9f7df)
+  );
+  color: #041107;
+}
+
+.header-mode-toggle__option:disabled:not(.is-active) {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.header-mode-toggle__option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.header-mode-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.header-mode-status__spinner {
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 2px solid color-mix(in oklab, var(--line) 78%, transparent);
+  border-top-color: color-mix(in oklab, var(--accent) 72%, transparent);
+  border-radius: 999px;
+  animation: header-mode-spin 0.7s linear infinite;
+}
+
+@keyframes header-mode-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .account-metric--time {
   background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 18%, var(--panel)), color-mix(in oklab, #7bb4ff 8%, var(--panel)));
+  min-width: 160px;
 }
 
 .account-metric__meta {
@@ -1380,6 +1480,18 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.account-metric__inline-value {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.account-metric__inline-value .account-metric__meta {
+  margin-top: 0;
+  flex: 0 1 auto;
 }
 
 .account-metric--stop {
@@ -1430,14 +1542,17 @@
     grid-template-columns: 1fr;
   }
 
-  .account-strip__row {
+  .account-strip__metrics {
     flex-wrap: wrap;
   }
 
-  .account-strip__metrics,
-  .account-strip__actions {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
+  .account-strip__row {
+    flex-direction: column;
+  }
+
+  .account-strip__utility {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .settings-modal-backdrop {
@@ -1465,6 +1580,10 @@
 
   .account-strip {
     padding: 0.45rem 0.6rem;
+  }
+
+  .hero-status-card {
+    width: 100%;
   }
 
   .loading-shell__head,
@@ -1732,9 +1851,66 @@
 
 .hero-side {
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
   gap: 0.45rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.hero-status-card {
+  width: min(100%, 280px);
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid color-mix(in oklab, var(--line) 84%, transparent);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--panel) 92%, var(--chip));
+  box-shadow: var(--shadow);
+}
+
+.hero-status-card__head {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.hero-status-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.hero-status-card__label {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-status-card strong {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.08;
+  font-weight: 900;
+}
+
+.hero-status-card.status-good {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 12%, var(--panel)), color-mix(in oklab, var(--accent) 5%, var(--chip)));
+}
+
+.hero-status-card.status-info {
+  background: linear-gradient(180deg, color-mix(in oklab, #7bb4ff 12%, var(--panel)), color-mix(in oklab, #7bb4ff 5%, var(--chip)));
+}
+
+.hero-status-card.status-warn {
+  background: linear-gradient(180deg, color-mix(in oklab, #ffbe4d 14%, var(--panel)), color-mix(in oklab, #ffbe4d 5%, var(--chip)));
+}
+
+.hero-status-card.status-bad,
+.hero-status-card.status-down {
+  background: linear-gradient(180deg, color-mix(in oklab, #ff7b6b 14%, var(--panel)), color-mix(in oklab, #ff7b6b 5%, var(--chip)));
 }
 
 .eyebrow {
