@@ -812,11 +812,18 @@ The dashboard will then read deposit history automatically from the saved web se
 - `RUNTIME_OVERRIDES_FILE`
   - Why: stores live override values layered on top of `.env` without restarting the whole config workflow.
   - Where to get it: local file path chosen by the operator. The app creates the file if missing.
+- `RUNTIME_OVERRIDES_BACKEND`
+  - Why: chooses where live runtime overrides are persisted.
+  - Supported values: `file`, `supabase`.
+  - Recommended: use `supabase` for Netlify or any split deployment where the dashboard/API and bot are not the same process.
+  - Per-user mode: with `supabase`, overrides are stored per authenticated user so each user can run an isolated bot context.
 
 ### Netlify / deployed dashboard
 
 - `DASHBOARD_API_BASE_URL` should be set to the public monitor API base URL for Netlify deploys and deploy previews.
 - If this is left blank, the dashboard only works in local development where `/api/*` is proxied to `http://localhost:8787`.
+- Runtime mode/sizing toggles should use `RUNTIME_OVERRIDES_BACKEND=supabase` in deployed environments. File-based overrides are local-process only and do not work as a durable shared store in Netlify functions.
+- In per-user mode, the bot host should also run with Supabase credential storage enabled so it can discover all users with saved Kalshi credentials and run one isolated bot loop per user.
 
 ## Logs and Data Persistence
 
