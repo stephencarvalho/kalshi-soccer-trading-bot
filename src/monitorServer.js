@@ -1,7 +1,6 @@
 require("dotenv").config();
 
 const fs = require("fs");
-const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
@@ -28,13 +27,14 @@ const { KalshiClient, parseFp } = require("./kalshiClient");
 const { KalshiWebClient, resolveWebSessionAuth } = require("./kalshiWebClient");
 const { toISODateInTz } = require("./stateStore");
 const {
-  getRuntimeConfig,
-  readOverrides,
+  getRuntimeConfigAsync,
+  getRuntimeOverridesBackend,
+  readOverridesAsync,
+  resolveOverridesFilePath,
   resolveRuntimeConfig,
-  OVERRIDES_PATH,
-  setOverride,
-  setOverrides,
-  unsetOverride,
+  setOverrideAsync,
+  setOverridesAsync,
+  unsetOverrideAsync,
 } = require("./runtimeConfig");
 const {
   eligibleTradeCandidate,
@@ -63,6 +63,10 @@ const {
   buildClosedTradesFromSettlements,
   getTradeLegsForEvent,
 } = require("./tradeLedger");
+const {
+  resolveUserActionLogPath,
+  resolveUserStateFile,
+} = require("./userStoragePaths");
 
 const app = express();
 app.use(cors());
@@ -123,8 +127,6 @@ app.use((req, res, next) => {
 
 const logger = createLogger(config.logLevel);
 const port = Number(process.env.MONITOR_PORT || 8787);
-const logsPath = path.resolve("logs/trading-actions.ndjson");
-const statePath = path.resolve(config.stateFile || "data/state.json");
 const MIN_DAILY_STOP_LOSS_USD = 1;
 const DEFAULT_MAX_DAILY_LOSS_USD = 50;
 const MIN_STAKE_USD = 0.1;
@@ -141,11 +143,7 @@ const VALID_AGENT_STATUSES = [
   "UP_DEGRADED",
   "DOWN",
 ];
-let logCache = {
-  mtimeMs: 0,
-  size: 0,
-  parsed: [],
-};
+const logCacheByPath = new Map();
 
 const dashboardIdentityLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -292,20 +290,27 @@ function isIgnoredSettlement(settlement, ignoredTickers = []) {
   return ignored.has(ticker) || ignored.has(eventTicker);
 }
 
-function readActionLogs(limit = null) {
+function readActionLogs(logFilePath, limit = null) {
+  const resolvedPath = resolveUserActionLogPath(logFilePath);
+  const cached = logCacheByPath.get(resolvedPath) || {
+    mtimeMs: 0,
+    size: 0,
+    parsed: [],
+  };
+
   try {
-    const stat = fs.statSync(logsPath);
+    const stat = fs.statSync(resolvedPath);
     const changed =
-      stat.mtimeMs !== logCache.mtimeMs || stat.size !== logCache.size;
+      stat.mtimeMs !== cached.mtimeMs || stat.size !== cached.size;
 
     if (changed) {
       const lines = fs
-        .readFileSync(logsPath, "utf8")
+        .readFileSync(resolvedPath, "utf8")
         .split("\n")
         .map((line) => line.trim())
         .filter(Boolean);
 
-      logCache = {
+      logCacheByPath.set(resolvedPath, {
         mtimeMs: stat.mtimeMs,
         size: stat.size,
         parsed: lines.map((line) => {
@@ -319,12 +324,13 @@ function readActionLogs(limit = null) {
             };
           }
         }),
-      };
+      });
     }
 
+    const finalCache = logCacheByPath.get(resolvedPath) || cached;
     const records = Number.isFinite(Number(limit))
-      ? logCache.parsed.slice(-Number(limit))
-      : logCache.parsed;
+      ? finalCache.parsed.slice(-Number(limit))
+      : finalCache.parsed;
 
     return records.map((line) => {
       try {
@@ -1474,15 +1480,15 @@ app.delete(
 );
 
 async function buildDashboardPayload({ userId = null } = {}) {
-  const runtime = getRuntimeConfig(config);
-  const actionLogs = readActionLogs();
+  const runtime = await getRuntimeConfigAsync(config, userId);
+  const actionLogs = readActionLogs(userId);
   const { important: importantLogs, verbose: verboseLogs } =
     splitLogs(actionLogs);
   const placementContextByEvent = buildPlacementContextByEvent(
     actionLogs,
     runtime,
   );
-  const state = safeReadJson(statePath, {});
+  const state = safeReadJson(resolveUserStateFile(userId), {});
   const agentStatus = computeAgentStatus({ actionLogs, state, runtime });
 
   const client = await getClientForUserId(userId);
@@ -1996,8 +2002,12 @@ async function buildDashboardPayload({ userId = null } = {}) {
       recoveryConditions: runtime.recoveryConditions,
       leagues: runtime.leagues,
       timezone: config.timezone,
-      runtimeOverridesPath: OVERRIDES_PATH,
-      runtimeOverrides: readOverrides(),
+      runtimeOverridesBackend: getRuntimeOverridesBackend(),
+      runtimeOverridesPath:
+        getRuntimeOverridesBackend() === "file"
+          ? resolveOverridesFilePath(userId)
+          : null,
+      runtimeOverrides: await readOverridesAsync(userId),
       ignoredSettlementTickers,
     },
     account: {
@@ -2163,6 +2173,7 @@ app.get("/api/dashboard", dashboardReadLimiter, requireDashboardAuth, async (req
 });
 app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
   try {
+    const runtimeUserId = req.supabaseUser?.id || null;
     const requestedActive = req.body?.active;
     if (typeof requestedActive !== "boolean") {
       return res.status(400).json({
@@ -2173,14 +2184,15 @@ app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, a
     }
 
     const overrides = requestedActive
-      ? unsetOverride("ignoreDailyLossLimit")
-      : setOverride("ignoreDailyLossLimit", true);
+      ? await unsetOverrideAsync("ignoreDailyLossLimit", runtimeUserId)
+      : await setOverrideAsync("ignoreDailyLossLimit", true, runtimeUserId);
 
-    void publishDashboardSnapshotsForStoredCredentials(
-      "runtime_risk_halt",
-    ).catch((error) => {
+    const refreshPromise = runtimeUserId
+      ? publishDashboardSnapshotForUser(runtimeUserId, "runtime_risk_halt")
+      : publishDashboardSnapshotsForStoredCredentials("runtime_risk_halt");
+    void refreshPromise.catch((error) => {
       logger.warn(
-        { err: error?.message || error },
+        { err: error?.message || error, userId: runtimeUserId },
         "Dashboard snapshot refresh failed after risk halt update",
       );
     });
@@ -2202,6 +2214,7 @@ app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, a
 
 app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
   try {
+    const runtimeUserId = req.supabaseUser?.id || null;
     const requestedMode = String(req.body?.mode || "").trim().toLowerCase();
 
     if (requestedMode !== "paper" && requestedMode !== "live") {
@@ -2212,10 +2225,10 @@ app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async 
       });
     }
 
-    const overrides = setOverrides({
+    const overrides = await setOverridesAsync({
       tradingEnabled: true,
       dryRun: requestedMode === "paper",
-    });
+    }, runtimeUserId);
     logger.info(
       {
         requestedMode,
@@ -2223,18 +2236,20 @@ app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async 
         tradingEnabled: true,
         dryRun: requestedMode === "paper",
         overrides,
+        userId: runtimeUserId,
       },
       "Runtime trading mode updated",
     );
 
-    void publishDashboardSnapshotsForStoredCredentials("runtime_mode").catch(
-      (error) => {
+    const refreshPromise = runtimeUserId
+      ? publishDashboardSnapshotForUser(runtimeUserId, "runtime_mode")
+      : publishDashboardSnapshotsForStoredCredentials("runtime_mode");
+    void refreshPromise.catch((error) => {
         logger.warn(
-          { err: error?.message || error },
+          { err: error?.message || error, userId: runtimeUserId },
           "Dashboard snapshot refresh failed after runtime mode update",
         );
-      },
-    );
+      });
 
     return res.json({
       ok: true,
@@ -2256,6 +2271,7 @@ app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async 
 
 app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
   try {
+    const runtimeUserId = req.supabaseUser?.id || null;
     const requestedStakeUsd = Number(req.body?.stakeUsd);
     const requestedRecoveryMaxStakeUsd = Number(req.body?.recoveryMaxStakeUsd);
     const requestedMaxDailyLossUsd = Number(req.body?.maxDailyLossUsd);
@@ -2304,7 +2320,7 @@ app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, asyn
     }
 
     const previewRuntime = resolveRuntimeConfig(config, {
-      ...readOverrides(),
+      ...(await readOverridesAsync(runtimeUserId)),
       stakeUsd: requestedStakeUsd,
       recoveryMaxStakeUsd: requestedRecoveryMaxStakeUsd,
       maxDailyLossUsd: requestedMaxDailyLossUsd,
@@ -2339,20 +2355,21 @@ app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, asyn
       });
     }
 
-    const overrides = setOverrides({
+    const overrides = await setOverridesAsync({
       stakeUsd: requestedStakeUsd,
       recoveryMaxStakeUsd: requestedRecoveryMaxStakeUsd,
       maxDailyLossUsd: requestedMaxDailyLossUsd,
-    });
+    }, runtimeUserId);
 
-    void publishDashboardSnapshotsForStoredCredentials("runtime_sizing").catch(
-      (error) => {
+    const refreshPromise = runtimeUserId
+      ? publishDashboardSnapshotForUser(runtimeUserId, "runtime_sizing")
+      : publishDashboardSnapshotsForStoredCredentials("runtime_sizing");
+    void refreshPromise.catch((error) => {
         logger.warn(
-          { err: error?.message || error },
+          { err: error?.message || error, userId: runtimeUserId },
           "Dashboard snapshot refresh failed after runtime sizing update",
         );
-      },
-    );
+      });
 
     return res.json({
       ok: true,

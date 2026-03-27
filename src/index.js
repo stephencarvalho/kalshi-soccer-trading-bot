@@ -11,8 +11,12 @@ const {
   deriveSignalRule,
 } = require("./strategy");
 const { Notifier } = require("./notifier");
-const { appendAction, LOG_PATH } = require("./actionLog");
-const { getRuntimeConfig } = require("./runtimeConfig");
+const { createActionLog, LOG_PATH } = require("./actionLog");
+const {
+  getRuntimeConfigAsync,
+  getRuntimeOverridesBackend,
+  resolveOverridesFilePath,
+} = require("./runtimeConfig");
 const {
   buildRecoveryQueue,
   contractsForTargetNetProfit,
@@ -28,19 +32,35 @@ const {
   publishDashboardSnapshotsForStoredCredentials,
 } = require("./monitorServer");
 const {
+  getKalshiCredentialsForUser,
+  isCredentialStorageConfigured,
+  listCredentialUserIds,
+} = require("./userCredentials");
+const {
   getLiveSoccerEventData,
   attachLiveDataToEvents,
   eventLooksLikeSoccer,
   resolveSoccerCompetitionScope,
 } = require("./kalshiLiveSoccer");
+const {
+  resolveUserActionLogPath,
+  resolveUserStateFile,
+} = require("./userStoragePaths");
 
 const logger = createLogger(config.logLevel);
 const notifier = new Notifier(config, logger);
-const stateStore = new StateStore(config.stateFile);
+const defaultActionLog = createActionLog(LOG_PATH);
+let currentActionLog = defaultActionLog;
+let currentUserId = null;
+let stateStore = new StateStore(config.stateFile);
 stateStore.load();
 const ORDER_REJECTION_COOLDOWN_MS = 10 * 60 * 1000;
 const ABSOLUTE_BET_CAP_USD = 20;
 const RECOVERY_MAX_BET_CAP_USD = 100;
+
+function appendAction(action, payload = {}) {
+  return currentActionLog.appendAction(action, payload);
+}
 
 function describeTradingMode(runtime) {
   if (!runtime?.tradingEnabled) return "PAUSED";
@@ -61,6 +81,59 @@ async function publishDashboardSnapshotsSafely(source) {
       "Dashboard snapshot refresh failed",
     );
   }
+}
+
+function getRuntimeOverrideDescriptor(userId) {
+  if (getRuntimeOverridesBackend() === "file") {
+    return resolveOverridesFilePath(userId);
+  }
+  return "supabase.runtime_overrides";
+}
+
+async function withUserBotContext(userId, fn) {
+  const previousStateStore = stateStore;
+  const previousActionLog = currentActionLog;
+  const previousUserId = currentUserId;
+
+  stateStore = new StateStore(resolveUserStateFile(userId));
+  stateStore.load();
+  currentActionLog = createActionLog(resolveUserActionLogPath(userId));
+  currentUserId = userId || null;
+
+  try {
+    return await fn();
+  } finally {
+    stateStore = previousStateStore;
+    currentActionLog = previousActionLog;
+    currentUserId = previousUserId;
+  }
+}
+
+async function createClientForUser(userId) {
+  const normalizedUserId = String(userId || "").trim();
+  if (normalizedUserId) {
+    const credentials = await getKalshiCredentialsForUser(normalizedUserId);
+    if (!credentials?.keyId || !credentials?.privateKeyPem) return null;
+    return new KalshiClient({
+      baseUrl: config.baseUrl,
+      keyId: credentials.keyId,
+      privateKey: credentials.privateKeyPem,
+      logger,
+    });
+  }
+
+  if (!config.keyId) return null;
+  const privateKey = loadPrivateKey({
+    privateKeyPath: config.privateKeyPath,
+    privateKeyPem: config.privateKeyPem,
+  });
+
+  return new KalshiClient({
+    baseUrl: config.baseUrl,
+    keyId: config.keyId,
+    privateKey,
+    logger,
+  });
 }
 
 function truncateText(value, maxLength = 500) {
@@ -597,7 +670,7 @@ async function cancelRestingOrder(client, stateStore, openOrder, reason) {
 }
 
 async function runCycle(client) {
-  const runtime = getRuntimeConfig(config);
+  const runtime = await getRuntimeConfigAsync(config, currentUserId);
   const cycleStarted = new Date();
   const startupMode = config.dryRun ? "DRY_RUN" : "LIVE";
   const activeMode = describeTradingMode(runtime);
@@ -1184,24 +1257,21 @@ async function runCycle(client) {
 }
 
 async function main() {
-  if (!config.keyId) throw new Error("Missing KALSHI_API_KEY_ID");
-
-  const privateKey = loadPrivateKey({
-    privateKeyPath: config.privateKeyPath,
-    privateKeyPem: config.privateKeyPem,
-  });
-
-  const client = new KalshiClient({
-    baseUrl: config.baseUrl,
-    keyId: config.keyId,
-    privateKey,
-    logger,
-  });
+  if (!config.keyId && !isCredentialStorageConfigured()) {
+    throw new Error(
+      "Missing bot credentials. Configure KALSHI_API_KEY_ID/private key for single-user mode or Supabase credential storage for per-user mode.",
+    );
+  }
 
   logger.info(
     {
-      startupMode: config.dryRun ? "DRY_RUN" : "LIVE",
-      initialActiveMode: describeTradingMode(getRuntimeConfig(config)),
+      startupMode:
+        isCredentialStorageConfigured() && getRuntimeOverridesBackend() === "supabase"
+          ? "MULTI_TENANT"
+          : config.dryRun
+            ? "DRY_RUN"
+            : "LIVE",
+      initialActiveMode: describeTradingMode(await getRuntimeConfigAsync(config)),
       dryRun: config.dryRun,
       stakeUsd: config.stakeUsd,
       recoveryModeEnabled: config.recoveryModeEnabled,
@@ -1216,8 +1286,10 @@ async function main() {
       maxYesPrice: config.maxYesPrice,
       maxDailyLossUsd: config.maxDailyLossUsd,
       ignoredSettlementTickers: config.ignoredSettlementTickers,
-      runtimeOverrides: "data/runtime-overrides.json",
+      runtimeOverridesBackend: getRuntimeOverridesBackend(),
+      runtimeOverrides: getRuntimeOverrideDescriptor(null),
       actionLog: LOG_PATH,
+      credentialStorageConfigured: isCredentialStorageConfigured(),
     },
     "Bot started",
   );
@@ -1227,19 +1299,49 @@ async function main() {
   );
 
   while (true) {
-    try {
-      await runCycle(client);
-      await publishDashboardSnapshotsSafely("bot_cycle");
-    } catch (error) {
-      const errorMeta = serializeError(error);
-      logger.error({ err: errorMeta }, "Cycle failed");
-      appendAction("cycle_error", errorMeta);
-      stateStore.setLastCycle(new Date().toISOString());
-      stateStore.persist();
-      await notifier.send(`Kalshi bot cycle error: ${error.message}`);
-      await publishDashboardSnapshotsSafely("bot_cycle_error");
+    const targetUserIds =
+      isCredentialStorageConfigured() && getRuntimeOverridesBackend() === "supabase"
+        ? await listCredentialUserIds()
+        : [null];
+
+    if (!targetUserIds.length) {
+      logger.info("No stored user credentials found; bot loop is idle");
     }
 
+    for (const userId of targetUserIds) {
+      await withUserBotContext(userId, async () => {
+        try {
+          const client = await createClientForUser(userId);
+          if (!client) {
+            logger.warn({ userId }, "Skipping user bot cycle due to missing credentials");
+            return;
+          }
+
+          logger.info(
+            {
+              userId,
+              runtimeOverrides: getRuntimeOverrideDescriptor(userId),
+              stateFile: resolveUserStateFile(userId),
+              actionLog: resolveUserActionLogPath(userId),
+            },
+            "Starting user bot cycle",
+          );
+
+          await runCycle(client);
+        } catch (error) {
+          const errorMeta = serializeError(error);
+          logger.error({ err: errorMeta, userId }, "Cycle failed");
+          appendAction("cycle_error", errorMeta);
+          stateStore.setLastCycle(new Date().toISOString());
+          stateStore.persist();
+          await notifier.send(
+            `Kalshi bot cycle error${userId ? ` for user ${userId}` : ""}: ${error.message}`,
+          );
+        }
+      });
+    }
+
+    await publishDashboardSnapshotsSafely("bot_cycle");
     await sleep(config.pollSeconds * 1000);
   }
 }

@@ -5,9 +5,9 @@ const LOG_PATH = path.resolve('logs/trading-actions.ndjson');
 const NOISY_ACTIONS = new Set(['cycle_started', 'cycle_evaluated']);
 const MAX_NOISY_LOGS = 100;
 
-function compactNoisyLogs() {
+function compactNoisyLogs(logPath) {
   const lines = fs
-    .readFileSync(LOG_PATH, 'utf8')
+    .readFileSync(logPath, 'utf8')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
@@ -29,18 +29,33 @@ function compactNoisyLogs() {
 
   const keepNoisy = new Set(noisyIndexes.slice(-MAX_NOISY_LOGS));
   const keptLines = lines.filter((_, index) => !NOISY_ACTIONS.has(parsed[index]?.action) || keepNoisy.has(index));
-  fs.writeFileSync(LOG_PATH, keptLines.join('\n') + '\n', 'utf8');
+  fs.writeFileSync(logPath, keptLines.join('\n') + '\n', 'utf8');
 }
 
-function appendAction(action, payload = {}) {
-  fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
-  const entry = {
-    ts: new Date().toISOString(),
-    action,
-    ...payload,
+function createActionLog(logPath = LOG_PATH) {
+  const resolvedPath = path.resolve(logPath);
+
+  function appendAction(action, payload = {}) {
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    const entry = {
+      ts: new Date().toISOString(),
+      action,
+      ...payload,
+    };
+    fs.appendFileSync(resolvedPath, JSON.stringify(entry) + '\n', 'utf8');
+    if (NOISY_ACTIONS.has(action)) compactNoisyLogs(resolvedPath);
+  }
+
+  return {
+    appendAction,
+    logPath: resolvedPath,
   };
-  fs.appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n', 'utf8');
-  if (NOISY_ACTIONS.has(action)) compactNoisyLogs();
 }
 
-module.exports = { appendAction, LOG_PATH };
+const defaultActionLog = createActionLog(LOG_PATH);
+
+module.exports = {
+  appendAction: defaultActionLog.appendAction,
+  createActionLog,
+  LOG_PATH,
+};
