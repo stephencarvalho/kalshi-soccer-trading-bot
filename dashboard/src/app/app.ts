@@ -2673,10 +2673,11 @@ export class App implements OnDestroy {
 
   toggleRiskHalt(active: boolean): void {
     if (this.riskHaltBusy()) return;
-    const runtime = getDashboardRuntimeConfig();
-    const headers = runtime.apiToken
-      ? { Authorization: `Bearer ${runtime.apiToken}` }
-      : undefined;
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.error.set("Supabase sign-in required");
+      return;
+    }
     this.riskHaltBusy.set(true);
     this.http
       .post(buildApiUrl("/api/runtime/risk-halt"), { active }, { headers })
@@ -2723,10 +2724,11 @@ export class App implements OnDestroy {
     if (this.runtimeModeBusy()) return;
     if (mode === this.runtimeMode()) return;
 
-    const runtime = getDashboardRuntimeConfig();
-    const headers = runtime.apiToken
-      ? { Authorization: `Bearer ${runtime.apiToken}` }
-      : undefined;
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.sizingError.set("Supabase sign-in required");
+      return;
+    }
 
     this.runtimeModeBusy.set(true);
     this.runtimeModePending.set(mode);
@@ -2798,10 +2800,11 @@ export class App implements OnDestroy {
       return;
     }
 
-    const runtime = getDashboardRuntimeConfig();
-    const headers = runtime.apiToken
-      ? { Authorization: `Bearer ${runtime.apiToken}` }
-      : undefined;
+    const headers = this.getAuthHeaders();
+    if (!headers) {
+      this.sizingError.set("Supabase sign-in required");
+      return;
+    }
     this.sizingBusy.set(true);
     this.sizingError.set(null);
 

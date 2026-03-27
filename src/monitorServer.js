@@ -2171,7 +2171,7 @@ app.get("/api/dashboard", dashboardReadLimiter, requireDashboardAuth, async (req
     });
   }
 });
-app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
+app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, requireSupabaseUser, async (req, res) => {
   try {
     const runtimeUserId = req.supabaseUser?.id || null;
     const requestedActive = req.body?.active;
@@ -2212,7 +2212,7 @@ app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, a
   }
 });
 
-app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
+app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, requireSupabaseUser, async (req, res) => {
   try {
     const runtimeUserId = req.supabaseUser?.id || null;
     const requestedMode = String(req.body?.mode || "").trim().toLowerCase();
@@ -2269,7 +2269,7 @@ app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async 
   }
 });
 
-app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
+app.post("/api/runtime/sizing", monitorMutationLimiter, requireMonitorAuth, requireSupabaseUser, async (req, res) => {
   try {
     const runtimeUserId = req.supabaseUser?.id || null;
     const requestedStakeUsd = Number(req.body?.stakeUsd);
