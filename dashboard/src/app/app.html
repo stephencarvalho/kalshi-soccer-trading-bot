@@ -4,7 +4,7 @@
   [class.theme-light]="theme() === 'light'"
 >
   <div class="page-shell">
-    @if (!session()) {
+    @if (showAuthScreen()) {
     <section class="panel auth-panel">
       <div class="auth-shell">
         <div class="auth-brand">
@@ -227,7 +227,7 @@
         </section>
       </div>
     </section>
-    } @if (data(); as d) {
+    } @if (canShowDashboardContent() && data(); as d) {
     <section class="account-strip">
       <div class="account-strip__row">
         <div class="account-strip__metrics">
@@ -238,22 +238,17 @@
           </article>
           }
         </div>
-        <div class="account-strip__actions">
+        <div class="account-strip__utility">
           <article
             class="account-metric account-metric--status account-metric--time"
           >
             <span>Last Updated</span>
-            <strong>{{ dashboardLastUpdatedLabel() }}</strong>
-            <small class="account-metric__meta">
-              {{ viewerTimeZoneLabel }}
-            </small>
-          </article>
-          <article
-            class="account-metric account-metric--status"
-            [ngClass]="statusClass(d.bot.status)"
-          >
-            <span>Agent Status</span>
-            <strong>{{ agentStatusLabel(d.bot.status) }}</strong>
+            <div class="account-metric__inline-value">
+              <strong>{{ dashboardLastUpdatedLabel() }}</strong>
+              <small class="account-metric__meta">
+                {{ viewerTimeZoneLabel }}
+              </small>
+            </div>
           </article>
           <article
             class="account-metric account-metric--status account-metric--stop"
@@ -683,7 +678,7 @@
         </div>
       </div>
     </section>
-    } @if (loading() && !data()) {
+    } @if (canShowDashboardContent() && loading() && !data()) {
     <section class="panel loading-shell" aria-live="polite">
       <div class="loading-shell__head">
         <p class="loading-shell__eyebrow">Dashboard Sync</p>
@@ -724,9 +719,9 @@
       </div>
       <p class="loading-shell__hint">{{ dashboardLoadingHint() }}</p>
     </section>
-    } @if (error()) {
+    } @if (canShowDashboardContent() && error()) {
     <section class="panel error">{{ error() }}</section>
-    } @if (data(); as d) {
+    } @if (canShowDashboardContent() && data(); as d) {
     <div class="dashboard-main">
       @if (credentialBanner(); as banner) {
       <article
@@ -779,9 +774,37 @@
             </p>
           </div>
           <div class="hero-side">
-            <span class="chip live"
-              >{{ d.config.dryRun ? "DRY RUN" : "LIVE TRADING" }}</span
-            >
+            <div class="hero-status-card" [ngClass]="displayedAgentStatusClass()">
+              <div class="hero-status-card__head">
+                <span class="hero-status-card__label">Agent Status</span>
+                <div class="hero-status-card__title">
+                  @if (runtimeModeBusy()) {
+                  <span class="header-mode-status__spinner" aria-hidden="true"></span>
+                  }
+                  <strong>{{ displayedAgentStatusLabel() }}</strong>
+                </div>
+              </div>
+              <div class="header-mode-toggle" role="group" aria-label="Trading mode">
+                <button
+                  type="button"
+                  class="header-mode-toggle__option header-mode-toggle__option--paper"
+                  [class.is-active]="runtimeMode() === 'paper'"
+                  [disabled]="runtimeModeBusy() || sizingBusy() || runtimeMode() === 'paper'"
+                  (click)="updateRuntimeMode('paper')"
+                >
+                  Paper
+                </button>
+                <button
+                  type="button"
+                  class="header-mode-toggle__option header-mode-toggle__option--live"
+                  [class.is-active]="runtimeMode() === 'live'"
+                  [disabled]="runtimeModeBusy() || sizingBusy() || runtimeMode() === 'live'"
+                  (click)="updateRuntimeMode('live')"
+                >
+                  Live
+                </button>
+              </div>
+            </div>
             <span class="chip"
               >Buying Power {{ d.account.balanceUsd | currency: "USD" : "symbol"
               : "1.2-2" }}</span
@@ -2705,9 +2728,12 @@
           @if (sizingError()) { {{ sizingError() }} } @else if (sizingDirty() &&
           !runtimeSizingValidation().valid) { {{
           runtimeSizingValidation().message }} } @else if
+          (runtimeModeBusy()) { Updating trading mode... } @else if
           (runtimeSizingHasChanges()) { Unsaved override ready. Recovery max
           must stay above the current recovery stake floor and max stop loss
-          must stay at or above $1. } @else { Live values: base {{
+          must stay at or above $1. } @else { Live values: mode {{
+          runtimeMode() === 'paper' ? 'Paper Trading' : 'Live Trading' }} |
+          base {{
           d.config.stakeUsd | currency:'USD':'symbol':'1.2-2' }} | recovery max
           {{ (d.config.recoveryMaxStakeUsd ?? 20) |
           currency:'USD':'symbol':'1.2-2' }} | max stop loss {{

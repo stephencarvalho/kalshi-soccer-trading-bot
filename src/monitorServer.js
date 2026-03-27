@@ -953,6 +953,19 @@ function isSoccerClosedTrade(trade) {
   return String(trade?.event_ticker || "").includes("GAME");
 }
 
+function resolveTradeCompetition(trade) {
+  return (
+    trade?.placed_context?.competition ||
+    inferCompetitionFromTicker(trade?.ticker) ||
+    null
+  );
+}
+
+function isStrategyScopedTrade(trade, runtime) {
+  if (!isSoccerClosedTrade(trade)) return false;
+  return isLeagueAllowed(resolveTradeCompetition(trade), runtime);
+}
+
 function computeAgentStatus({ actionLogs, state, runtime }) {
   const nowMs = Date.now();
   const todayKey = toISODateInTz(nowMs, config.timezone);
@@ -1570,7 +1583,11 @@ async function buildDashboardPayload({ userId = null } = {}) {
     }
   }
 
-  const pnlToday = closedTrades
+  const strategyClosedTrades = closedTrades.filter((trade) =>
+    isStrategyScopedTrade(trade, runtime),
+  );
+
+  const pnlToday = strategyClosedTrades
     .filter(
       (t) =>
         toISODateInTz(new Date(t.settled_time).getTime(), config.timezone) ===
@@ -1675,27 +1692,43 @@ async function buildDashboardPayload({ userId = null } = {}) {
       };
     })
     .filter(Boolean);
+  const strategyOpenTrades = openTrades.filter((trade) =>
+    isStrategyScopedTrade(trade, runtime),
+  );
+  logger.info(
+    {
+      totalClosedTrades: closedTrades.length,
+      strategyClosedTrades: strategyClosedTrades.length,
+      excludedClosedTrades: closedTrades.length - strategyClosedTrades.length,
+      totalOpenTrades: openTrades.length,
+      strategyOpenTrades: strategyOpenTrades.length,
+      excludedOpenTrades: openTrades.length - strategyOpenTrades.length,
+      leagues: runtime.leagues || [],
+    },
+    "Dashboard strategy trade scope",
+  );
   const metrics = {
     ...computeDerivedMetrics(actionLogs),
-    totalBetsPlaced: openTrades.length + closedTrades.length,
+    totalBetsPlaced: strategyOpenTrades.length + strategyClosedTrades.length,
   };
   const openUnrealizedPnlUsd = Number(
-    openTrades
+    strategyOpenTrades
       .reduce((acc, t) => acc + (t.unrealized_pnl_usd || 0), 0)
       .toFixed(4),
   );
   const openCostBasisUsd = Number(
-    openTrades.reduce((acc, t) => acc + (t.cost_basis_usd || 0), 0).toFixed(4),
+    strategyOpenTrades
+      .reduce((acc, t) => acc + (t.cost_basis_usd || 0), 0)
+      .toFixed(4),
   );
   const openRoiPct =
     openCostBasisUsd > 0
       ? Number((openUnrealizedPnlUsd / openCostBasisUsd).toFixed(6))
       : null;
-  const strategyClosedTrades = closedTrades.filter(isSoccerClosedTrade);
   const analytics = computeTradeAnalytics(strategyClosedTrades);
   const recovery = computeRecoveryAnalytics(strategyClosedTrades, runtime);
 
-  const closedTradesWithRecovery = closedTrades.map((t) => ({
+  const closedTradesWithRecovery = strategyClosedTrades.map((t) => ({
     ...t,
     wins_to_recover_at_avg_win:
       analytics.avgWinUsd && analytics.avgWinUsd > 0 && t.pnl_usd < 0
@@ -1973,10 +2006,10 @@ async function buildDashboardPayload({ userId = null } = {}) {
       investedCapitalUsd,
       investedCapitalStartDate,
       investedCapitalSource,
-      openPositionsCount: openTrades.length,
+      openPositionsCount: strategyOpenTrades.length,
       pnlTodayUsd: Number(pnlToday.toFixed(2)),
       pnl14dUsd: Number(
-        closedTrades.reduce((a, b) => a + b.pnl_usd, 0).toFixed(2),
+        strategyClosedTrades.reduce((a, b) => a + b.pnl_usd, 0).toFixed(2),
       ),
       openUnrealizedPnlUsd,
       openCostBasisUsd,
@@ -2015,7 +2048,7 @@ async function buildDashboardPayload({ userId = null } = {}) {
     monitoredGames: monitoredGames.slice(0, 300),
     recentLogs: [...importantLogs].reverse(),
     recentCycleLogs: verboseLogs.slice(-100).reverse(),
-    openTrades,
+    openTrades: strategyOpenTrades,
     closedTrades: closedTradesWithRecovery,
   };
 }
@@ -2163,6 +2196,60 @@ app.post("/api/runtime/risk-halt", monitorMutationLimiter, requireMonitorAuth, a
       ok: false,
       error: "runtime_override_failed",
       message: error.message || "Failed to update risk halt override",
+    });
+  }
+});
+
+app.post("/api/runtime/mode", monitorMutationLimiter, requireMonitorAuth, async (req, res) => {
+  try {
+    const requestedMode = String(req.body?.mode || "").trim().toLowerCase();
+
+    if (requestedMode !== "paper" && requestedMode !== "live") {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_request",
+        message: 'Body must include "mode" set to "paper" or "live".',
+      });
+    }
+
+    const overrides = setOverrides({
+      tradingEnabled: true,
+      dryRun: requestedMode === "paper",
+    });
+    logger.info(
+      {
+        requestedMode,
+        resultingMode: requestedMode === "paper" ? "DRY_RUN" : "LIVE",
+        tradingEnabled: true,
+        dryRun: requestedMode === "paper",
+        overrides,
+      },
+      "Runtime trading mode updated",
+    );
+
+    void publishDashboardSnapshotsForStoredCredentials("runtime_mode").catch(
+      (error) => {
+        logger.warn(
+          { err: error?.message || error },
+          "Dashboard snapshot refresh failed after runtime mode update",
+        );
+      },
+    );
+
+    return res.json({
+      ok: true,
+      mode: requestedMode,
+      config: {
+        dryRun: requestedMode === "paper",
+        tradingEnabled: true,
+      },
+      overrides,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: "runtime_override_failed",
+      message: error.message || "Failed to update runtime mode",
     });
   }
 });

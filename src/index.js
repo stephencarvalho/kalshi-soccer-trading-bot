@@ -42,6 +42,11 @@ const ORDER_REJECTION_COOLDOWN_MS = 10 * 60 * 1000;
 const ABSOLUTE_BET_CAP_USD = 20;
 const RECOVERY_MAX_BET_CAP_USD = 100;
 
+function describeTradingMode(runtime) {
+  if (!runtime?.tradingEnabled) return "PAUSED";
+  return runtime?.dryRun ? "DRY_RUN" : "LIVE";
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -594,7 +599,21 @@ async function cancelRestingOrder(client, stateStore, openOrder, reason) {
 async function runCycle(client) {
   const runtime = getRuntimeConfig(config);
   const cycleStarted = new Date();
+  const startupMode = config.dryRun ? "DRY_RUN" : "LIVE";
+  const activeMode = describeTradingMode(runtime);
   appendAction("cycle_started", { at: cycleStarted.toISOString() });
+  logger.info(
+    {
+      startupMode,
+      activeMode,
+      runtimeDryRun: Boolean(runtime.dryRun),
+      tradingEnabled: Boolean(runtime.tradingEnabled),
+      runtimeOverridesActive:
+        Boolean(runtime.dryRun) !== Boolean(config.dryRun) ||
+        Boolean(runtime.tradingEnabled) !== true,
+    },
+    "Cycle mode state",
+  );
 
   const settlements = await client.getSettlements(
     Math.floor(Date.now() / 1000) - 14 * 24 * 3600,
@@ -838,6 +857,8 @@ async function runCycle(client) {
 
   logger.info(
     {
+      startupMode,
+      activeMode,
       eventsScanned: enrichedEvents.length,
       candidates: candidates.length,
       balanceUsd,
@@ -1179,6 +1200,8 @@ async function main() {
 
   logger.info(
     {
+      startupMode: config.dryRun ? "DRY_RUN" : "LIVE",
+      initialActiveMode: describeTradingMode(getRuntimeConfig(config)),
       dryRun: config.dryRun,
       stakeUsd: config.stakeUsd,
       recoveryModeEnabled: config.recoveryModeEnabled,
